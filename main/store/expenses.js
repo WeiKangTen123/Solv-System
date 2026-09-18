@@ -107,7 +107,12 @@ function _expense(row, lines, receipt) {
   if (!row) return null;
   let box = null;
   try { box = row.box ? JSON.parse(row.box) : null; } catch { box = null; }
+  // The base-currency figure is the sum of the lines once every line has one.
+  const priced = !!(lines && lines.length) && lines.every(l => l.baseAmount !== null && l.baseAmount !== undefined);
+  const baseCents = priced ? lines.reduce((sum, l) => sum + Math.round(l.baseAmount * 100), 0) : null;
   return {
+    baseTotal: baseCents === null ? null : baseCents / 100,
+    fxPending: !!(lines && lines.length) && !priced,
     id: row.id, companyId: row.company_id, userId: row.user_id, receiptId: row.receipt_id, reportId: row.report_id,
     merchant: row.merchant, receiptDate: row.receipt_date, receiptTime: row.receipt_time, invoiceNo: row.invoice_no, currency: row.currency,
     total: toDollars(row.total_cents) ?? 0, tax: toDollars(row.tax_cents), subTotal: toDollars(row.subtotal_cents),
