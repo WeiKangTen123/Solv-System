@@ -45,15 +45,21 @@ app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, keyGenerator: rateLimitK
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-app.use('/api/auth',      require('./routes/auth'));
-app.use('/api/users',     require('./routes/users'));
-app.use('/api/company',   require('./routes/company'));
-app.use('/api/dashboard', require('./routes/dashboard'));
-app.get('/dashboard/health', require('./routes/dashboard').health);
-// Mounted as they arrive in later tasks:
-for (const [mount, file] of [['/api/receipts', './routes/receipts'], ['/api/expenses', './routes/expenses'], ['/api/claims', './routes/claims']]) {
-  try { app.use(mount, require(file)); } catch (err) { if (err.code !== 'MODULE_NOT_FOUND' || !String(err.message).includes(file.replace('./', ''))) throw err; }
-}
+const authRoutes      = require('./routes/auth');
+const userRoutes      = require('./routes/users');
+const companyRoutes   = require('./routes/company');
+const receiptRoutes   = require('./routes/receipts');
+const expenseRoutes   = require('./routes/expenses');
+const claimRoutes     = require('./routes/claims');
+const dashRoutes      = require('./routes/dashboard');
+app.use('/api/auth',      authRoutes);
+app.use('/api/users',     userRoutes);
+app.use('/api/company',   companyRoutes);
+app.use('/api/receipts',  receiptRoutes);
+app.use('/api/expenses',  expenseRoutes);
+app.use('/api/claims',    claimRoutes);
+app.use('/api/dashboard', dashRoutes);
+app.get('/dashboard/health', dashRoutes.health);
 
 const UI_DIST = path.join(__dirname, '../ui/dist');
 if (PROD) {
