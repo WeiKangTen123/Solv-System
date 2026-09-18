@@ -192,13 +192,13 @@ export default function ExpenseReview() {
                 <div className="card-title">Exchange rate</div>
                 {fx ? (
                   <>
-                    <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{exp.currency} → {baseCurrency} {fx.fxRate}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{exp.currency} → {baseCurrency} {fx.fxRate}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
                       {fx.fxSource === 'manual'
                         ? `Entered by ${fx.fxOverrideBy || 'finance'}${fx.fxOverrideReason ? `: ${fx.fxOverrideReason}` : ''}`
                         : `${SOURCE_LABEL[fx.fxSource] || fx.fxSource} for ${fx.fxRateDate}${fx.fxFetchedAt ? ` · fetched ${formatDateTime(fx.fxFetchedAt, user?.timezone)}` : ''}`}
                     </div>
-                    <div style={{ fontSize: 13, marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>= {fmtMoney(exp.baseTotal, baseCurrency)}</div>
+                    <div style={{ fontSize: 13, marginTop: 8, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>= {fmtMoney(exp.baseTotal, baseCurrency)}</div>
                   </>
                 ) : (
                   <div className="alert alert-warning" style={{ marginBottom: 0 }}>No rate yet for {exp.currency} on {exp.receiptDate || 'this date'}. Refresh, or enter one.</div>
@@ -241,7 +241,7 @@ export default function ExpenseReview() {
             ))}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, fontSize: 12.5 }}>
               <button className="btn btn-outline btn-sm" onClick={() => setLines(ls => [...ls, { category: '', description: '', amount: Math.max(0, (totalCents - linesCents) / 100).toFixed(2), onBehalfOf: '' }])}>+ Line</button>
-              <span style={{ color: reconciled ? 'var(--success)' : 'var(--danger)', fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ color: reconciled ? 'var(--success)' : 'var(--danger)', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>
                 lines {fmtMoney(linesCents / 100, form.currency)} {reconciled ? '✓' : `≠ total ${fmtMoney(totalCents / 100, form.currency)}`}
               </span>
             </div>

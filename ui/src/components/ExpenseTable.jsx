@@ -22,8 +22,8 @@ export default function ExpenseTable({ expenses, empty = 'No expenses yet.' }) {
                 {e.errorMsg && <div style={{ fontSize: 11.5, color: 'var(--warning)' }}>{e.errorMsg}</div>}
                 {e.purpose && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{e.purpose}</div>}
               </td>
-              <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{e.total ? fmtMoney(e.total, e.currency) : '—'}</td>
-              <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', color: e.fxPending ? 'var(--warning)' : undefined }}>
+              <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{e.total ? fmtMoney(e.total, e.currency) : '—'}</td>
+              <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap', color: e.fxPending ? 'var(--warning)' : undefined }}>
                 {e.baseTotal != null ? fmtMoney(e.baseTotal, base) : (e.fxPending ? 'rate pending' : '—')}
               </td>
               <td>{e.lines.length > 1 ? `${e.lines.length} lines` : (e.lines[0]?.category || e.category || '—')}</td>

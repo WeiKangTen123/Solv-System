@@ -162,7 +162,7 @@ export default function Settings() {
               <tr key={`${r.from}-${r.to}-${r.rateDate}-${r.source}`}>
                 <td>{r.rateDate}{r.providerDate && r.providerDate !== r.rateDate ? <span style={{ color: 'var(--text-muted)' }}> (priced {r.providerDate})</span> : null}</td>
                 <td>{r.from} → {r.to}</td>
-                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.rate}</td>
+                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{r.rate}</td>
                 <td>{r.source}{r.enteredBy ? <span style={{ color: 'var(--text-muted)' }}> · {r.enteredBy}</span> : null}</td>
                 <td>{r.source === 'manual' && <button className="btn btn-ghost btn-sm" onClick={() => api.delete(`/fx/rates?from=${r.from}&to=${r.to}&date=${r.rateDate}`).then(loadAll).catch(fail)}>Remove</button>}</td>
               </tr>))}</tbody>

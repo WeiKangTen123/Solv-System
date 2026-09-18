@@ -58,6 +58,14 @@ docs/            specs/, plans/, acceptance/ (+ exports/), reference/ — see do
 samples/         receipts/ (the two Marriott folios), reads/ (the reader's saved output for each)
 ```
 
+## Look and feel
+
+Midnight indigo: a deep indigo ground with warm sand text, coral for actions, and a separate hue for every status. Dark is the default; the toggle in the header switches to the sand-and-ink light theme and the choice is remembered. The whole palette is [ui/src/styles/theme.css](ui/src/styles/theme.css), around fifty lines of tokens, and nothing outside that file names a colour, so a repaint means editing one file.
+
+Three rules the palette keeps: the accent means "you can do this" and is never also the success colour; each status owns a hue (blue in progress, amber needs you, green settled, violet paid, rose refused); and the destructive button is tinted rather than filled, so Reject never outweighs Submit.
+
+Manrope carries the interface and IBM Plex Mono every figure, so amounts line up down a column. Both are self-hosted in `ui/public/fonts` (Latin and Latin Extended, 94 kB in total) because the server's content security policy allows styles and fonts from itself only, and because no staff browser should have to call Google to render an expense claim. To refresh them, fetch the family from the Google Fonts CSS API, keep the `latin` and `latin-ext` faces, and regenerate `ui/src/styles/fonts.css` to match.
+
 ## Scripts
 
 | Command | What |

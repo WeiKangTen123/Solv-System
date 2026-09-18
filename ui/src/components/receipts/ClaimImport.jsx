@@ -189,7 +189,7 @@ export default function ClaimImport({ onClose, onImported, initialJobId = null }
                   </span>
                   <span style={{ flex: 1 }}>{label}</span>
                   {isReading && job.receiptsTotal > 0 && (
-                    <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>
+                    <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
                       {job.receiptsRead} / {job.receiptsTotal}
                     </span>
                   )}
@@ -235,7 +235,7 @@ export default function ClaimImport({ onClose, onImported, initialJobId = null }
                   { n: s.unreadable, label: 'could not be read', tone: 'var(--text-muted)' },
                 ].filter(x => x.n > 0).map(x => (
                   <div key={x.label} style={{ flex: '1 1 150px', background: 'var(--bg-secondary)', borderRadius: 10, padding: '10px 12px' }}>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: x.tone, fontVariantNumeric: 'tabular-nums' }}>{x.n}</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: x.tone, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{x.n}</div>
                     <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2 }}>{x.label}</div>
                   </div>
                 ))}
@@ -322,7 +322,7 @@ function Line({ left, right, tone }) {
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12,
                   padding: '6px 0', borderTop: '1px solid var(--border)' }}>
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{left}</span>
-      <span style={{ color: tone, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{right}</span>
+      <span style={{ color: tone, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{right}</span>
     </div>
   );
 }

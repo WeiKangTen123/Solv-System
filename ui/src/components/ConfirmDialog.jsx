@@ -11,7 +11,7 @@ export default function ConfirmDialog({ title, message, confirmLabel = 'Confirm'
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
         <button type="button" className="btn btn-outline" onClick={onCancel}>{cancelLabel}</button>
         <button type="button" className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} onClick={onConfirm} autoFocus
-                style={danger ? { background: 'var(--danger, #ef4444)', borderColor: 'var(--danger, #ef4444)', color: '#fff' } : undefined}>
+                style={danger ? { background: 'var(--danger)', borderColor: 'var(--danger)', color: '#fff' } : undefined}>
           {confirmLabel}
         </button>
       </div>

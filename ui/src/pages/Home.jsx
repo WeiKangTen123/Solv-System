@@ -55,7 +55,7 @@ export default function Home() {
           {!unfiled.length ? <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Nothing waiting to be filed.</div> : unfiled.map(e => (
             <div key={e.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 0', borderTop: '1px solid var(--border)', fontSize: 13 }}>
               <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.receiptDate || '—'} · {e.merchant || 'Untitled'}</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{e.baseTotal != null ? fmtMoney(e.baseTotal, base) : fmtMoney(e.total, e.currency)}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{e.baseTotal != null ? fmtMoney(e.baseTotal, base) : fmtMoney(e.total, e.currency)}</span>
               <select className="form-input" style={{ width: 170, padding: '4px 8px', fontSize: 12 }} defaultValue="" onChange={ev => fileInto(e.id, ev.target.value)} aria-label="File into report">
                 <option value="">File into…</option>
                 {drafts.map(r => <option key={r.id} value={r.id}>{r.number} {r.title || ''}</option>)}
@@ -67,9 +67,9 @@ export default function Home() {
           <div className="card-subtitle">Drafts to finish, and submitted ones waiting for a decision.</div>
           {!open.length ? <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No open reports.</div> : open.map(r => (
             <Link key={r.id} to={`/reports/${r.id}`} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 0', borderTop: '1px solid var(--border)', fontSize: 13, color: 'inherit', textDecoration: 'none' }}>
-              <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{r.number}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>{r.number}</span>
               <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>{r.title || 'Untitled'}</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(r.totalBase, base)}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{fmtMoney(r.totalBase, base)}</span>
               <StatusBadge status={r.status} />
             </Link>))}
         </div>
