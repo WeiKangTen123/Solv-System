@@ -21,7 +21,11 @@ function _load(req, res) {
   return r;
 }
 // canDecide means "can act on it now": the right person, and a report awaiting a decision.
-function _view(r, req) { return { report: r, canDecide: ['submitted', 'approved'].includes(r.status) && wf.canDecide(r.id, req.user), editable: wf.isEditable(r), isOwner: r.userId === req.user.id }; }
+function _view(r, req) {
+  const tenant = require('../utils/token-cache').getPersistedTenants(r.companyId)[0] || null;
+  return { report: r, canDecide: ['submitted', 'approved'].includes(r.status) && wf.canDecide(r.id, req.user), editable: wf.isEditable(r), isOwner: r.userId === req.user.id,
+           xero: { connected: !!tenant, tenantName: tenant ? tenant.tenantName : null } };
+}
 // A workflow error about WHO may act is a 403; anything else is a 400.
 function _fail(res, err) {
   const who = /\bonly\b|cannot decide|own report/i.test(err.message);
@@ -125,6 +129,20 @@ router.post('/:id/submit',  requireAuth, _transition('submitted', (r, req) => wf
 router.post('/:id/approve', requireAuth, _transition('approved',  (r, req) => wf.approve(r.id, req.user)));
 router.post('/:id/reject',  requireAuth, _transition('rejected',  (r, req) => wf.reject(r.id, req.user, (req.body || {}).reason)));
 router.post('/:id/paid',    requireAuth, _transition('paid',      (r, req) => wf.markPaid(r.id, req.user)));
+
+// POST /:id/post — finance sends the approved report to Xero as one draft bill.
+// ?dryRun=1 answers with the bill that would be sent and sends nothing.
+router.post('/:id/post', requireAuth, asyncHandler(async (req, res) => {
+  const r = _load(req, res); if (!r) return;
+  if (!(req.user.role === 'finance' || req.user.role === 'admin')) return res.status(403).json({ error: 'Only finance can post a report to Xero' });
+  try {
+    const out = await require('../xero/bills').postReport(r.id, req.user, { dryRun: req.query.dryRun === '1' });
+    res.json({ ...out, ...(_view(reports.getReport(r.id), req)) });
+  } catch (err) {
+    const status = /not connected|approved|already in Xero/i.test(err.message) ? 400 : 502;
+    res.status(status).json({ error: err.message, ...(_view(reports.getReport(r.id), req)) });
+  }
+}));
 
 router.get('/:id/events', requireAuth, (req, res) => { const r = _load(req, res); if (r) res.json({ events: r.events }); });
 
