@@ -36,9 +36,10 @@ function buildLines(r, fallbackCategory) {
     const category = canonicalCategory(li.category) || cat;
     const onBehalfOf = li.onBehalfOf || null;
     const key = `${category}|${onBehalfOf || ''}`;
-    const g = groups.get(key) || { category, onBehalfOf, cents: 0, names: [] };
+    const g = groups.get(key) || { category, onBehalfOf, cents: 0, names: [], count: 0 };
     g.cents += Math.round(Number(li.unitAmount) * 100);
-    if (li.description && g.names.length < 3 && !g.names.includes(li.description)) g.names.push(li.description);
+    g.count++;
+    if (li.description && !g.names.length) g.names.push(String(li.description).replace(/\s+/g, ' ').trim());
     groups.set(key, g);
   }
   const lines = [...groups.values()].filter(g => g.cents > 0);
@@ -49,7 +50,9 @@ function buildLines(r, fallbackCategory) {
   }
   lines.sort((a, b) => b.cents - a.cents);
   lines[0].cents += totalCents - sum;
-  return lines.map(g => ({ category: g.category, description: g.names.join(', ').slice(0, 200) || null, amount: g.cents / 100, onBehalfOf: g.onBehalfOf }));
+  // The first charge names the line; the rest are counted. A report row that
+  // recites forty folio lines is not a description.
+  return lines.map(g => ({ category: g.category, description: (g.names[0] ? `${g.names[0].slice(0, 80)}${g.count > 1 ? ` +${g.count - 1} more` : ''}` : null), amount: g.cents / 100, onBehalfOf: g.onBehalfOf }));
 }
 
 // Writes a read onto an expense. undefined leaves a field alone, so a value

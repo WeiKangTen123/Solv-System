@@ -8,6 +8,7 @@ const receiptStore = require('../utils/receipt-store');
 const { issueImageToken } = require('./receipts');
 const { readOne, applyRead, flagIfSuspected } = require('../receipts/read-receipt');
 const { applyFx, overrideFx } = require('../fx/apply');
+const { isLocked } = require('../reports/workflow');
 const { canonicalCategory } = require('../claims/categories');
 const logger  = require('../utils/logger');
 
@@ -20,7 +21,13 @@ function _load(req, res) {
   if (!e || !canAccessUser(req.user, e.userId)) { res.status(404).json({ error: 'Expense not found' }); return null; }
   return e;
 }
-function _out(e) { return { expense: e, imageToken: e.receipt ? issueImageToken(e.receipt.userId, e.receipt.id) : null }; }
+const LOCKED = 'This expense is in a report that has been submitted. Ask for it to be rejected to change it.';
+function _loadEditable(req, res) {
+  const e = _load(req, res);
+  if (e && isLocked(e)) { res.status(409).json({ error: LOCKED }); return null; }
+  return e;
+}
+function _out(e) { return { expense: e, locked: isLocked(e), imageToken: e.receipt ? issueImageToken(e.receipt.userId, e.receipt.id) : null }; }
 
 router.get('/', requireAuth, (req, res) => {
   const me = users.findById(req.user.id);
@@ -39,7 +46,7 @@ router.get('/', requireAuth, (req, res) => {
 router.get('/:id', requireAuth, (req, res) => { const e = _load(req, res); if (e) res.json(_out(e)); });
 
 router.patch('/:id', requireAuth, async (req, res) => {
-  const e = _load(req, res); if (!e) return;
+  const e = _loadEditable(req, res); if (!e) return;
   if (e.status === 'duplicate') return res.status(400).json({ error: 'A duplicate cannot be edited; delete it or restore it first' });
   const b = req.body || {}, patch = {};
   for (const k of EDITABLE) if (b[k] !== undefined) patch[k] = b[k] === '' ? null : b[k];
@@ -61,7 +68,7 @@ router.patch('/:id', requireAuth, async (req, res) => {
 });
 
 router.put('/:id/lines', requireAuth, async (req, res) => {
-  const e = _load(req, res); if (!e) return;
+  const e = _loadEditable(req, res); if (!e) return;
   const lines = Array.isArray((req.body || {}).lines) ? req.body.lines : null;
   if (!lines || !lines.length) return res.status(400).json({ error: 'Send at least one line' });
   for (const l of lines) {
@@ -77,14 +84,14 @@ router.put('/:id/lines', requireAuth, async (req, res) => {
 
 // Refresh from the provider, dropping any typed rate.
 router.post('/:id/fx', requireAuth, async (req, res) => {
-  const e = _load(req, res); if (!e) return;
+  const e = _loadEditable(req, res); if (!e) return;
   const out = await applyFx(e.id, { force: true });
   res.json({ ...out, ...(_out(store.getExpense(e.id))) });
 });
 
 // The claimant or finance types a rate, with a reason.
 router.patch('/:id/fx', requireAuth, async (req, res) => {
-  const e = _load(req, res); if (!e) return;
+  const e = _loadEditable(req, res); if (!e) return;
   try {
     const updated = await overrideFx(e.id, { rate: (req.body || {}).rate, reason: (req.body || {}).reason, actor: req.user });
     res.json(_out(updated));
@@ -92,7 +99,7 @@ router.patch('/:id/fx', requireAuth, async (req, res) => {
 });
 
 router.patch('/:id/status', requireAuth, (req, res) => {
-  const e = _load(req, res); if (!e) return;
+  const e = _loadEditable(req, res); if (!e) return;
   const status = (req.body || {}).status;
   if (!['reviewed', 'review-needed'].includes(status)) return res.status(400).json({ error: 'Status can be reviewed or review-needed here' });
   if (status === 'reviewed') {
@@ -108,7 +115,7 @@ router.patch('/:id/status', requireAuth, (req, res) => {
 });
 
 router.post('/:id/reread', requireAuth, async (req, res) => {
-  const e = _load(req, res); if (!e) return;
+  const e = _loadEditable(req, res); if (!e) return;
   if (!e.receipt) return res.status(400).json({ error: 'This expense has no receipt file to read' });
   const buffer = receiptStore.forUser(e.receipt.userId).read(e.receipt.file);
   if (!buffer) return res.status(404).json({ error: 'The receipt file is missing from storage' });
@@ -138,7 +145,7 @@ router.get('/:id/group', requireAuth, (req, res) => {
 });
 
 router.post('/:id/merge', requireAuth, (req, res) => {
-  const e = _load(req, res); if (!e) return;
+  const e = _loadEditable(req, res); if (!e) return;
   if (!e.receiptId) return res.status(400).json({ error: 'This expense was not split' });
   const siblings = store.expensesForReceipt(e.receiptId).filter(x => x.id !== e.id);
   if (!siblings.length) return res.status(400).json({ error: 'This expense was not split' });
@@ -147,7 +154,7 @@ router.post('/:id/merge', requireAuth, (req, res) => {
 });
 
 router.delete('/:id', requireAuth, (req, res) => {
-  const e = _load(req, res); if (!e) return;
+  const e = _loadEditable(req, res); if (!e) return;
   store.deleteExpense(e.id);
   if (e.receipt && store.countExpensesForReceipt(e.receipt.id) === 0) {
     if (store.countExpensesForFile(e.receipt.userId, e.receipt.file) === 0) receiptStore.forUser(e.receipt.userId).remove(e.receipt.file);
