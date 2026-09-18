@@ -1,11 +1,11 @@
 jest.mock('axios');
-jest.mock('./users', () => ({
+jest.mock('../store/users', () => ({
   getGeminiKeysForUser: jest.fn(),
   findById: jest.fn(() => ({ companyId: 'c1' })),
 }));
 
 const axios = require('axios');
-const { getGeminiKeysForUser } = require('./users');
+const { getGeminiKeysForUser } = require('../store/users');
 
 function quotaError() {
   const err = new Error('quota exceeded');

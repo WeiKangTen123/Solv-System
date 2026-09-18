@@ -4,7 +4,7 @@ const pairing = require('./pairing');
 // on screen as a QR code. Everything below exists to pin the properties that
 // make that acceptable: it expires, it is bounded, it is scoped to one user,
 // and it grants nothing but upload.
-describe('utils/pairing', () => {
+describe('receipts/pairing', () => {
   beforeEach(() => { pairing._reset(); jest.useRealTimers(); });
   afterAll(() => { pairing._reset(); });
 
@@ -152,7 +152,7 @@ describe('utils/pairing', () => {
 });
 
 // ── Sliding expiry ──────────────────────────────────────────────────────────
-describe('utils/pairing — the link follows the work', () => {
+describe('receipts/pairing — the link follows the work', () => {
   beforeEach(() => { pairing._reset(); jest.useRealTimers(); });
   afterAll(() => { pairing._reset(); jest.useRealTimers(); });
 

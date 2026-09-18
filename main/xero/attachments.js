@@ -1,5 +1,5 @@
-const receiptStore = require('../utils/receipt-store');
-const pdfRender    = require('../utils/pdf-render');
+const receiptStore = require('../receipts/receipt-store');
+const pdfRender    = require('../pdf/render');
 const logger       = require('../utils/logger');
 
 // Xero takes attachments of at most 3 MB, JPG, PNG or PDF. Originals are kept

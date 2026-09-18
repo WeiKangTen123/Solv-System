@@ -2,7 +2,7 @@ const express   = require('express');
 const router    = express.Router();
 const jwt       = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
-const users     = require('../utils/users');
+const users     = require('../store/users');
 const { requireAuth, jwtSecret } = require('../middleware/auth-middleware');
 const logger    = require('../utils/logger');
 

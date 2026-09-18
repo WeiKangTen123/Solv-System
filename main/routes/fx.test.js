@@ -9,7 +9,7 @@ describe('routes/fx', () => {
   let app, users, providers, admin, emp, tokens;
   beforeEach(async () => {
     jest.resetModules(); require('../db/migrate').run();
-    users = require('../utils/users'); providers = require('../fx/providers');
+    users = require('../store/users'); providers = require('../fx/providers');
     providers.frankfurter.mockReset(); providers.erapi.mockReset();
     admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
     emp = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId });

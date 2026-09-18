@@ -1,5 +1,5 @@
 const { accountForCategory, CATEGORY_HINTS } = require('./category-account');
-const { CATEGORY_NAMES } = require('../claims/categories');
+const { CATEGORY_NAMES } = require('../intake/categories');
 
 describe('xero/category-account', () => {
   const chart = [

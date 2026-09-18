@@ -7,11 +7,11 @@ const { decodeBase64 } = require('../utils/base64');
 const { hashBuffer }   = require('../intake/dedup');
 const { requireAuth, jwtSecret } = require('../middleware/auth-middleware');
 const asyncHandler = require('../middleware/async-handler');
-const users        = require('../utils/users');
+const users        = require('../store/users');
 const store        = require('../store/expenses');
-const receiptStore = require('../utils/receipt-store');
-const thumbnailer  = require('../utils/thumbnailer');
-const pairing      = require('../utils/pairing');
+const receiptStore = require('../receipts/receipt-store');
+const thumbnailer  = require('../receipts/thumbnailer');
+const pairing      = require('../receipts/pairing');
 const { readReceipt } = require('../receipts/read-receipt');
 const logger       = require('../utils/logger');
 

@@ -8,7 +8,7 @@ function requireRole(...roles) {
   };
 }
 
-function canAccessUser(actor, ownerId, users = require('../utils/users')) {
+function canAccessUser(actor, ownerId, users = require('../store/users')) {
   if (!actor || !ownerId) return false;
   if (actor.id === ownerId) return true;
   if (actor.role === 'finance' || actor.role === 'admin') return true;

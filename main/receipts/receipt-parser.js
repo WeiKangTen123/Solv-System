@@ -1,6 +1,6 @@
-const logger = require('./logger');
-const { callGemini } = require('./gemini-client');
-const { parseLlmJson } = require('./llm-json');
+const logger = require('../utils/logger');
+const { callGemini } = require('../llm/gemini-client');
+const { parseLlmJson } = require('../llm/llm-json');
 
 // Reads a photographed receipt.
 //
@@ -15,7 +15,7 @@ const { parseLlmJson } = require('./llm-json');
 //
 // Nothing here reaches Xero.
 
-const { CATEGORIES, canonicalCategory } = require('../claims/categories');
+const { CATEGORIES, canonicalCategory } = require('../intake/categories');
 
 const SYSTEM_PROMPT = `You read photographed shop receipts and return ONLY valid JSON. No explanation, no markdown.
 

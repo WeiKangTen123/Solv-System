@@ -1,4 +1,4 @@
-const logger = require('./logger');
+const logger = require('../utils/logger');
 const db     = require('../db');
 
 // Per-company in-memory token cache.
@@ -70,7 +70,7 @@ function forCompany(companyId) {
     if (!mem) {
       let inFlight = _reconnecting.get(companyId);
       if (!inFlight) {
-        inFlight = require('../xero/reconnect').reconnectXero(companyId).finally(() => _reconnecting.delete(companyId));
+        inFlight = require('./reconnect').reconnectXero(companyId).finally(() => _reconnecting.delete(companyId));
         _reconnecting.set(companyId, inFlight);
       }
       try {
@@ -93,8 +93,8 @@ function forCompany(companyId) {
     if (!refreshing) {
       logger.info('Token expired — refreshing', { tenantId, companyId, connectionType: mem.connection_type });
       const refresh = mem.connection_type === 'oauth'
-        ? require('../xero/oauth').refreshAuthCodeToken
-        : require('../xero/connect').refreshClientCredentialsToken;
+        ? require('./oauth').refreshAuthCodeToken
+        : require('./connect').refreshClientCredentialsToken;
       refreshing = refresh(companyId).then(({ access_token, expires_at }) => {
         for (const [tid, m] of Object.entries(cache.tokens)) {
           if (m.connection_type === mem.connection_type) cacheToken(tid, null, access_token, expires_at, m.connection_type);

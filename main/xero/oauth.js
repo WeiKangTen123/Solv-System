@@ -1,6 +1,6 @@
 const axios  = require('axios');
 const logger = require('../utils/logger');
-const oauthState = require('../utils/oauth-state');
+const oauthState = require('./oauth-state');
 
 // offline_access is what actually grants a refresh token — without it Xero only
 // ever hands back a 30-minute access token with no way to renew it silently.
@@ -29,7 +29,7 @@ const TOKEN_URL      = 'https://identity.xero.com/connect/token';
 // this server's deployment, not of any one user (see routes/setup.js
 // GLOBAL_SECTIONS.xeroOAuth), and every user's Web app registers the same one.
 function _appCreds(companyId) {
-  const { getCompanyConfig } = require('../utils/users');
+  const { getCompanyConfig } = require('../store/users');
   const config       = getCompanyConfig(companyId);
   const clientId     = config.XERO_OAUTH_CLIENT_ID;
   const clientSecret = config.XERO_OAUTH_CLIENT_SECRET;
@@ -82,7 +82,7 @@ async function exchangeCodeForTokens(companyId, code) {
 // instant a new one is issued. The new token must be persisted before this function
 // returns, or the connection silently breaks the next time a refresh is needed.
 async function refreshAuthCodeToken(companyId) {
-  const { getCompanyConfig, saveCompanyConfig } = require('../utils/users');
+  const { getCompanyConfig, saveCompanyConfig } = require('../store/users');
   const { clientId, clientSecret } = _appCreds(companyId);
   const refreshToken = getCompanyConfig(companyId).XERO_OAUTH_REFRESH_TOKEN;
   if (!refreshToken) {
@@ -108,7 +108,7 @@ async function refreshAuthCodeToken(companyId) {
 }
 
 async function _listAndCacheTenants(companyId, access_token, expires_at) {
-  const tokenCache = require('../utils/token-cache').forCompany(companyId);
+  const tokenCache = require('./token-cache').forCompany(companyId);
 
   const connRes = await axios.get('https://api.xero.com/connections', {
     headers: { Authorization: `Bearer ${access_token}` },
@@ -131,7 +131,7 @@ async function _listAndCacheTenants(companyId, access_token, expires_at) {
 // Called once, right after the user completes Xero's consent screen and the
 // callback route receives a `code`.
 async function completeConnection(companyId, code) {
-  const { saveCompanyConfig } = require('../utils/users');
+  const { saveCompanyConfig } = require('../store/users');
   logger.info('Completing Xero OAuth connection...', { companyId });
 
   const { access_token, refresh_token, expires_at } = await exchangeCodeForTokens(companyId, code);

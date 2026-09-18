@@ -13,8 +13,8 @@ async function twoPagePdf() {
   return new Promise(resolve => { doc.on('data', c => chunks.push(c)); doc.on('end', () => resolve(Buffer.concat(chunks))); doc.end(); });
 }
 
-describe('utils/pdf-render', () => {
-  const { renderPdfPages } = require('./pdf-render');
+describe('pdf/render', () => {
+  const { renderPdfPages } = require('./render');
 
   test('renders every page to a JPEG of A4 proportions at 150 dpi', async () => {
     const out = await renderPdfPages(await twoPagePdf());

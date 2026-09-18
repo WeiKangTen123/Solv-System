@@ -2,10 +2,10 @@ const express = require('express');
 const router  = express.Router();
 const { requireAuth } = require('../middleware/auth-middleware');
 const { requireRole } = require('../middleware/roles');
-const oauthState = require('../utils/oauth-state');
+const oauthState = require('../xero/oauth-state');
 const xeroOAuth  = require('../xero/oauth');
-const tokenCache = require('../utils/token-cache');
-const users      = require('../utils/users');
+const tokenCache = require('../xero/token-cache');
+const users      = require('../store/users');
 const logger     = require('../utils/logger');
 
 // The company's Xero connection: Custom Connection (client id + secret) or

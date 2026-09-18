@@ -3,7 +3,7 @@
 const mockGetContacts    = jest.fn();
 const mockCreateContacts = jest.fn();
 jest.mock('xero-node', () => ({ AccountingApi: jest.fn(() => ({ getContacts: mockGetContacts, createContacts: mockCreateContacts })) }));
-jest.mock('../utils/token-cache', () => ({ forCompany: () => ({ getValidToken: async () => 'tok' }) }));
+jest.mock('./token-cache', () => ({ forCompany: () => ({ getValidToken: async () => 'tok' }) }));
 jest.mock('./xero-utils', () => ({ withRetry: fn => fn() }));
 const { getOrCreateContact } = require('./contacts');
 

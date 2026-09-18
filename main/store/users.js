@@ -1,11 +1,11 @@
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const db     = require('../db');
-const { encrypt, decrypt } = require('./crypto');
+const { encrypt, decrypt } = require('../utils/crypto');
 
 const DEFAULT_TIMEZONE = 'Asia/Singapore';
 const DEFAULT_COMPANY  = { name: 'Solv', baseCurrency: 'SGD', fxPolicy: 'receipt_date', timezone: DEFAULT_TIMEZONE };
-// The report's column set, in column order. Matches claims/categories.js names
+// The report's column set, in column order. Matches intake/categories.js names
 // so a category on a line is also a column on paper.
 const DEFAULT_REPORT_COLUMNS = ['Air & Transport', 'Lodging', 'Meals', 'Entertainment', 'Phone', 'Fuel/Mileage', 'Other'];
 const ROLES = ['employee', 'manager', 'finance', 'admin'];

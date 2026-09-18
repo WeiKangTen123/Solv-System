@@ -2,7 +2,7 @@
 // pdf-render.js: pdfjs is ESM-only and heavy, and a render that blows up must
 // not take the server with it.
 //
-// Usage: node pdf-render-worker.mjs <input.pdf> <outDir> <dpi> <maxPages>
+// Usage: node render-worker.mjs <input.pdf> <outDir> <dpi> <maxPages>
 // Prints one JSON line: { numPages, rendered: [{ page, file, width, height }] }
 import fs from 'node:fs';
 import path from 'node:path';

@@ -1,4 +1,4 @@
-describe('utils/users', () => {
+describe('store/users', () => {
   let users, db;
   beforeEach(() => { jest.resetModules(); db = require('../db'); require('../db/migrate').run(); users = require('./users'); });
 

@@ -2,7 +2,7 @@ describe('reports/workflow', () => {
   let store, reports, users, wf, owner, mgr, other, fin, admin;
   beforeEach(async () => {
     jest.resetModules(); require('../db/migrate').run();
-    users = require('../utils/users'); store = require('../store/expenses'); reports = require('../store/reports'); wf = require('./workflow');
+    users = require('../store/users'); store = require('../store/expenses'); reports = require('../store/reports'); wf = require('./workflow');
     admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
     mgr   = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: admin.companyId, role: 'manager' });
     other = await users.createUser({ email: 'o@solv.sg', password: 'password123', companyId: admin.companyId, role: 'manager' });

@@ -4,7 +4,7 @@ describe('fx/apply', () => {
   let store, users, u, rates, apply;
   beforeEach(async () => {
     jest.resetModules(); require('../db/migrate').run();
-    users = require('../utils/users'); store = require('../store/expenses'); rates = require('./rates'); apply = require('./apply');
+    users = require('../store/users'); store = require('../store/expenses'); rates = require('./rates'); apply = require('./apply');
     rates.getRate.mockReset();
     u = await users.createUser({ email: 'e@solv.sg', password: 'password123' });
   });

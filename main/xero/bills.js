@@ -1,6 +1,6 @@
 const { Readable } = require('stream');
 const reports = require('../store/reports');
-const users   = require('../utils/users');
+const users   = require('../store/users');
 const { reportPayload } = require('../reports/expense-payload');
 const { getOrCreateContact } = require('./contacts');
 const { accountForCategory, getAccounts, getTaxRates } = require('./category-account');
@@ -65,7 +65,7 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
   const payload = await reportPayload(reportId, { withReceipts: false });
   const company = payload.company;
   const config  = users.getCompanyConfig(company.id);
-  const tokenCache = require('../utils/token-cache');
+  const tokenCache = require('./token-cache');
   const tenant = tokenCache.getPersistedTenants(company.id)[0] || null;
   if (!tenant && !dryRun) throw new Error('Xero is not connected. Connect the organisation in Settings first.');
 

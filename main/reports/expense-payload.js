@@ -1,7 +1,7 @@
 const reports = require('../store/reports');
-const users   = require('../utils/users');
-const receiptStore = require('../utils/receipt-store');
-const pdfRender = require('../utils/pdf-render');
+const users   = require('../store/users');
+const receiptStore = require('../receipts/receipt-store');
+const pdfRender = require('../pdf/render');
 const logger = require('../utils/logger');
 
 // Receipt pages as JPEG data URIs sized for a landscape A4 page. sharp is

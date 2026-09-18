@@ -1,6 +1,6 @@
 // The expense categories a claim can carry — ONE list, used by:
-//   * utils/receipt-parser.js   — the prompt offers exactly these names
-//   * the company's report columns default to these names (utils/users.js)
+//   * receipts/receipt-parser.js   — the prompt offers exactly these names
+//   * the company's report columns default to these names (store/users.js)
 //   * normalise() in the parser  — anything the model returns outside the list is dropped
 //
 // Names match the headings on the company's claim form, so a category here is

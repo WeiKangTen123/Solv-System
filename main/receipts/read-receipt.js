@@ -1,9 +1,9 @@
-const parser    = require('../utils/receipt-parser');
-const pdfPages  = require('../utils/pdf-pages');
-const pdfRender = require('../utils/pdf-render');
+const parser    = require('./receipt-parser');
+const pdfPages  = require('../pdf/pages');
+const pdfRender = require('../pdf/render');
 const store     = require('../store/expenses');
 const { findDuplicate } = require('../intake/dedup');
-const { canonicalCategory } = require('../claims/categories');
+const { canonicalCategory } = require('../intake/categories');
 const logger    = require('../utils/logger');
 
 // The one place that decides HOW a stored file is read and what the read does

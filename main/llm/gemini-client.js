@@ -1,5 +1,5 @@
 const axios  = require('axios');
-const logger = require('./logger');
+const logger = require('../utils/logger');
 
 // Gemini-only — Nvidia/OpenRouter were removed. Both models below are called through
 // the same OpenAI-compatible endpoint; only the `model` field differs, so rotating
@@ -13,7 +13,7 @@ const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
 function _resolveKeys(userId) {
   const keys = [];
   if (userId) {
-    const { getGeminiKeysForUser } = require('./users');
+    const { getGeminiKeysForUser } = require('../store/users');
     for (const row of getGeminiKeysForUser(userId)) keys.push(row.apiKey);
   }
   if (!keys.length && process.env.Gemini_API_KEY) keys.push(process.env.Gemini_API_KEY);
@@ -22,7 +22,7 @@ function _resolveKeys(userId) {
 }
 function _limiterKey(userId) {
   if (!userId) return 'default';
-  try { const u = require('./users').findById(userId); return u ? `company:${u.companyId}` : String(userId); }
+  try { const u = require('../store/users').findById(userId); return u ? `company:${u.companyId}` : String(userId); }
   catch { return String(userId); }
 }
 

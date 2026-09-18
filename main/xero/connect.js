@@ -6,7 +6,7 @@ const logger = require('../utils/logger');
 const { SCOPES } = require('./xero-utils');
 
 async function refreshClientCredentialsToken(companyId) {
-  const { getCompanyConfig } = require('../utils/users');
+  const { getCompanyConfig } = require('../store/users');
   const config       = getCompanyConfig(companyId);
   const clientId     = config.XERO_CLIENT_ID;
   const clientSecret = config.XERO_CLIENT_SECRET;
@@ -36,7 +36,7 @@ async function refreshClientCredentialsToken(companyId) {
 
 async function autoConnect(companyId) {
   logger.info('Connecting to Xero via client credentials...', { companyId });
-  const tokenCache = require('../utils/token-cache').forCompany(companyId);
+  const tokenCache = require('./token-cache').forCompany(companyId);
 
   const { access_token, expires_at } = await refreshClientCredentialsToken(companyId);
 
@@ -62,7 +62,7 @@ async function autoConnect(companyId) {
   // A successful Custom Connection means this is now the active method — flips a
   // user back from 'oauth' if they'd previously connected that way and are now
   // re-testing/using Custom Connection instead.
-  require('../utils/users').saveCompanyConfig(companyId, { XERO_CONNECTION_TYPE: 'custom' });
+  require('../store/users').saveCompanyConfig(companyId, { XERO_CONNECTION_TYPE: 'custom' });
 
   return tenants;
 }

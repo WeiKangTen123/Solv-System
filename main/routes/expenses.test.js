@@ -5,10 +5,10 @@ const { serverFor } = require('../scripts/test-server');
 
 // The reader is mocked one level down, so the real read pipeline runs against
 // this test's own database rather than a stale module instance.
-jest.mock('../utils/receipt-parser', () => ({
+jest.mock('../receipts/receipt-parser', () => ({
   parseReceiptImage: jest.fn().mockResolvedValue(null), parseReceiptText: jest.fn().mockResolvedValue(null), parseReceiptPages: jest.fn().mockResolvedValue(null),
 }));
-jest.mock('../utils/pdf-render', () => ({ renderPdfPages: jest.fn().mockResolvedValue(null) }));
+jest.mock('../pdf/render', () => ({ renderPdfPages: jest.fn().mockResolvedValue(null) }));
 jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 0.0134, rateDate: '2026-09-04', providerDate: '2026-09-04', source: 'frankfurter', fetchedAt: 'x' }) }));
 
 describe('routes/expenses', () => {
@@ -16,7 +16,7 @@ describe('routes/expenses', () => {
   beforeEach(async () => {
     jest.resetModules();
     require('../db/migrate').run();
-    users = require('../utils/users'); store = require('../store/expenses'); parser = require('../utils/receipt-parser');
+    users = require('../store/users'); store = require('../store/expenses'); parser = require('../receipts/receipt-parser');
     parser.parseReceiptImage.mockReset(); parser.parseReceiptImage.mockResolvedValue(null);
     admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
     mgr = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: admin.companyId, role: 'manager' });
@@ -76,7 +76,7 @@ describe('routes/expenses', () => {
   });
 
   test('re-read applies the reader result to this expense only', async () => {
-    const files = require('../utils/receipt-store').forUser(emp.id);
+    const files = require('../receipts/receipt-store').forUser(emp.id);
     const name = files.save('rr1', Buffer.from([0xff, 0xd8, 0xff, 0xe0]), 'image/jpeg');
     const rcpt = store.createReceipt({ id: 'rr1', companyId: emp.companyId, userId: emp.id, file: name, mime: 'image/jpeg', sha256: 'rr' });
     const e = store.createExpense({ companyId: emp.companyId, userId: emp.id, receiptId: rcpt.id, status: 'review-needed', merchant: 'Courtyard', currency: 'INR', total: 100, receiptDate: '2026-09-04', lines: [{ category: 'Lodging', amount: 100 }] });
@@ -123,7 +123,7 @@ describe('routes/expenses', () => {
   });
 
   test('delete removes the expense and the file once nothing references it', async () => {
-    const receiptStore = require('../utils/receipt-store');
+    const receiptStore = require('../receipts/receipt-store');
     const files = receiptStore.forUser(emp.id);
     const name = files.save('del1', Buffer.from([0xff, 0xd8, 0xff]), 'image/jpeg');
     const r = store.createReceipt({ id: 'del1', companyId: emp.companyId, userId: emp.id, file: name, mime: 'image/jpeg', sha256: 'del' });

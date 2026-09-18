@@ -1,5 +1,5 @@
-jest.mock('./gemini-client', () => ({ callGemini: jest.fn(), GEMINI_MODELS: ['m1'] }));
-const { callGemini } = require('./gemini-client');
+jest.mock('../llm/gemini-client', () => ({ callGemini: jest.fn(), GEMINI_MODELS: ['m1'] }));
+const { callGemini } = require('../llm/gemini-client');
 const parser = require('./receipt-parser');
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
@@ -10,7 +10,7 @@ const good = {
 
 beforeEach(() => jest.clearAllMocks());
 
-describe('utils/receipt-parser', () => {
+describe('receipts/receipt-parser', () => {
   describe('normalise — where a bad model response is made harmless', () => {
     test('passes a clean response through', () => {
       expect(parser.normalise(good)).toEqual({ ...good, invoiceNumber: null, lineItems: [], box: null });
@@ -421,7 +421,7 @@ describe('receipt-parser — reading a PDF from its text', () => {
 });
 
 describe('receipt-parser — categories come from one list, and the reader describes rather than justifies', () => {
-  const { CATEGORY_NAMES } = require('../claims/categories');
+  const { CATEGORY_NAMES } = require('../intake/categories');
 
   test('the prompt names every category and forbids inventing a business purpose', () => {
     for (const name of CATEGORY_NAMES) expect(parser.SYSTEM_PROMPT).toContain(`"${name}"`);
@@ -443,7 +443,7 @@ describe('receipt-parser — categories come from one list, and the reader descr
 });
 
 describe('receipt-parser — Solv extensions', () => {
-  const gemini = require('./gemini-client');
+  const gemini = require('../llm/gemini-client');
   const parser = require('./receipt-parser');
 
   test('normalise keeps the invoice number, a category and on-behalf name per line', () => {
@@ -515,7 +515,7 @@ describe('receipt-parser — hotel folio details', () => {
 
 describe('receipt-parser — a folio\'s payment line is not a charge', () => {
   const parser = require('./receipt-parser');
-  const { buildLines } = require('../receipts/read-receipt');
+  const { buildLines } = require('./read-receipt');
   // The Pune folio as the reader returned it: 39 charges and the card payment.
   const items = [
     ['Meals', 1296.25, 'MoMo Cafe Dinner Food Room# 110'], ['Meals', 250, 'MoMo Cafe Dinner Soda'], ['Meals', 139.15, 'CGST Momo Cafe F&B 9%'], ['Meals', 139.17, 'SGST Momo Cafe F&B 9%'],

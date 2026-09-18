@@ -1,9 +1,9 @@
 const express = require('express');
 const router  = express.Router();
-const users   = require('../utils/users');
+const users   = require('../store/users');
 const { requireAuth } = require('../middleware/auth-middleware');
 const { requireRole } = require('../middleware/roles');
-const { CATEGORY_NAMES } = require('../claims/categories');
+const { CATEGORY_NAMES } = require('../intake/categories');
 
 // Company settings: name, base currency, exchange-rate policy, the report's
 // column set, reader keys. Readable by everyone (the UI needs the columns);

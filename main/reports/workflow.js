@@ -1,5 +1,5 @@
 const reports = require('../store/reports');
-const users   = require('../utils/users');
+const users   = require('../store/users');
 
 // The report state machine and who may move it.
 //   draft → submitted → approved → paid → posted

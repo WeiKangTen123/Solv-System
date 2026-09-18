@@ -1,6 +1,6 @@
-jest.mock('../xero/connect',    () => ({ refreshClientCredentialsToken: jest.fn() }));
-jest.mock('../xero/oauth',      () => ({ refreshAuthCodeToken: jest.fn() }));
-jest.mock('../xero/reconnect',  () => ({ reconnectXero: jest.fn() }));
+jest.mock('./connect',    () => ({ refreshClientCredentialsToken: jest.fn() }));
+jest.mock('./oauth',      () => ({ refreshAuthCodeToken: jest.fn() }));
+jest.mock('./reconnect',  () => ({ reconnectXero: jest.fn() }));
 
 describe('token-cache', () => {
   let tokenCache, refreshClientCredentialsToken, refreshAuthCodeToken, reconnectXero;
@@ -12,9 +12,9 @@ describe('token-cache', () => {
     // token-cache.js best-effort-persists to xero_tenants, harmless here.
     require('../db/migrate').run();
     tokenCache = require('./token-cache');
-    ({ refreshClientCredentialsToken } = require('../xero/connect'));
-    ({ refreshAuthCodeToken } = require('../xero/oauth'));
-    ({ reconnectXero } = require('../xero/reconnect'));
+    ({ refreshClientCredentialsToken } = require('./connect'));
+    ({ refreshAuthCodeToken } = require('./oauth'));
+    ({ reconnectXero } = require('./reconnect'));
     reconnectXero.mockResolvedValue(undefined); // default: "reconnected" but populated nothing — see cold-cache tests below for the populating case
   });
 
@@ -128,7 +128,7 @@ describe('token-cache', () => {
 
   test('pruneTenants drops orgs Xero no longer lists, in memory and on disk', async () => {
     // xero_tenants rows reference companies(id), so the persisted half needs a real company.
-    const u = await require('./users').createUser({ email: 'prune@test.com', password: 'password123' });
+    const u = await require('../store/users').createUser({ email: 'prune@test.com', password: 'password123' });
     const cache = tokenCache.forCompany(u.companyId);
     cache.cacheToken('t1', 'Keep', 'tok', new Date(Date.now() + 60_000));
     cache.cacheToken('t2', 'Gone', 'tok', new Date(Date.now() + 60_000));

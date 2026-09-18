@@ -21,7 +21,7 @@ test('under jest the data dir is a temp dir, never the repo', () => {
 });
 
 test('the stores write under it', () => {
-  const rs = require('./receipt-store').forUser('paths-user');
+  const rs = require('../receipts/receipt-store').forUser('paths-user');
   const name = rs.save('r1', Buffer.from([0xff, 0xd8, 0xff, 0xe0]), 'image/jpeg');
   expect(rs.getPath(name).startsWith(paths.userDir('paths-user'))).toBe(true);
 });

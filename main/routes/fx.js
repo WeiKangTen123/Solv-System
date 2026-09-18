@@ -2,7 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const { requireAuth } = require('../middleware/auth-middleware');
 const { requireRole } = require('../middleware/roles');
-const users = require('../utils/users');
+const users = require('../store/users');
 const rates = require('../fx/rates');
 
 // Exchange rates: a lookup for the screen, the cache for finance to read,

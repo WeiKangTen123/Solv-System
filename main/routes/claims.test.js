@@ -7,13 +7,13 @@ const ExcelJS = require('exceljs');
 
 // The model is mocked throughout: what is under test is the route and the
 // records it writes, not the vision read.
-jest.mock('../utils/receipt-parser', () => ({
+jest.mock('../receipts/receipt-parser', () => ({
   parseReceiptBatch: jest.fn(async (userId, images) => images.map(() => null)),
   parseReceiptImage: jest.fn().mockResolvedValue(null),
   parseReceiptText:  jest.fn().mockResolvedValue(null),
   parseReceiptPages: jest.fn().mockResolvedValue(null),
 }));
-jest.mock('../utils/pdf-render', () => ({ renderPdfPages: jest.fn().mockResolvedValue(null) }));
+jest.mock('../pdf/render', () => ({ renderPdfPages: jest.fn().mockResolvedValue(null) }));
 jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 1, rateDate: '2026-09-01', providerDate: '2026-09-01', source: 'frankfurter', fetchedAt: 'x' }) }));
 jest.mock('../claims/claim-categories', () => ({ suggestCategories: jest.fn().mockResolvedValue([]) }));
 
@@ -68,14 +68,14 @@ describe('routes/claims', () => {
   beforeEach(async () => {
     jest.resetModules();
     require('../db/migrate').run();
-    users = require('../utils/users');
+    users = require('../store/users');
     ({ jwtSecret } = require('../middleware/auth-middleware'));
     store = require('../store/expenses');
-    receiptStore = require('../utils/receipt-store');
+    receiptStore = require('../receipts/receipt-store');
     claimImport = require('../claims/claim-import');
     claimImport._reset();
     require('../claims/claim-worker')._reset();
-    parser = require('../utils/receipt-parser');
+    parser = require('../receipts/receipt-parser');
     parser.parseReceiptBatch.mockReset();
     parser.parseReceiptBatch.mockImplementation(async (userId, images) => images.map(() => null));
     testUser = await users.createUser({ email: `c${Date.now()}@solv.sg`, password: 'password123' });
@@ -152,7 +152,7 @@ describe('routes/claims', () => {
   });
 
   test('a PDF inside the archive goes through the document reader', async () => {
-    const pdfPages = require('../utils/pdf-pages');
+    const pdfPages = require('../pdf/pages');
     jest.spyOn(pdfPages, 'extractPages').mockResolvedValue({ pages: ['text'], numPages: 1, hasText: true, textPageCount: 1 });
     parser.parseReceiptText.mockResolvedValue({ split: false, receipts: [{ merchant: 'Agoda', date: '2026-08-17', currency: 'SGD', total: 1443.21, category: 'Lodging', confidence: 'high', lineItems: [] }] });
     const zip = makeZip([{ name: 'hotel.pdf', data: Buffer.from('%PDF-1.4 fake') }]);

@@ -4,7 +4,7 @@ const { parseLlmJson, stripWrapping } = require('./llm-json');
 // one stripped the newline after the opening fence and three did not, one
 // matched ```JSON case-insensitively and three did not. These pin the union of
 // what all four used to handle, plus the cases that split them.
-describe('utils/llm-json', () => {
+describe('llm/llm-json', () => {
   const obj = { merchant: 'Grab', total: 18.4 };
 
   describe('the shapes models actually return', () => {

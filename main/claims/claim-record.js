@@ -1,6 +1,6 @@
 const { hashBuffer, findDuplicate } = require('../intake/dedup');
-const { canonicalCategory } = require('./categories');
-const users  = require('../utils/users');
+const { canonicalCategory } = require('../intake/categories');
+const users  = require('../store/users');
 const store  = require('../store/expenses');
 const logger = require('../utils/logger');
 
