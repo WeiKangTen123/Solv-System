@@ -68,11 +68,13 @@ export default function Login() {
 
   const isDark = theme === 'dark';
 
-  // The drifting fields behind the card: indigo into violet, with one cool
-  // teal a long way off. The same hues turned down for daylight.
+  // The drifting fields behind the card are ink on paper and light on ink:
+  // no hue, because the theme has no brand colour to spend here. They give the
+  // ground some depth without putting a colour on a page whose whole idea is
+  // that colour means a status.
   const orb = isDark
-    ? ['rgba(97,96,238,0.22)',  'rgba(130,80,240,0.16)', 'rgba(45,212,191,0.07)']
-    : ['rgba(91,91,214,0.16)',  'rgba(124,77,224,0.12)', 'rgba(15,118,110,0.06)'];
+    ? ['rgba(240,246,252,0.075)', 'rgba(240,246,252,0.05)', 'rgba(240,246,252,0.035)']
+    : ['rgba(13,17,23,0.055)',    'rgba(13,17,23,0.040)',   'rgba(13,17,23,0.028)'];
 
   return (
     <div style={{ position: 'relative', minHeight: '100vh', display: 'flex', overflow: 'hidden', background: 'var(--bg-primary)' }}>
@@ -101,8 +103,8 @@ export default function Login() {
         <div style={{
           position: 'absolute', inset: 0,
           backgroundImage: isDark
-            ? 'linear-gradient(rgba(255,255,255,0.028) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.028) 1px, transparent 1px)'
-            : 'linear-gradient(rgba(11,12,14,0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(11,12,14,0.045) 1px, transparent 1px)',
+            ? 'linear-gradient(rgba(240,246,252,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(240,246,252,0.03) 1px, transparent 1px)'
+            : 'linear-gradient(rgba(13,17,23,0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(13,17,23,0.045) 1px, transparent 1px)',
           backgroundSize: '40px 40px',
         }} />
       </div>
@@ -291,8 +293,8 @@ export default function Login() {
                     boxShadow:   'var(--shadow-sm)',
                     transition:  'all 0.2s ease',
                   }}
-                  onMouseEnter={e => { if (!loading) { e.currentTarget.style.filter = 'brightness(1.1)'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
-                  onMouseLeave={e => { e.currentTarget.style.filter = 'none'; e.currentTarget.style.transform = 'none'; }}
+                  onMouseEnter={e => { if (!loading) { e.currentTarget.style.background = 'var(--accent-hover)'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'var(--accent-gradient)'; e.currentTarget.style.transform = 'none'; }}
                 >
                   {loading && <span className="btn-spinner" />}
                   {loading
