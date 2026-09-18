@@ -112,13 +112,19 @@ router.delete('/:id/expenses/:expenseId', requireAuth, (req, res) => {
   res.json(_view(reports.getReport(r.id), req));
 });
 
-for (const [action, fn] of [['submit', (r, req) => wf.submit(r.id, req.user)], ['approve', (r, req) => wf.approve(r.id, req.user)], ['reject', (r, req) => wf.reject(r.id, req.user, (req.body || {}).reason)], ['paid', (r, req) => wf.markPaid(r.id, req.user)]]) {
-  router.post(`/:id/${action}`, requireAuth, (req, res) => {
+// One route per transition, spelled out: the UI path scanner reads literal
+// paths, and a reader of this file should not have to unroll a loop.
+function _transition(action, fn) {
+  return (req, res) => {
     const r = _load(req, res); if (!r) return;
     try { const out = fn(r, req); logger.info(`Report ${action}`, { id: r.id, number: r.number, by: req.user.email }); res.json(_view(out, req)); }
     catch (err) { _fail(res, err); }
-  });
+  };
 }
+router.post('/:id/submit',  requireAuth, _transition('submitted', (r, req) => wf.submit(r.id, req.user)));
+router.post('/:id/approve', requireAuth, _transition('approved',  (r, req) => wf.approve(r.id, req.user)));
+router.post('/:id/reject',  requireAuth, _transition('rejected',  (r, req) => wf.reject(r.id, req.user, (req.body || {}).reason)));
+router.post('/:id/paid',    requireAuth, _transition('paid',      (r, req) => wf.markPaid(r.id, req.user)));
 
 router.get('/:id/events', requireAuth, (req, res) => { const r = _load(req, res); if (r) res.json({ events: r.events }); });
 
