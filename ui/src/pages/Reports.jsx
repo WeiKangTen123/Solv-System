@@ -71,12 +71,12 @@ export default function Reports() {
               <thead><tr><th>Number</th><th>Title</th>{scope !== 'mine' && <th>Claimant</th>}<th>Period</th><th style={{ textAlign: 'right' }}>Expenses</th><th style={{ textAlign: 'right' }}>{base}</th><th>Status</th></tr></thead>
               <tbody>{reports.map(r => (
                 <tr key={r.id} onClick={() => navigate(`/reports/${r.id}`)} style={{ cursor: 'pointer' }}>
-                  <td style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{r.number}</td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{r.number}</td>
                   <td><div style={{ fontWeight: 600 }}>{r.title || '—'}</div>{r.purpose && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{r.purpose}</div>}</td>
                   {scope !== 'mine' && <td>{r.ownerName || r.ownerEmail}</td>}
                   <td style={{ whiteSpace: 'nowrap' }}>{r.periodFrom || '—'}{r.periodTo ? ` – ${r.periodTo}` : ''}</td>
                   <td style={{ textAlign: 'right' }}>{r.expenseCount}</td>
-                  <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: r.pendingRates ? 'var(--warning)' : undefined }}>{fmtMoney(r.totalBase, base)}{r.pendingRates ? ' *' : ''}</td>
+                  <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', color: r.pendingRates ? 'var(--warning)' : undefined }}>{fmtMoney(r.totalBase, base)}{r.pendingRates ? ' *' : ''}</td>
                   <td><StatusBadge status={r.status} /></td>
                 </tr>))}</tbody>
             </table>

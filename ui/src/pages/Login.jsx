@@ -4,6 +4,10 @@ import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
 import { api } from '../api/client';
 
+// Every colour here comes from the palette. This page used to carry fourteen
+// hex values of its own, inherited from the app it was ported from, so it was
+// the one screen that did not change when the theme did — you signed in to one
+// product and landed in another.
 export default function Login() {
   const { login, register } = useAuth();
   const { theme, toggle }   = useTheme();
@@ -64,73 +68,65 @@ export default function Login() {
 
   const isDark = theme === 'dark';
 
-  const orbOpacity = isDark ? [0.14, 0.11, 0.09] : [0.28, 0.22, 0.16];
+  // The drifting fields behind the card: coral and violet on indigo at night,
+  // the same two hues turned down over sand by day.
+  const orb = isDark
+    ? ['rgba(255,107,82,0.16)', 'rgba(167,139,250,0.14)', 'rgba(111,168,255,0.10)']
+    : ['rgba(201,74,52,0.18)',  'rgba(91,63,196,0.12)',   'rgba(44,95,168,0.10)'];
 
   return (
-    <div style={{ position: 'relative', minHeight: '100vh', display: 'flex', overflow: 'hidden', background: isDark ? '#09090f' : '#f0f0fb' }}>
+    <div style={{ position: 'relative', minHeight: '100vh', display: 'flex', overflow: 'hidden', background: 'var(--bg-primary)' }}>
 
-      {/* Animated background orbs */}
       <div aria-hidden="true" style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
         <div style={{
           position: 'absolute', width: 650, height: 650, borderRadius: '50%',
-          background: `radial-gradient(circle, rgba(15,110,86,${orbOpacity[0]}) 0%, transparent 70%)`,
+          background: `radial-gradient(circle, ${orb[0]} 0%, transparent 70%)`,
           top: '-180px', left: '-120px',
           animation: 'float1 10s ease-in-out infinite',
         }} />
         <div style={{
           position: 'absolute', width: 550, height: 550, borderRadius: '50%',
-          background: `radial-gradient(circle, rgba(28,143,115,${orbOpacity[1]}) 0%, transparent 70%)`,
+          background: `radial-gradient(circle, ${orb[1]} 0%, transparent 70%)`,
           bottom: '-120px', right: '-100px',
           animation: 'float2 13s ease-in-out infinite',
         }} />
         <div style={{
           position: 'absolute', width: 380, height: 380, borderRadius: '50%',
-          background: `radial-gradient(circle, rgba(59,130,246,${orbOpacity[2]}) 0%, transparent 70%)`,
+          background: `radial-gradient(circle, ${orb[2]} 0%, transparent 70%)`,
           top: '38%', right: '28%',
           animation: 'float3 8s ease-in-out infinite',
         }} />
-        {/* Extra orb for depth in light mode */}
-        {!isDark && (
-          <div style={{
-            position: 'absolute', width: 300, height: 300, borderRadius: '50%',
-            background: 'radial-gradient(circle, rgba(236,72,153,0.1) 0%, transparent 70%)',
-            top: '15%', right: '10%',
-            animation: 'float1 15s ease-in-out infinite reverse',
-          }} />
-        )}
 
-        {/* Grid pattern */}
+        {/* Ledger grid, just visible */}
         <div style={{
           position: 'absolute', inset: 0,
           backgroundImage: isDark
-            ? 'linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px)'
-            : 'linear-gradient(rgba(15,110,86,0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(15,110,86,0.07) 1px, transparent 1px)',
+            ? 'linear-gradient(rgba(237,230,218,0.022) 1px, transparent 1px), linear-gradient(90deg, rgba(237,230,218,0.022) 1px, transparent 1px)'
+            : 'linear-gradient(rgba(23,27,51,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(23,27,51,0.05) 1px, transparent 1px)',
           backgroundSize: '40px 40px',
         }} />
       </div>
 
-      {/* Theme toggle */}
       <button
         onClick={toggle}
         style={{
           position:       'fixed', top: 20, right: 20, zIndex: 10,
           width:          40, height: 40,
           borderRadius:   '50%',
-          border:         `1px solid ${isDark ? 'rgba(255,255,255,0.12)' : 'rgba(15,110,86,0.2)'}`,
-          background:     isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.9)',
+          border:         '1px solid var(--border)',
+          background:     'var(--bg-glass)',
           backdropFilter: 'blur(8px)',
           cursor:         'pointer', fontSize: 16,
           display:        'flex', alignItems: 'center', justifyContent: 'center',
-          color:          isDark ? '#eeeef5' : '#0F6E56',
+          color:          'var(--text-secondary)',
           transition:     'all 0.2s ease',
-          boxShadow:      isDark ? '0 2px 8px rgba(0,0,0,0.25)' : '0 2px 10px rgba(15,110,86,0.2)',
+          boxShadow:      'var(--shadow-sm)',
         }}
         title={`Switch to ${isDark ? 'light' : 'dark'} theme`}
       >
         {isDark ? '☀' : '◑'}
       </button>
 
-      {/* Center card */}
       <div style={{
         position: 'relative', zIndex: 1,
         width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -141,57 +137,54 @@ export default function Login() {
           animation: 'scaleIn 0.4s cubic-bezier(0.4,0,0.2,1)',
         }}>
 
-          {/* Brand */}
           <div style={{ textAlign: 'center', marginBottom: 32 }}>
             <div style={{
               width:          52, height: 52, borderRadius: 16,
               background:     'var(--accent-gradient)',
+              color:          'var(--accent-text)',
               margin:         '0 auto 16px',
               display:        'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow:      '0 8px 28px rgba(15,110,86,0.45)',
-              fontSize:       24,
+              boxShadow:      'var(--shadow-md)',
+              fontSize:       24, fontWeight: 800,
               animation:      'fadeUp 0.5s ease 0.1s both',
             }}>
               S
             </div>
             <h1 style={{
               fontSize:      26, fontWeight: 800, letterSpacing: '-0.6px',
-              color:         isDark ? '#eeeef5' : '#0d0e14',
+              color:         'var(--text-primary)',
               marginBottom:  6,
               animation:     'fadeUp 0.4s ease 0.15s both',
             }}>
               Solv Expenses
             </h1>
             <p style={{
-              fontSize:  14, color: isDark ? '#4e4e62' : '#9399b0', lineHeight: 1.5,
+              fontSize:  14, color: 'var(--text-muted)', lineHeight: 1.5,
               animation: 'fadeUp 0.4s ease 0.2s both',
             }}>
               {firstRun
                 ? 'Create the administrator account and your company'
                 : mode === 'login'
-                  ? 'Welcome back — sign in to continue'
+                  ? 'Welcome back, sign in to continue'
                   : 'Create a new account'}
             </p>
           </div>
 
           {/* Card — shake applied here on error */}
           <div style={{
-            background:     isDark ? 'rgba(19,19,26,0.88)' : 'rgba(255,255,255,0.92)',
+            background:     'var(--bg-glass)',
             backdropFilter: 'blur(24px)',
-            border:         `1px solid ${isDark ? 'rgba(255,255,255,0.07)' : 'rgba(15,110,86,0.14)'}`,
+            border:         '1px solid var(--border-card)',
             borderRadius:   20,
             padding:        '30px 28px',
-            boxShadow:      isDark
-              ? '0 24px 64px rgba(0,0,0,0.6), 0 4px 16px rgba(0,0,0,0.4)'
-              : '0 24px 64px rgba(15,110,86,0.15), 0 4px 16px rgba(0,0,0,0.06)',
+            boxShadow:      'var(--shadow-lg)',
             animation:      shaking ? 'shake 0.55s ease' : undefined,
           }}>
 
-            {/* Tab switcher */}
             {!firstRun && (
               <div style={{
                 display:      'flex', gap: 4,
-                background:   isDark ? 'rgba(255,255,255,0.05)' : 'rgba(15,110,86,0.06)',
+                background:   'var(--bg-input)',
                 borderRadius: 10, padding: 4, marginBottom: 24,
               }}>
                 {['login', 'register'].map(m => (
@@ -203,17 +196,10 @@ export default function Login() {
                       flex:         1, padding: '8px 0', fontSize: 13, fontWeight: 600,
                       borderRadius: 7, border: 'none', cursor: 'pointer',
                       transition:   'all 0.2s ease',
-                      background:   mode === m
-                        ? isDark ? '#222230' : '#ffffff'
-                        : 'transparent',
-                      color: mode === m
-                        ? isDark ? '#eeeef5' : '#0F6E56'
-                        : isDark ? '#4e4e62' : '#9399b0',
-                      boxShadow: mode === m
-                        ? isDark
-                          ? '0 2px 8px rgba(0,0,0,0.3)'
-                          : '0 2px 10px rgba(15,110,86,0.15)'
-                        : 'none',
+                      fontFamily:   'inherit',
+                      background:   mode === m ? 'var(--bg-card)' : 'transparent',
+                      color:        mode === m ? 'var(--text-primary)' : 'var(--text-muted)',
+                      boxShadow:    mode === m ? 'var(--shadow-xs)' : 'none',
                     }}
                   >
                     {m === 'login' ? 'Sign in' : 'Register'}
@@ -222,7 +208,6 @@ export default function Login() {
               </div>
             )}
 
-            {/* Alerts */}
             {error && (
               <div className="alert alert-error">
                 <span className="alert-icon">✕</span>
@@ -236,7 +221,6 @@ export default function Login() {
               </div>
             )}
 
-            {/* Form — re-mounts with slide animation on tab switch */}
             <form
               key={tabKey}
               onSubmit={handleSubmit}
@@ -298,16 +282,17 @@ export default function Login() {
                   disabled={loading}
                   style={{
                     width:       '100%', padding: '12px 0',
-                    background:  'linear-gradient(135deg, #0F6E56 0%, #1C8F73 100%)',
-                    color:       '#fff', border: 'none', borderRadius: 10,
+                    background:  'var(--accent)',
+                    color:       'var(--accent-text)', border: 'none', borderRadius: 10,
                     fontSize:    15, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer',
+                    fontFamily:  'inherit',
                     display:     'flex', alignItems: 'center', justifyContent: 'center', gap: 9,
                     opacity:     loading ? 0.7 : 1,
-                    boxShadow:   '0 4px 18px rgba(15,110,86,0.45)',
+                    boxShadow:   'var(--shadow-sm)',
                     transition:  'all 0.2s ease',
                   }}
-                  onMouseEnter={e => { if (!loading) { e.currentTarget.style.boxShadow = '0 6px 26px rgba(15,110,86,0.58)'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
-                  onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 4px 18px rgba(15,110,86,0.45)'; e.currentTarget.style.transform = 'none'; }}
+                  onMouseEnter={e => { if (!loading) { e.currentTarget.style.background = 'var(--accent-hover)'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'var(--accent)'; e.currentTarget.style.transform = 'none'; }}
                 >
                   {loading && <span className="btn-spinner" />}
                   {loading
@@ -318,10 +303,9 @@ export default function Login() {
             </form>
           </div>
 
-          {/* Footer note */}
           <p style={{
             textAlign:  'center', marginTop: 20, fontSize: 12,
-            color:      isDark ? '#4e4e62' : '#9399b0',
+            color:      'var(--text-muted)',
             animation:  'fadeIn 0.5s ease 0.4s both',
           }}>
             Receipts stay on your company's server.

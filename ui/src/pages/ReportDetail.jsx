@@ -93,8 +93,8 @@ export default function ReportDetail() {
                     <tr key={e.id}>
                       <td style={{ whiteSpace: 'nowrap' }}>{e.receiptDate || '—'}</td>
                       <td><Link to={`/expenses/${e.id}`}>{e.merchant || 'Untitled'}</Link>{e.purpose && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{e.purpose}</div>}</td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{fmtMoney(e.total, e.currency)}</td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: e.fxPending ? 'var(--warning)' : undefined }}>{e.baseTotal != null ? fmtMoney(e.baseTotal, base) : 'rate pending'}</td>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{fmtMoney(e.total, e.currency)}</td>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', color: e.fxPending ? 'var(--warning)' : undefined }}>{e.baseTotal != null ? fmtMoney(e.baseTotal, base) : 'rate pending'}</td>
                       <td style={{ fontSize: 12 }}>{e.lines.map(l => `${l.category}${l.onBehalfOf ? ` (${l.onBehalfOf})` : ''}`).join(', ')}</td>
                       <td><StatusBadge status={e.status} /></td>
                       <td>{canEdit && <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => act('rm', () => api.delete(`/reports/${id}/expenses/${e.id}`))}>Remove</button>}</td>
@@ -109,7 +109,7 @@ export default function ReportDetail() {
                   <label key={e.id} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 13, padding: '4px 0' }}>
                     <input type="checkbox" checked={picked.includes(e.id)} onChange={ev => setPicked(p => (ev.target.checked ? [...p, e.id] : p.filter(x => x !== e.id)))} />
                     <span style={{ flex: 1 }}>{e.receiptDate || '—'} · {e.merchant || 'Untitled'}</span>
-                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(e.total, e.currency)}</span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{fmtMoney(e.total, e.currency)}</span>
                   </label>
                 ))}
                 <button className="btn btn-primary btn-sm" style={{ marginTop: 8 }} disabled={!picked.length || !!busy} onClick={() => act('file', async () => { await api.post(`/reports/${id}/expenses`, { expenseIds: picked }); setPicked([]); })}>File {picked.length || ''} into this report</button>
@@ -121,10 +121,10 @@ export default function ReportDetail() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="card">
             <div className="card-title">Totals</div>
-            {cats.map(([c, v]) => <div key={c} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}><span>{c}</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(v, base)}</span></div>)}
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0 3px', borderTop: '1px solid var(--border)', marginTop: 6 }}><span>Total</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(r.totals.totalBase, base)}</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}><span>Advances</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>− {fmtMoney(r.advances, base)}</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, padding: '6px 0 0', color: 'var(--accent)' }}><span>Reimbursement</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(r.totals.reimbursement, base)}</span></div>
+            {cats.map(([c, v]) => <div key={c} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}><span>{c}</span><span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{fmtMoney(v, base)}</span></div>)}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0 3px', borderTop: '1px solid var(--border)', marginTop: 6 }}><span>Total</span><span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{fmtMoney(r.totals.totalBase, base)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}><span>Advances</span><span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>− {fmtMoney(r.advances, base)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, padding: '6px 0 0', color: 'var(--accent)' }}><span>Reimbursement</span><span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{fmtMoney(r.totals.reimbursement, base)}</span></div>
             {(r.totals.pendingRates > 0 || r.totals.unreviewed > 0) && <div style={{ fontSize: 12, color: 'var(--warning)', marginTop: 8 }}>{r.totals.unreviewed ? `${r.totals.unreviewed} not reviewed. ` : ''}{r.totals.pendingRates ? `${r.totals.pendingRates} without a rate.` : ''}</div>}
           </div>
 
@@ -154,7 +154,7 @@ export default function ReportDetail() {
                   <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '3px 0', borderTop: '1px solid var(--border)' }}>
                     <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.description}</span>
                     <span style={{ whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>{l.accountCode || '—'} · {l.taxType}</span>
-                    <span style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{fmtMoney(l.unitAmount)}</span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{fmtMoney(l.unitAmount)}</span>
                   </div>))}
                 <div style={{ color: 'var(--text-muted)', marginTop: 6 }}>Attachments: {preview.bill.attachments.join(', ') || 'none'}</div>
                 <button className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setPreview(null)}>Close preview</button>

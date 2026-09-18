@@ -1,3 +1,4 @@
+@import './fonts.css';
 @import './theme.css';
 
 /* ── Layout constants ────────────────────────────── */
@@ -26,11 +27,14 @@
 
 /* ── Reset ───────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* Form controls do not inherit the page typeface on their own. */
+button, input, select, textarea { font-family: inherit; }
 html, body, #root { height: 100%; }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  font-family: var(--font-sans);
   font-size: 14px;
+  font-variant-numeric: tabular-nums;
   line-height: 1.6;
   color: var(--text-primary);
   background: var(--bg-primary);
@@ -197,10 +201,12 @@ body {
 }
 
 .stat-value {
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: -0.5px;
-  line-height: 1;
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-label {
@@ -354,14 +360,23 @@ body {
   color: var(--text-primary);
 }
 
+/* Destructive, but quieter than the primary action. Reject sits next to Submit
+   on a report: two filled warm buttons there put identical weight behind "send
+   this on" and "send this back", and in the first render the loud one was the
+   destructive one. Tinted rather than filled, it still reads as the dangerous
+   choice without competing for the eye, and it fills in on hover so the button
+   still commits under the cursor. White on rose never cleared contrast anyway. */
 .btn-danger {
-  background: var(--danger);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(239,68,68,0.25);
+  background: var(--danger-subtle);
+  color: var(--danger);
+  border: 1.5px solid var(--danger-border);
+  box-shadow: none;
 }
 
 .btn-danger:hover:not(:disabled) {
-  box-shadow: 0 4px 14px rgba(239,68,68,0.35);
+  background: var(--danger);
+  color: var(--bg-card);
+  border-color: var(--danger);
   transform: translateY(-1px);
 }
 
@@ -414,7 +429,8 @@ body {
 .badge-red    { background: var(--danger-subtle);  color: var(--danger); }
 .badge-yellow { background: var(--warning-subtle); color: var(--warning); }
 .badge-blue   { background: var(--info-subtle);    color: var(--info); }
-.badge-purple { background: var(--accent-subtle);  color: var(--accent); }
+.badge-violet { background: var(--violet-subtle);  color: var(--violet); }
+.badge-purple { background: var(--violet-subtle);  color: var(--violet); }
 .badge-gray   { background: var(--bg-hover);       color: var(--text-muted); }
 
 /* Live dot for active status */
@@ -504,10 +520,10 @@ body {
 
 .alert-icon { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
 
-.alert-error   { background: var(--danger-subtle);  color: var(--danger);  border: 1px solid rgba(239,68,68,0.25); }
-.alert-success { background: var(--success-subtle); color: var(--success); border: 1px solid rgba(16,185,129,0.25); }
-.alert-info    { background: var(--info-subtle);    color: var(--info);    border: 1px solid rgba(59,130,246,0.25); }
-.alert-warning { background: var(--warning-subtle); color: var(--warning); border: 1px solid rgba(245,158,11,0.25); }
+.alert-error   { background: var(--danger-subtle);  color: var(--danger);  border: 1px solid var(--danger-border); }
+.alert-success { background: var(--success-subtle); color: var(--success); border: 1px solid var(--success-border); }
+.alert-info    { background: var(--info-subtle);    color: var(--info);    border: 1px solid var(--info-border); }
+.alert-warning { background: var(--warning-subtle); color: var(--warning); border: 1px solid var(--warning-border); }
 
 /* ── Page header ─────────────────────────────────── */
 .page-header {

@@ -28,10 +28,10 @@ export default function Approvals() {
               <thead><tr><th>Number</th><th>Claimant</th><th>Title</th><th style={{ textAlign: 'right' }}>{base}</th><th>Status</th><th>Submitted</th></tr></thead>
               <tbody>{reports.map(r => (
                 <tr key={r.id} onClick={() => navigate(`/reports/${r.id}`)} style={{ cursor: 'pointer' }}>
-                  <td style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{r.number}</td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{r.number}</td>
                   <td>{r.ownerName || r.ownerEmail}</td>
                   <td>{r.title || '—'}</td>
-                  <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(r.totalBase, base)}</td>
+                  <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{fmtMoney(r.totalBase, base)}</td>
                   <td><StatusBadge status={r.status} /></td>
                   <td style={{ color: 'var(--text-muted)' }}>{formatRelative(r.submittedAt)}</td>
                 </tr>))}</tbody>
