@@ -1,6 +1,6 @@
 // Reads one receipt file through the real reader and prints what Solv would
 // store. Needs a Gemini key: Gemini_API_KEY in main/.env or the environment.
-//   node main/scripts/read-sample.js "Sample/jw marriott mumbai.pdf"
+//   node main/scripts/read-sample.js "samples/receipts/jw-marriott-mumbai.pdf"
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 process.env.NODE_ENV = process.env.NODE_ENV || 'development';
 const fs = require('fs');

@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-17 (approved 2026-09-18)
 **Status:** Approved for planning
-**Companion:** `docs/plan/solv-expense-claims-plan.html` (the illustrated plan this spec condenses)
+**Companion:** `docs/plans/2026-09-17-solv-expense-claims-overview.html` (the illustrated plan this spec condenses)
 
 ## Goal
 

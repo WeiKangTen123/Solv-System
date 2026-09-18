@@ -39,7 +39,7 @@ describe('utils/pdf-render', () => {
     expect(await renderPdfPages(Buffer.alloc(0))).toBeNull();
   }, 60000);
 
-  const sample = path.join(__dirname, '../../Sample/jw marriott mumbai.pdf');
+  const sample = path.join(__dirname, '../../samples/receipts/jw-marriott-mumbai.pdf');
   (fs.existsSync(sample) ? test : test.skip)('the scanned Mumbai folio renders both pages', async () => {
     const out = await renderPdfPages(fs.readFileSync(sample));
     expect(out.numPages).toBe(2);

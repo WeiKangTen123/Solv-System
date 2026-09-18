@@ -1,5 +1,5 @@
-// Prices a saved folio read (docs/acceptance/*.json) with the live providers:
-//   node main/scripts/fx-sample.js docs/acceptance/2026-09-18-courtyard-marriott-pune.json
+// Prices a saved folio read (samples/reads/*.json) with the live providers:
+//   node main/scripts/fx-sample.js samples/reads/courtyard-marriott-pune.json
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 process.env.NODE_ENV = process.env.NODE_ENV || 'development';
 const fs = require('fs');
