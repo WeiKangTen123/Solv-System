@@ -460,7 +460,7 @@ describe('receipt-parser — Solv extensions', () => {
     });
     expect(r.invoiceNumber).toBe('93/713-181024');
     expect(r.lineItems.map(l => l.category)).toEqual(['Lodging', 'Lodging', 'Lodging', 'Meals', null]);
-    expect(r.lineItems[2].onBehalfOf).toBe('TAN SUAN KUAN');
+    expect(r.lineItems[2].onBehalfOf).toBe('Tan Suan Kuan');
     expect(r.lineItems[0].onBehalfOf).toBeNull();
   });
 
@@ -496,7 +496,7 @@ describe('receipt-parser — hotel folio details', () => {
       { description: 'Standard Retail [NA Room] TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110', unitAmount: 30, onBehalfOf: null },
       { description: 'Accomodation Charges -[NA Room]', unitAmount: 20, onBehalfOf: null },
     ] });
-    expect(r.lineItems.map(l => l.onBehalfOf)).toEqual(['Tan Suan Kuan', 'TAN SUAN KUAN', null]);
+    expect(r.lineItems.map(l => l.onBehalfOf)).toEqual(['Tan Suan Kuan', 'Tan Suan Kuan', null]);
   });
 
   test('tax is the sum of the GST lines when the document total tax is missing or a zero VAT footer', () => {
@@ -510,5 +510,43 @@ describe('receipt-parser — hotel folio details', () => {
     expect(parser.normalise({ merchant: 'JW', total: 22154.5, currency: 'INR', tax: 3000, lineItems: items }).tax).toBe(3000);
     // A receipt that says no tax applies, with no tax lines, stays at 0.
     expect(parser.normalise({ merchant: 'Shop', total: 10, currency: 'SGD', tax: 0, lineItems: [{ description: 'Bun', unitAmount: 10 }] }).tax).toBe(0);
+  });
+});
+
+describe('receipt-parser — a folio\'s payment line is not a charge', () => {
+  const parser = require('./receipt-parser');
+  const { buildLines } = require('../receipts/read-receipt');
+  // The Pune folio as the reader returned it: 39 charges and the card payment.
+  const items = [
+    ['Meals', 1296.25, 'MoMo Cafe Dinner Food Room# 110'], ['Meals', 250, 'MoMo Cafe Dinner Soda'], ['Meals', 139.15, 'CGST Momo Cafe F&B 9%'], ['Meals', 139.17, 'SGST Momo Cafe F&B 9%'],
+    ['Lodging', 12825, 'Package'], ['Lodging', 1154.25, 'CGST ROOM 9%'], ['Lodging', 1154.25, 'SGST ROOM 9%'],
+    ['Lodging', 10925, 'Standard Retail [NA Room] TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'], ['Lodging', 983.25, 'CGST ROOM 9% [Add; udf.] TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'], ['Lodging', 983.25, 'SGST ROOM 9% [Add; udf.] TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'],
+    ['Meals', 675, 'MoMo Cafe Dinner Food Room# 128 TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'], ['Meals', 60.75, 'CGST Momo Cafe F&B 9% TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'], ['Meals', 60.75, 'SGST Momo Cafe F&B 9% TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'],
+    ['Lodging', 12184, 'Package'], ['Lodging', 1096.56, 'CGST ROOM 9%'], ['Lodging', 1096.56, 'SGST ROOM 9%'],
+    ['Lodging', 10450, 'Standard Retail [NA Room] TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'], ['Lodging', 940.5, 'CGST ROOM 9% [Add; udf.] TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'], ['Lodging', 940.5, 'SGST ROOM 9% [Add; udf.] TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'],
+    ['Meals', 950, 'MoMo Cafe Breakfast Food Room# 126 TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'], ['Meals', 85.5, 'CGST Momo Cafe F&B 9% TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'], ['Meals', 85.5, 'SGST Momo Cafe F&B 9% TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'],
+    ['Meals', 1296.25, 'MoMo Cafe Dinner Food Room# 110'], ['Meals', 250, 'MoMo Cafe Dinner Soda'], ['Meals', 139.15, 'CGST Momo Cafe F&B 9%'], ['Meals', 139.17, 'SGST Momo Cafe F&B 9%'],
+    ['Meals', 1296.25, 'MoMo Cafe Dinner Food Room# 110'], ['Meals', 250, 'MoMo Cafe Dinner Soda'], ['Meals', 139.15, 'CGST Momo Cafe F&B 9%'], ['Meals', 139.17, 'SGST Momo Cafe F&B 9%'],
+    ['Lodging', 11543, 'Package'], ['Lodging', 1038.87, 'CGST ROOM 9%'], ['Lodging', 1038.87, 'SGST ROOM 9%'],
+    ['Lodging', 9738, 'Standard Retail [NA Room] TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'], ['Lodging', 876.42, 'CGST ROOM 9% [Add; udf.] TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'], ['Lodging', 876.42, 'SGST ROOM 9% [Add; udf.] TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110'],
+    ['Meals', 807.5, 'MoMo Cafe Breakfast Food Room# 110'], ['Meals', 72.68, 'CGST Momo Cafe F&B 9%'], ['Meals', 72.68, 'SGST Momo Cafe F&B 9%'],
+    ['Other', 88188.77, 'Manual MasterCard / Euro Card'],
+  ].map(([category, unitAmount, description]) => ({ category, unitAmount, description }));
+
+  test('the card payment line is dropped and the four report lines reconcile to the cent', () => {
+    const r = parser.normalise({ merchant: 'Courtyard By Marriott Pune Chakan', date: '2026-09-04', currency: 'INR', total: 88188.77, tax: null, category: 'Lodging', confidence: 'high', lineItems: items });
+    expect(r.lineItems).toHaveLength(39);
+    expect(r.tax).toBe(13452.52);
+    expect([...new Set(r.lineItems.map(l => l.onBehalfOf).filter(Boolean))]).toEqual(['Tan Suan Kuan']);
+    const lines = buildLines(r, 'Other');
+    expect(lines.map(l => [l.category, l.onBehalfOf, l.amount])).toEqual([
+      ['Lodging', null, 43131.36], ['Lodging', 'Tan Suan Kuan', 36713.34], ['Meals', null, 6426.57], ['Meals', 'Tan Suan Kuan', 1917.5],
+    ]);
+    expect(lines.reduce((s, l) => s + Math.round(l.amount * 100), 0)).toBe(8818877);
+  });
+
+  test('a genuine charge that happens to equal the total is kept when it is the only line', () => {
+    const r = parser.normalise({ merchant: 'Grab', total: 18.4, currency: 'SGD', lineItems: [{ description: 'Ride fare', unitAmount: 18.4 }] });
+    expect(r.lineItems).toHaveLength(1);
   });
 });
