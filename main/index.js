@@ -51,6 +51,7 @@ const companyRoutes   = require('./routes/company');
 const receiptRoutes   = require('./routes/receipts');
 const expenseRoutes   = require('./routes/expenses');
 const claimRoutes     = require('./routes/claims');
+const fxRoutes        = require('./routes/fx');
 const dashRoutes      = require('./routes/dashboard');
 app.use('/api/auth',      authRoutes);
 app.use('/api/users',     userRoutes);
@@ -58,6 +59,7 @@ app.use('/api/company',   companyRoutes);
 app.use('/api/receipts',  receiptRoutes);
 app.use('/api/expenses',  expenseRoutes);
 app.use('/api/claims',    claimRoutes);
+app.use('/api/fx',        fxRoutes);
 app.use('/api/dashboard', dashRoutes);
 app.get('/dashboard/health', dashRoutes.health);
 
