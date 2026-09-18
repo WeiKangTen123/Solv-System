@@ -28,6 +28,8 @@ export default function ExpenseReview() {
   const baseCurrency = user?.baseCurrency || 'SGD';
   const [exp, setExp] = useState(null);
   const [rateEdit, setRateEdit] = useState(null);
+  const [locked, setLocked] = useState(false);
+  const [drafts, setDrafts] = useState([]);
   const [imageUrl, setImageUrl] = useState(null);
   const [form, setForm] = useState({});
   const [lines, setLines] = useState([]);
@@ -41,14 +43,15 @@ export default function ExpenseReview() {
   const load = useCallback(async () => {
     const d = await api.get(`/expenses/${id}`);
     setExp(d.expense);
-    setForm(pick(d.expense));
+    setLocked(!!d.locked);
+    setForm({ ...pick(d.expense), reportId: d.expense.reportId || '' });
     setLines(d.expense.lines.map(l => ({ category: l.category || '', description: l.description || '', amount: l.amount, onBehalfOf: l.onBehalfOf || '' })));
     setImageUrl(d.expense.receipt && d.imageToken ? `/api/receipts/${d.expense.receipt.id}/image?token=${encodeURIComponent(d.imageToken)}` : null);
     api.get(`/expenses/${id}/group`).then(setGroup).catch(() => setGroup(null));
   }, [id]);
 
   useEffect(() => { setMsg(null); load().catch(e => setMsg({ tone: 'error', text: e.message })); }, [load]);
-  useEffect(() => { api.get('/company').then(d => setCategories(d.categories)).catch(() => {}); }, []);
+  useEffect(() => { api.get('/company').then(d => setCategories(d.categories)).catch(() => {}); api.get('/reports').then(d => setDrafts(d.reports.filter(r => ['draft', 'rejected'].includes(r.status)))).catch(() => {}); }, []);
   useEffect(() => {
     // The image token lives five minutes; refresh it, and keep polling while the reader works.
     const t = setInterval(() => load().catch(() => {}), exp?.status === 'reading' ? 2500 : 4 * 60 * 1000);
@@ -64,7 +67,7 @@ export default function ExpenseReview() {
   async function save({ quiet } = {}) {
     setBusy('save');
     try {
-      const body = { ...form, currency: String(form.currency || '').toUpperCase() };
+      const body = { ...form, currency: String(form.currency || '').toUpperCase(), reportId: form.reportId || null };
       const r = await api.patch(`/expenses/${id}`, body);
       if (lines.length && (lines.length !== 1 || cents(lines[0].amount) !== cents(r.expense.total) || lines[0].category !== (r.expense.lines[0]?.category || '') || (lines[0].onBehalfOf || '') !== (r.expense.lines[0]?.onBehalfOf || '') || (lines[0].description || '') !== (r.expense.lines[0]?.description || ''))) {
         await api.put(`/expenses/${id}/lines`, { lines: lines.map(l => ({ ...l, amount: Number(l.amount), onBehalfOf: l.onBehalfOf.trim() || null })) });
@@ -135,6 +138,7 @@ export default function ExpenseReview() {
       </div>
 
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
+      {locked && <div className="alert alert-info">This expense is in a report that has been submitted. It can be changed again if the report is sent back.</div>}
       {exp.errorMsg && <div className="alert alert-warning"><span className="alert-icon">!</span><span>{exp.errorMsg}{exp.duplicateOf && <> · <Link to={`/expenses/${exp.duplicateOf}`}>see the other one</Link></>}</span></div>}
       {group?.split && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>{group.groupType === 'batch' ? 'Batch import' : 'Split from one file'} · {group.index} of {group.total}</div>}
 
@@ -170,6 +174,13 @@ export default function ExpenseReview() {
                          placeholder={k === 'purpose' ? 'Client site visit, Chakan plant' : k === 'currency' ? 'INR' : ''} />
                 </div>
               ))}
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="f-report">Report</label>
+              <select id="f-report" className="form-input" value={form.reportId || ''} onChange={e => set('reportId', e.target.value)} disabled={locked}>
+                <option value="">Not filed yet</option>
+                {drafts.map(r => <option key={r.id} value={r.id}>{r.number} {r.title || ''}</option>)}
+              </select>
             </div>
             {exp.description && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Reader's note: {exp.description}</div>}
           </div>
@@ -237,8 +248,8 @@ export default function ExpenseReview() {
           </div>
 
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-            <button className="btn btn-outline" disabled={!!busy} onClick={() => save()}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
-            <button className="btn btn-primary" disabled={!!busy || !reconciled} title={reconciled ? '' : 'The lines must add up to the total first'} onClick={markReviewed}>
+            <button className="btn btn-outline" disabled={!!busy || locked} onClick={() => save()}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
+            <button className="btn btn-primary" disabled={!!busy || !reconciled || locked || exp.status === 'reviewed'} title={reconciled ? '' : 'The lines must add up to the total first'} onClick={markReviewed}>
               {busy === 'review' ? 'Saving…' : (next ? 'Mark reviewed → next' : 'Mark reviewed')}
             </button>
           </div>

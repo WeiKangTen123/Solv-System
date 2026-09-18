@@ -4,17 +4,30 @@ import { useAuth } from '../context/AuthContext';
 import ReceiptUpload from '../components/receipts/ReceiptUpload';
 import ExpenseTable from '../components/ExpenseTable';
 import { useVisiblePolling } from '../utils/useVisiblePolling';
+import { Link } from 'react-router-dom';
+import StatusBadge from '../components/StatusBadge';
+import { fmtMoney } from '../utils/format';
 
 // The front door: the three ways in, then what needs the person's attention.
 export default function Home() {
   const { user } = useAuth();
   const [expenses, setExpenses] = useState([]);
-  const load = useCallback(() => api.get('/expenses').then(d => setExpenses(d.expenses)).catch(() => {}), []);
+  const [reports, setReports] = useState([]);
+  const [msg, setMsg] = useState(null);
+  const load = useCallback(() => Promise.all([api.get('/expenses').then(d => setExpenses(d.expenses)), api.get('/reports').then(d => setReports(d.reports))]).catch(() => {}), []);
   useEffect(() => { load(); }, [load]);
   useVisiblePolling(load, () => (expenses.some(e => e.status === 'reading') ? 2500 : 20000));
 
   const needing = expenses.filter(e => e.status === 'review-needed' || e.status === 'reading');
   const reviewed = expenses.filter(e => e.status === 'reviewed');
+  const unfiled = reviewed.filter(e => !e.reportId);
+  const open = reports.filter(r => ['draft', 'rejected', 'submitted'].includes(r.status));
+  const drafts = reports.filter(r => ['draft', 'rejected'].includes(r.status));
+  const base = user?.baseCurrency || 'SGD';
+  async function fileInto(expenseId, reportId) {
+    if (!reportId) return;
+    try { await api.post(`/reports/${reportId}/expenses`, { expenseIds: [expenseId] }); await load(); } catch (e) { setMsg({ tone: 'error', text: e.message }); }
+  }
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
@@ -32,6 +45,34 @@ export default function Home() {
         <div className="stat-card"><div className="stat-label">Needs review</div><div className="stat-value">{needing.length}</div><div className="stat-sub">read by AI, waiting for you</div></div>
         <div className="stat-card"><div className="stat-label">Reviewed</div><div className="stat-value">{reviewed.length}</div><div className="stat-sub">ready for a report</div></div>
         <div className="stat-card"><div className="stat-label">All expenses</div><div className="stat-value">{expenses.length}</div><div className="stat-sub">{user?.baseCurrency || 'SGD'} base currency</div></div>
+      </div>
+
+      {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16, marginBottom: 20 }}>
+        <div className="card">
+          <div className="card-title">Reviewed, not yet in a report ({unfiled.length})</div>
+          <div className="card-subtitle">Pick a report to file each one into, or <Link to="/reports">create a report</Link>.</div>
+          {!unfiled.length ? <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Nothing waiting to be filed.</div> : unfiled.map(e => (
+            <div key={e.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 0', borderTop: '1px solid var(--border)', fontSize: 13 }}>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.receiptDate || '—'} · {e.merchant || 'Untitled'}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{e.baseTotal != null ? fmtMoney(e.baseTotal, base) : fmtMoney(e.total, e.currency)}</span>
+              <select className="form-input" style={{ width: 170, padding: '4px 8px', fontSize: 12 }} defaultValue="" onChange={ev => fileInto(e.id, ev.target.value)} aria-label="File into report">
+                <option value="">File into…</option>
+                {drafts.map(r => <option key={r.id} value={r.id}>{r.number} {r.title || ''}</option>)}
+              </select>
+            </div>))}
+        </div>
+        <div className="card">
+          <div className="card-title">Open reports ({open.length})</div>
+          <div className="card-subtitle">Drafts to finish, and submitted ones waiting for a decision.</div>
+          {!open.length ? <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No open reports.</div> : open.map(r => (
+            <Link key={r.id} to={`/reports/${r.id}`} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 0', borderTop: '1px solid var(--border)', fontSize: 13, color: 'inherit', textDecoration: 'none' }}>
+              <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{r.number}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>{r.title || 'Untitled'}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(r.totalBase, base)}</span>
+              <StatusBadge status={r.status} />
+            </Link>))}
+        </div>
       </div>
 
       <div className="card">

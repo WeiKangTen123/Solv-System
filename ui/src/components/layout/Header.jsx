@@ -6,6 +6,9 @@ function getBreadcrumbs(pathname) {
   if (pathname === '/')          return [{ label: 'Home' }];
   if (pathname === '/expenses')  return [{ label: 'My expenses' }];
   if (pathname.startsWith('/expenses/')) return [{ label: 'My expenses', to: '/expenses' }, { label: 'Review' }];
+  if (pathname === '/reports')   return [{ label: 'Reports' }];
+  if (pathname.startsWith('/reports/')) return [{ label: 'Reports', to: '/reports' }, { label: 'Report' }];
+  if (pathname === '/approvals') return [{ label: 'Approvals' }];
   if (pathname === '/settings')  return [{ label: 'Settings' }];
   return [];
 }

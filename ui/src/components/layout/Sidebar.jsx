@@ -5,7 +5,9 @@ import { useViewMode } from '../../context/ViewModeContext';
 const NAV = [
   { to: '/',         label: 'Home',        desc: 'Add and file expenses', end: true },
   { to: '/expenses', label: 'My expenses', desc: 'Everything you claimed' },
+  { to: '/reports',  label: 'Reports',     desc: 'File, submit, export' },
 ];
+const APPROVER_NAV = [{ to: '/approvals', label: 'Approvals', desc: 'Waiting for your decision' }];
 const ADMIN_NAV = [{ to: '/settings', label: 'Settings', desc: 'Company, staff, reader' }];
 
 function Item({ to, label, desc, end, onClick }) {
@@ -28,6 +30,7 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const close = () => { if (isMobile) setMobileDrawerOpen(false); };
   const canAdmin = user?.role === 'admin' || user?.role === 'finance';
+  const canApprove = canAdmin || user?.role === 'manager';
 
   return (
     <aside style={{
@@ -45,6 +48,7 @@ export default function Sidebar() {
       </div>
       <nav style={{ flex: 1, padding: '0 8px', overflow: 'auto' }}>
         {NAV.map(i => <Item key={i.to} {...i} onClick={close} />)}
+        {canApprove && APPROVER_NAV.map(i => <Item key={i.to} {...i} onClick={close} />)}
         {canAdmin && ADMIN_NAV.map(i => <Item key={i.to} {...i} onClick={close} />)}
       </nav>
       <div style={{ margin: '8px 8px 12px', padding: '12px 14px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
