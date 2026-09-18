@@ -4,6 +4,7 @@ import { useTheme } from '../../context/ThemeContext';
 const NAV_ITEMS = [
   { to: '/',         label: 'Home',     icon: '▦', end: true },
   { to: '/expenses', label: 'Expenses', icon: '◧' },
+  { to: '/reports',  label: 'Reports',  icon: '▤' },
   { to: '/settings', label: 'Settings', icon: '◈' },
 ];
 
