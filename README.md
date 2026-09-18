@@ -60,13 +60,15 @@ samples/         receipts/ (the two Marriott folios), reads/ (the reader's saved
 
 ## Look and feel
 
-Nocturne: a near-black, almost colourless ground with one indigo-to-violet gradient on the primary action, and a separate hue for every status. Dark is the default; the toggle switches to the daylight version and the choice is remembered. The whole palette is [ui/src/styles/theme.css](ui/src/styles/theme.css), tokens only, and nothing outside that file names a colour, so a repaint means editing one file.
+Porcelain: a cool white ground, near-black actions, hairline borders, and no brand colour at all. The primary button is the darkest thing on the page rather than the most colourful, which leaves every colour on screen belonging to a status. Light is the default; the toggle switches to the night version, where the ink and the paper swap, and the choice is remembered. The whole palette is [ui/src/styles/theme.css](ui/src/styles/theme.css), tokens only, and nothing outside that file names a colour, so a repaint means editing one file.
 
 Three rules the palette keeps:
 
-- The accent means "you can do this" and is never also the success colour.
-- Each status owns a hue: blue in progress, amber needs you, green settled, teal paid, rose refused. Teal keeps every status clear of the indigo the buttons use.
-- An accent that fills and an accent that is text are different colours. Indigo dark enough for white to sit on it is too dark to read as text on a near-black card, so `--accent` fills and `--accent-ink` writes.
+- Colour means state and nothing else. No accent competes with it, because the accent has no colour.
+- Each status owns a hue: blue in progress, amber needs you, green settled, teal paid, rose refused. The same five in both themes, deepened for white and brightened for black.
+- Surfaces separate by edge, not by shadow. Shadows are kept for things that genuinely float, such as a modal.
+
+It is also deliberately nothing like the Xero automation, which is dark with an indigo accent. Anyone running both knows which window they are in without reading a word.
 
 Every foreground and background pair in both themes was measured against 4.5:1, and muted helper text against 3:1.
 

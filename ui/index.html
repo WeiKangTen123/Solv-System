@@ -3,17 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="color-scheme" content="dark light" />
+    <meta name="color-scheme" content="light dark" />
     <title>Solv Expenses</title>
 
-    <!-- Stamp the stored theme before anything paints. Without this the page
-         renders the default (dark) for a frame and then flips, which on a
-         phone reads as a flash of the wrong colour on every load. -->
+    <!-- Stamp the stored theme before anything paints. Without this a viewer
+         who chose dark gets a frame of white on every load, which on a phone
+         reads as a flash. Light is the default, so anything but a stored
+         'dark' resolves to light. -->
     <script>
       try {
         var t = localStorage.getItem('theme');
-        document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
-      } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+        document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
+      } catch (e) { document.documentElement.setAttribute('data-theme', 'light'); }
     </script>
 
   </head>
