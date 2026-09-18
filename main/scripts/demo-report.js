@@ -26,6 +26,7 @@ const { reportPayload } = require('../reports/expense-payload');
 const exporter = require('../reports/expense-export');
 const doc = require('../reports/expense-doc');
 const { newId } = require('../utils/ids');
+const { buildLines } = require('../receipts/read-receipt');
 
 const ROOT = path.join(__dirname, '../..');
 const SAMPLES = [
@@ -51,7 +52,7 @@ const SAMPLES = [
       companyId: admin.companyId, userId: elaine.id, receiptId, source: 'upload', status: 'reviewed',
       merchant: r.merchant, receiptDate: r.date, receiptTime: r.time, invoiceNo: r.invoiceNumber, currency: r.currency, total: r.total, tax: r.tax,
       description: r.description, category: r.category, purpose: s.purpose, aiReadAt: new Date().toISOString(), aiConfidence: r.confidence,
-      lines: r.lines.map(l => ({ category: l.category, description: l.description, amount: l.amount, onBehalfOf: l.onBehalfOf, currency: r.currency })),
+      lines: buildLines(r, 'Other').map(l => ({ ...l, currency: r.currency })),
     });
     const fx = await applyFx(e.id);
     if (fx.pending) throw new Error(`No rate for ${r.currency} on ${r.date}`);

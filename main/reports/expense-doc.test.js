@@ -66,6 +66,6 @@ describe('reports/expense-doc', () => {
   });
 
   test('text outside Latin-1 is folded, but the dash, quote, dagger and arrow survive', () => {
-    expect(doc._latin1('Café – ‘ok’ ‡ → 東京')).toBe('Café – ‘ok’ ‡ → ??');
+    expect(doc._latin1('Café – ‘ok’ ‡ → 東京 — end')).toBe('Café – ‘ok’ ‡ to ?? — end');
   });
 });
