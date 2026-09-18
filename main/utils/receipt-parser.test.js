@@ -486,3 +486,29 @@ describe('receipt-parser — Solv extensions', () => {
     expect(out.receipts[0].merchant).toBe('Grab');
   });
 });
+
+describe('receipt-parser — hotel folio details', () => {
+  const parser = require('./receipt-parser');
+
+  test('a transferred charge names the person before the arrow, whatever the model said', () => {
+    const r = parser.normalise({ merchant: 'JW', total: 100, currency: 'INR', lineItems: [
+      { description: 'Accomodation Charges -[NA Room] Tan Suan Kuan #1155=>Khoo Elaine Xin Yu #1159', unitAmount: 50, onBehalfOf: 'Tan Suan Kuan #1155 => Khoo #110' },
+      { description: 'Standard Retail [NA Room] TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110', unitAmount: 30, onBehalfOf: null },
+      { description: 'Accomodation Charges -[NA Room]', unitAmount: 20, onBehalfOf: null },
+    ] });
+    expect(r.lineItems.map(l => l.onBehalfOf)).toEqual(['Tan Suan Kuan', 'TAN SUAN KUAN', null]);
+  });
+
+  test('tax is the sum of the GST lines when the document total tax is missing or a zero VAT footer', () => {
+    const items = [
+      { description: 'Accomodation Charges', unitAmount: 17575 }, { description: 'CGST 9%- Rooms-(New)', unitAmount: 1581.75 }, { description: 'SGST 9%- Rooms-(New)', unitAmount: 1581.75 },
+      { description: 'Upsell Breakfast', unitAmount: 1200 }, { description: 'JW Cafe CGST 9%', unitAmount: 108 }, { description: 'JW Cafe SGST 9%', unitAmount: 108 },
+    ];
+    expect(parser.normalise({ merchant: 'JW', total: 22154.5, currency: 'INR', tax: 0, lineItems: items }).tax).toBe(3379.5);
+    expect(parser.normalise({ merchant: 'JW', total: 22154.5, currency: 'INR', tax: null, lineItems: items }).tax).toBe(3379.5);
+    // A stated tax wins over the lines.
+    expect(parser.normalise({ merchant: 'JW', total: 22154.5, currency: 'INR', tax: 3000, lineItems: items }).tax).toBe(3000);
+    // A receipt that says no tax applies, with no tax lines, stays at 0.
+    expect(parser.normalise({ merchant: 'Shop', total: 10, currency: 'SGD', tax: 0, lineItems: [{ description: 'Bun', unitAmount: 10 }] }).tax).toBe(0);
+  });
+});

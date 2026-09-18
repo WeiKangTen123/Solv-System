@@ -88,6 +88,30 @@ function _time(value) {
 }
 
 const _currency = _intake.currencyCode;
+// A hotel prints a transferred charge as "TAN SUAN KUAN #126=>Khoo Elaine #110":
+// the person before the arrow is who the line is really for. Read from the
+// description when the model left it out; when the model answered, keep the
+// name and drop the room numbers and the arrow.
+const TRANSFER_RE = /([A-Z][A-Za-z.'\- ]{2,60}?)\s*#\d+\s*=>/;
+function _onBehalf(li) {
+  const printed = typeof li.description === 'string' ? TRANSFER_RE.exec(li.description) : null;
+  if (printed) return printed[1].trim().slice(0, 80);
+  if (typeof li.onBehalfOf !== 'string' || !li.onBehalfOf.trim()) return null;
+  const cleaned = li.onBehalfOf.split(/=>|#|\(/)[0].trim();
+  return cleaned ? cleaned.slice(0, 80) : null;
+}
+
+// Indian and other tax lines are printed per charge. When the document's own
+// tax figure is missing (or a "VAT 0.00" footer was read as the tax), the tax
+// is the sum of the tax lines.
+const TAX_LINE_RE = /\b(cgst|sgst|igst|utgst|gst|vat|tax|service charge|svc)\b/i;
+function _taxFromLines(lineItems, total) {
+  const cents = lineItems.filter(li => TAX_LINE_RE.test(li.description || '')).reduce((sum, li) => sum + Math.round(Number(li.unitAmount || 0) * 100), 0);
+  if (cents <= 0) return null;
+  if (total !== null && cents >= Math.round(total * 100)) return null;
+  return cents / 100;
+}
+
 // Normalises whatever the model returned into the shape the invoice store uses.
 // Exported for testing: this is where a bad model response is made harmless.
 function normalise(parsed) {
@@ -119,7 +143,7 @@ function normalise(parsed) {
         unitAmount:   n.unitAmount,
         discountRate: n.discountRate,
         category:     canonicalCategory(li && li.category),
-        onBehalfOf:   li && typeof li.onBehalfOf === 'string' && li.onBehalfOf.trim() ? li.onBehalfOf.trim().slice(0, 80) : null,
+        onBehalfOf:   li ? _onBehalf(li) : null,
       };
     })
     .filter(Boolean);
@@ -142,7 +166,7 @@ function normalise(parsed) {
     total:       usableTotal,
     // Tax cannot exceed the total; if it does, one of the two was misread and
     // neither should be presented as fact.
-    tax:         tax !== null && tax >= 0 && (usableTotal === null || tax <= usableTotal) ? tax : null,
+    tax:         (tax !== null && tax > 0 && (usableTotal === null || tax <= usableTotal)) ? tax : (_taxFromLines(lineItems, usableTotal) ?? (tax === 0 ? 0 : null)),
     subTotal:    sub !== null && sub >= 0 && (usableTotal === null || sub <= usableTotal) ? sub : null,
     description: desc,
     lineItems,
