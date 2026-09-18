@@ -3,15 +3,20 @@ const express = require('express');
 const jwt     = require('jsonwebtoken');
 const { serverFor } = require('../scripts/test-server');
 
-jest.mock('../receipts/read-receipt', () => ({ readOne: jest.fn(), applyRead: jest.requireActual('../receipts/read-receipt').applyRead, flagIfSuspected: jest.fn() }));
+// The reader is mocked one level down, so the real read pipeline runs against
+// this test's own database rather than a stale module instance.
+jest.mock('../utils/receipt-parser', () => ({
+  parseReceiptImage: jest.fn().mockResolvedValue(null), parseReceiptText: jest.fn().mockResolvedValue(null), parseReceiptPages: jest.fn().mockResolvedValue(null),
+}));
+jest.mock('../utils/pdf-render', () => ({ renderPdfPages: jest.fn().mockResolvedValue(null) }));
 
 describe('routes/expenses', () => {
-  let app, users, store, admin, emp, mgr, fin, tokens, read;
+  let app, users, store, admin, emp, mgr, fin, tokens, parser;
   beforeEach(async () => {
     jest.resetModules();
     require('../db/migrate').run();
-    users = require('../utils/users'); store = require('../store/expenses'); read = require('../receipts/read-receipt');
-    read.readOne.mockReset();
+    users = require('../utils/users'); store = require('../store/expenses'); parser = require('../utils/receipt-parser');
+    parser.parseReceiptImage.mockReset(); parser.parseReceiptImage.mockResolvedValue(null);
     admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
     mgr = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: admin.companyId, role: 'manager' });
     fin = await users.createUser({ email: 'f@solv.sg', password: 'password123', companyId: admin.companyId, role: 'finance' });
@@ -70,13 +75,16 @@ describe('routes/expenses', () => {
   });
 
   test('re-read applies the reader result to this expense only', async () => {
-    const e = seed(emp);
-    read.readOne.mockResolvedValue({ merchant: 'JW Marriott', date: '2026-09-01', currency: 'INR', total: 44309, category: 'Lodging', confidence: 'high', lineItems: [] });
+    const files = require('../utils/receipt-store').forUser(emp.id);
+    const name = files.save('rr1', Buffer.from([0xff, 0xd8, 0xff, 0xe0]), 'image/jpeg');
+    const rcpt = store.createReceipt({ id: 'rr1', companyId: emp.companyId, userId: emp.id, file: name, mime: 'image/jpeg', sha256: 'rr' });
+    const e = store.createExpense({ companyId: emp.companyId, userId: emp.id, receiptId: rcpt.id, status: 'review-needed', merchant: 'Courtyard', currency: 'INR', total: 100, receiptDate: '2026-09-04', lines: [{ category: 'Lodging', amount: 100 }] });
+    parser.parseReceiptImage.mockResolvedValue({ split: false, receipts: [{ merchant: 'JW Marriott', date: '2026-09-01', currency: 'INR', total: 44309, category: 'Lodging', confidence: 'high', lineItems: [] }] });
     const r = await request(serverFor(app)).post(`/api/expenses/${e.id}/reread`).set(as(emp)).expect(200);
     expect(r.body.ok).toBe(true);
     expect(r.body.expense.merchant).toBe('JW Marriott');
     expect(r.body.expense.lines).toEqual([expect.objectContaining({ amount: 44309 })]);
-    read.readOne.mockResolvedValue(null);
+    parser.parseReceiptImage.mockResolvedValue(null);
     const miss = await request(serverFor(app)).post(`/api/expenses/${e.id}/reread`).set(as(emp)).expect(200);
     expect(miss.body.ok).toBe(false);
   });
