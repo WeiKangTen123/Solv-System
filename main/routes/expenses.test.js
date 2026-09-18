@@ -9,6 +9,7 @@ jest.mock('../utils/receipt-parser', () => ({
   parseReceiptImage: jest.fn().mockResolvedValue(null), parseReceiptText: jest.fn().mockResolvedValue(null), parseReceiptPages: jest.fn().mockResolvedValue(null),
 }));
 jest.mock('../utils/pdf-render', () => ({ renderPdfPages: jest.fn().mockResolvedValue(null) }));
+jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 0.0134, rateDate: '2026-09-04', providerDate: '2026-09-04', source: 'frankfurter', fetchedAt: 'x' }) }));
 
 describe('routes/expenses', () => {
   let app, users, store, admin, emp, mgr, fin, tokens, parser;
@@ -99,6 +100,17 @@ describe('routes/expenses', () => {
     await request(serverFor(app)).post(`/api/expenses/${a.id}/merge`).set(as(emp)).expect(200);
     expect(store.getExpense(b.id)).toBeNull();
     expect(store.getExpense(a.id).box).toBeNull();
+  });
+
+  test('a foreign expense carries a base total, can be refreshed, and can be overridden with a reason', async () => {
+    const e = seed(emp, { currency: 'INR', total: 100, lines: [{ category: 'Meals', amount: 100 }] });
+    let r = await request(serverFor(app)).post(`/api/expenses/${e.id}/fx`).set(as(emp)).expect(200);
+    expect(r.body.expense.baseTotal).toBe(1.34);
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}/fx`).set(as(emp)).send({ rate: 0.02 }).expect(400);
+    r = await request(serverFor(app)).patch(`/api/expenses/${e.id}/fx`).set(as(emp)).send({ rate: 0.02, reason: 'card statement' }).expect(200);
+    expect(r.body.expense.lines[0]).toMatchObject({ fxRate: 0.02, fxSource: 'manual', baseAmount: 2 });
+    r = await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ total: 200 }).expect(200);
+    expect(r.body.expense.lines[0]).toMatchObject({ fxRate: 0.02, baseAmount: 4 });   // an override survives an edit
   });
 
   test('delete removes the expense and the file once nothing references it', async () => {

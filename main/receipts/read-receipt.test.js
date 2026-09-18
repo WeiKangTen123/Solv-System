@@ -2,6 +2,7 @@ jest.mock('../utils/receipt-parser', () => ({
   parseReceiptImage: jest.fn(), parseReceiptText: jest.fn(), parseReceiptPages: jest.fn(),
 }));
 jest.mock('../utils/pdf-render', () => ({ renderPdfPages: jest.fn() }));
+jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 0.01341, rateDate: '2026-09-04', providerDate: '2026-09-04', source: 'frankfurter', fetchedAt: '2026-09-18T03:00:00.000Z' }) }));
 jest.mock('../utils/pdf-pages', () => ({
   extractPages: jest.fn(), splittablePages: jest.fn(() => ({ split: false, reason: 'single' })), sameDocument: jest.fn(() => false),
 }));
@@ -66,6 +67,8 @@ describe('receipts/read-receipt', () => {
     expect(after.invoiceNo).toBe('93/713-181024');
     expect(after.currency).toBe('INR');
     expect(after.lines).toHaveLength(3);
+    expect(after.baseTotal).toBe(1182.61);
+    expect(after.lines[0].fxSource).toBe('frankfurter');
     expect(store.listExpenses({ receiptId: r.id })).toHaveLength(1);      // one expense, not four
     expect(store.getReceipt(r.id).pages).toBe(4);
     expect(store.getReceipt(r.id).parsedAt).toBeTruthy();
