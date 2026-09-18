@@ -1,0 +1,12 @@
+node_modules/
+.env
+*.log
+logs/
+coverage/
+dist/
+.DS_Store
+main/data/
+ui/node_modules/
+ui/dist/
+*.bak
+.claude/settings.local.json

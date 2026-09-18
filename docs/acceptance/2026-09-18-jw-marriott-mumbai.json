@@ -1,0 +1,127 @@
+{
+  "file": "Sample/jw marriott mumbai.pdf",
+  "seconds": 4.592,
+  "merchant": "JW Marriott Mumbai Sahar",
+  "date": "2026-09-01",
+  "time": null,
+  "invoiceNumber": "3967-860265",
+  "currency": "INR",
+  "total": 44309,
+  "tax": 6760,
+  "subTotal": null,
+  "category": "Lodging",
+  "confidence": "high",
+  "description": "[Lodging] Accommodation and charges @ JW Marriott Mumbai Sahar",
+  "lineItems": [
+    {
+      "description": "Accomodation Charges",
+      "unitAmount": 17575,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": "Tan Suan Kuan"
+    },
+    {
+      "description": "CGST 9%- Rooms-(New)",
+      "unitAmount": 1581.75,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": "Tan Suan Kuan"
+    },
+    {
+      "description": "SGST 9%- Rooms-(New)",
+      "unitAmount": 1581.75,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": "Tan Suan Kuan"
+    },
+    {
+      "description": "Upsell Breakfast-996331",
+      "unitAmount": 1200,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": "Tan Suan Kuan"
+    },
+    {
+      "description": "JW Cafe CGST 9%",
+      "unitAmount": 108,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": "Tan Suan Kuan"
+    },
+    {
+      "description": "JW Cafe SGST 9%",
+      "unitAmount": 108,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": "Tan Suan Kuan"
+    },
+    {
+      "description": "Accomodation Charges",
+      "unitAmount": 17575,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": null
+    },
+    {
+      "description": "CGST 9%- Rooms-(New)",
+      "unitAmount": 1581.75,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": null
+    },
+    {
+      "description": "SGST 9%- Rooms-(New)",
+      "unitAmount": 1581.75,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": null
+    },
+    {
+      "description": "Upsell Breakfast-996331",
+      "unitAmount": 1200,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "JW Cafe CGST 9%",
+      "unitAmount": 108,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "JW Cafe SGST 9%",
+      "unitAmount": 109,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    }
+  ],
+  "lines": [
+    {
+      "category": "Lodging",
+      "description": "Accomodation Charges, CGST 9%- Rooms-(New), SGST 9%- Rooms-(New)",
+      "amount": 20737.5,
+      "onBehalfOf": "Tan Suan Kuan"
+    },
+    {
+      "category": "Lodging",
+      "description": "Accomodation Charges, CGST 9%- Rooms-(New), SGST 9%- Rooms-(New)",
+      "amount": 20738.5,
+      "onBehalfOf": null
+    },
+    {
+      "category": "Meals",
+      "description": "Upsell Breakfast-996331, JW Cafe CGST 9%, JW Cafe SGST 9%",
+      "amount": 1417,
+      "onBehalfOf": null
+    },
+    {
+      "category": "Meals",
+      "description": "Upsell Breakfast-996331, JW Cafe CGST 9%, JW Cafe SGST 9%",
+      "amount": 1416,
+      "onBehalfOf": "Tan Suan Kuan"
+    }
+  ]
+}

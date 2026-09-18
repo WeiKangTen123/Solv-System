@@ -1,0 +1,23 @@
+/* Solv palette. Token names are the Xero app's so ported components drop in. */
+:root, [data-theme="light"] {
+  --bg-primary: #F6F5F1;  --bg-secondary: #EEF0EA;  --bg-sidebar: #FFFFFF;  --bg-card: #FFFFFF;  --bg-input: #F3F4EF;  --bg-hover: #E9ECE5;  --bg-glass: rgba(255,255,255,0.84);
+  --text-primary: #17262B;  --text-secondary: #4B5A5F;  --text-muted: #7A878B;  --text-sidebar: #4B5A5F;  --text-sidebar-active: #0F6E56;
+  --border: #D8DBD4;  --border-focus: #0F6E56;  --border-card: rgba(15,110,86,0.12);  --border-sidebar: #D8DBD4;
+  --accent: #0F6E56;  --accent-hover: #0B5341;  --accent-text: #FFFFFF;  --accent-subtle: rgba(15,110,86,0.10);  --accent-gradient: linear-gradient(135deg, #0F6E56 0%, #1C8F73 100%);
+  --success: #0F6E56;  --success-subtle: rgba(15,110,86,0.12);  --warning: #B7791F;  --warning-subtle: rgba(183,121,31,0.12);  --danger: #B42318;  --danger-subtle: rgba(180,35,24,0.10);  --info: #2F6F9F;  --info-subtle: rgba(47,111,159,0.10);
+  --shadow-xs: 0 1px 3px rgba(23,38,43,0.06);  --shadow-sm: 0 2px 10px rgba(23,38,43,0.07), 0 1px 3px rgba(0,0,0,0.04);  --shadow-md: 0 8px 28px rgba(23,38,43,0.10), 0 2px 8px rgba(0,0,0,0.04);  --shadow-lg: 0 20px 60px rgba(23,38,43,0.16), 0 4px 16px rgba(0,0,0,0.06);  --glow-accent: 0 0 0 3px rgba(15,110,86,0.18);
+  --radius-xs: 4px;  --radius-sm: 8px;  --radius-md: 12px;  --radius-lg: 16px;  --radius-xl: 22px;
+  --sidebar-width: 236px;  --header-height: 58px;
+  --transition-fast: 0.12s ease;  --transition: 0.2s ease;  --transition-slow: 0.35s cubic-bezier(0.4,0,0.2,1);
+}
+[data-theme="dark"] {
+  --bg-primary: #0F1514;  --bg-secondary: #161D1B;  --bg-sidebar: #0C1211;  --bg-card: #161D1B;  --bg-input: #1C2523;  --bg-hover: #212B28;  --bg-glass: rgba(22,29,27,0.82);
+  --text-primary: #E6EBE8;  --text-secondary: #A2ACA7;  --text-muted: #6F7B77;  --text-sidebar: rgba(255,255,255,0.55);  --text-sidebar-active: #FFFFFF;
+  --border: #27312E;  --border-focus: #3EB38C;  --border-card: rgba(255,255,255,0.05);  --border-sidebar: #27312E;
+  --accent: #3EB38C;  --accent-hover: #6FD1AE;  --accent-text: #0F1514;  --accent-subtle: rgba(62,179,140,0.14);  --accent-gradient: linear-gradient(135deg, #2E9B78 0%, #3EB38C 100%);
+  --success: #3EB38C;  --success-subtle: rgba(62,179,140,0.14);  --warning: #E0A64C;  --warning-subtle: rgba(224,166,76,0.14);  --danger: #F87171;  --danger-subtle: rgba(248,113,113,0.14);  --info: #7FB3DD;  --info-subtle: rgba(127,179,221,0.14);
+  --shadow-xs: 0 1px 2px rgba(0,0,0,0.3);  --shadow-sm: 0 2px 8px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);  --shadow-md: 0 8px 24px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.3);  --shadow-lg: 0 20px 60px rgba(0,0,0,0.7), 0 4px 16px rgba(0,0,0,0.4);  --glow-accent: 0 0 0 3px rgba(62,179,140,0.22);
+  --radius-xs: 4px;  --radius-sm: 8px;  --radius-md: 12px;  --radius-lg: 16px;  --radius-xl: 22px;
+  --sidebar-width: 236px;  --header-height: 58px;
+  --transition-fast: 0.12s ease;  --transition: 0.2s ease;  --transition-slow: 0.35s cubic-bezier(0.4,0,0.2,1);
+}

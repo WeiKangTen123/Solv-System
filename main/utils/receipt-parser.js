@@ -1,0 +1,424 @@
+const logger = require('./logger');
+const { callGemini } = require('./gemini-client');
+const { parseLlmJson } = require('./llm-json');
+
+// Reads a photographed receipt.
+//
+// The existing invoice parser is text-only: pdf-parse pulls a text layer out of
+// a PDF and sends TEXT to Gemini. A photographed receipt has no text layer, so
+// that path cannot see it at all. This sends the IMAGE instead.
+//
+// No new dependency is needed. gemini-client posts to Google's
+// OpenAI-compatibility endpoint, which accepts an image_url content part
+// carrying a base64 data URI, and _callOnce passes `messages` through
+// unchanged — so model rotation, key rotation and quota handling are inherited.
+//
+// Nothing here reaches Xero.
+
+const { CATEGORIES, canonicalCategory } = require('../claims/categories');
+
+const SYSTEM_PROMPT = `You read photographed shop receipts and return ONLY valid JSON. No explanation, no markdown.
+
+An image may contain MORE THAN ONE receipt (several laid on a desk). Return a JSON
+object: { "receipts": [ ... ] } with one entry per DISTINCT receipt. One receipt in
+the photo means one entry. Never split a single long receipt into several entries.
+
+For each receipt also return:
+- box_2d: the 2D bounding box of that receipt as [ymin, xmin, ymax, xmax], each
+  normalised 0-1000 with [0,0] at the top-left of the image. Cover the whole
+  receipt and nothing else. Omit it if you cannot locate the receipt confidently.
+
+Per receipt, extract:
+- merchant: the shop or business that was PAID (not the customer, not the payment network, not the bank)
+- date: YYYY-MM-DD of the purchase (null if unreadable)
+- time: HH:MM in 24-hour format if printed on the receipt (e.g. "12:01", "16:37", "21:09"), null if not printed.
+- currency: 3-letter ISO code read from the receipt (SGD, USD, MYR, GBP, EUR, AUD...). "S$" or PayNow implies SGD; "RM" implies MYR; "£" GBP; "€" EUR. If only a bare "$" appears with no other signal, return null rather than guessing.
+- total: the FINAL amount paid, as a plain number. No symbols, no thousands separators.
+- tax: the GST/VAT/service-tax amount as a plain number, only if the receipt states it separately. null if not shown. 0 if the receipt says no tax applies.
+- subTotal: the pre-tax amount as a plain number, only if explicitly printed. null otherwise.
+- invoiceNumber: the invoice, bill, folio or receipt number printed on the document (e.g. "93/713-181024"), null if none.
+- category: one of these exact names, judged from what was bought and when:
+${CATEGORIES.map(c => `    "${c.name}": ${c.scope}`).join('\n')}
+  When nothing on the receipt settles it, use "Other".
+- description: WHAT was bought and WHERE, from what is printed, max 200 characters.
+  Format: "[Category] <what was bought> @ <Merchant> (<HH:MM>)". For a ride, put
+  "<pickup> to <dropoff>" in place of what was bought when both are printed,
+  e.g. "[Air & Transport] Orchard Rd to Changi Airport @ Grab (08:08)".
+  "[Meals] Lunch for 2 @ Dong Seoul Supply (12:01)" is right.
+  "Client lunch to discuss the project" is wrong, because the receipt does not say so.
+  Do not invent a business purpose, a client, a meeting or a reason — the claimant
+  adds that when they review. Do not add a place that is not printed.
+- lineItems: array of each individual charge listed on the receipt with its price:
+    [
+      {
+        "description": "item description or dish name",
+        "unitAmount": the price of ONE unit as a plain number (e.g. 1.60),
+        "quantity": item quantity if shown (e.g. 1, 6), default 1,
+        "lineTotal": the amount printed on that line (quantity × unit price, e.g. 9.60); same as unitAmount when quantity is 1,
+        "discountRate": discount percent if shown, default 0,
+        "category": one of the category names above, judged from what THIS line is for. A tax, GST/VAT, service-charge or fee line takes the category of the charge it belongs to (a room's GST is Lodging, a cafe's GST is Meals),
+        "onBehalfOf": when the line was transferred from, or paid for, ANOTHER guest or person, that person's name exactly as printed (e.g. "TAN SUAN KUAN #126 => Khoo #110" means the line is for TAN SUAN KUAN); otherwise null
+      }
+    ]
+  Include EVERY charge line, including each tax line, so the lines add up to the total.
+- confidence: "high" if the total and merchant are clearly legible, "low" if the photo is blurred, cropped, or you are guessing any of them.
+
+Rules:
+- Never invent a value. Anything you cannot read is null.
+- total is the amount actually charged, after discounts and including tax.
+- If several totals appear (subtotal, tax, total, cash tendered, change), pick the amount CHARGED, never the cash tendered.
+- A card slip or payment terminal stub belonging to a receipt beside it is NOT a separate receipt.
+- If you are unsure whether something is a second receipt, return one entry rather than two.`;
+
+// Number, date and currency cleaning are shared with every other intake path;
+// see intake/document.js for why a value is dropped rather than coerced.
+const _intake = require('../intake/document');
+const _num     = _intake.num;
+const _isoDate = _intake.isoDate;
+function _time(value) {
+  if (!value || typeof value !== 'string') return null;
+  const m = value.trim().match(/^([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\s*(AM|PM)?$/i);
+  if (!m) return null;
+  let hours = parseInt(m[1], 10);
+  const minutes = m[2];
+  const ampm = m[3] ? m[3].toUpperCase() : null;
+  if (ampm === 'PM' && hours < 12) hours += 12;
+  if (ampm === 'AM' && hours === 12) hours = 0;
+  return `${String(hours).padStart(2, '0')}:${minutes}`;
+}
+
+const _currency = _intake.currencyCode;
+// A hotel prints a transferred charge as "TAN SUAN KUAN #126=>Khoo Elaine #110":
+// the person before the arrow is who the line is really for. Read from the
+// description when the model left it out; when the model answered, keep the
+// name and drop the room numbers and the arrow.
+const TRANSFER_RE = /([A-Z][A-Za-z.'\- ]{2,60}?)\s*#\d+\s*=>/;
+function _onBehalf(li) {
+  const printed = typeof li.description === 'string' ? TRANSFER_RE.exec(li.description) : null;
+  if (printed) return _titleCase(printed[1].trim().slice(0, 80));
+  if (typeof li.onBehalfOf !== 'string' || !li.onBehalfOf.trim()) return null;
+  const cleaned = li.onBehalfOf.split(/=>|#|\(/)[0].trim();
+  return cleaned ? _titleCase(cleaned.slice(0, 80)) : null;
+}
+
+// A folio ends with the payment that settled it ("Manual MasterCard / Euro
+// Card 88,188.77"). That is not a charge: kept, it doubles the sum of the
+// lines. Payment lines go, and so does any line that merely restates the
+// total when other lines exist.
+const PAYMENT_RE = /\b(mastercard|master card|visa|amex|american express|euro ?card|credit card|debit card|paynow|nets|grabpay|apple pay|google pay|cash tendered|change due|payment received|settlement|paid by|card payment)\b/i;
+function _dropPayments(lineItems, total) {
+  const kept = lineItems.filter(li => !PAYMENT_RE.test(li.description || ''));
+  if (kept.length > 1 && total !== null) {
+    const totalCents = Math.round(total * 100);
+    return kept.filter(li => Math.round(li.unitAmount * 100) !== totalCents);
+  }
+  return kept;
+}
+
+// Names are printed in whatever case the hotel's system uses; one colleague
+// must group as one line whichever folio the charge came from.
+function _titleCase(name) {
+  return name.toLowerCase().replace(/(^|[\s'-])([a-z])/g, (m, p, c) => p + c.toUpperCase());
+}
+
+// Indian and other tax lines are printed per charge. When the document's own
+// tax figure is missing (or a "VAT 0.00" footer was read as the tax), the tax
+// is the sum of the tax lines.
+const TAX_LINE_RE = /\b(cgst|sgst|igst|utgst|gst|vat|tax|service charge|svc)\b/i;
+function _taxFromLines(lineItems, total) {
+  const cents = lineItems.filter(li => TAX_LINE_RE.test(li.description || '')).reduce((sum, li) => sum + Math.round(Number(li.unitAmount || 0) * 100), 0);
+  if (cents <= 0) return null;
+  if (total !== null && cents >= Math.round(total * 100)) return null;
+  return cents / 100;
+}
+
+// Normalises whatever the model returned into the shape the invoice store uses.
+// Exported for testing: this is where a bad model response is made harmless.
+function normalise(parsed) {
+  if (!parsed || typeof parsed !== 'object') return null;
+
+  const total = _num(parsed.total);
+  const tax   = _num(parsed.tax);
+  let   sub   = _num(parsed.subTotal);
+  // Singapore receipts print "Sub Total 16.10 / GST 1.33" where the GST is
+  // already inside the sub total. A subtotal equal to the total with a tax
+  // beside it is that case: the pre-tax figure is total − tax.
+  if (sub !== null && total !== null && tax !== null && tax > 0 && Math.abs(sub - total) < 0.005) {
+    sub = Math.round((total - tax) * 100) / 100;
+  }
+
+  // A negative total is a refund, which this flow does not model, and a zero
+  // total tells the user nothing. Both are treated as "not read".
+  const usableTotal = total !== null && total > 0 ? total : null;
+
+  // One normaliser for every reader (intake/document.js): the stored amount is
+  // the LINE total and a quantity rides in the text. Receipts carry no tax
+  // percent per line, and the store's shape has none.
+  const rawItems = (Array.isArray(parsed.lineItems) ? parsed.lineItems : [])
+    .map(li => {
+      const n = _intake.normaliseLineItem(li);
+      if (!n) return null;
+      return {
+        description:  n.description.slice(0, 200),
+        unitAmount:   n.unitAmount,
+        discountRate: n.discountRate,
+        category:     canonicalCategory(li && li.category),
+        onBehalfOf:   li ? _onBehalf(li) : null,
+      };
+    })
+    .filter(Boolean);
+  const lineItems = _dropPayments(rawItems, usableTotal);
+
+  // Only a listed category survives; a reworded one is mapped back, an
+  // invented one is dropped and never prefixed onto the description.
+  const category = canonicalCategory(parsed.category);
+  let desc = typeof parsed.description === 'string' && parsed.description.trim() ? parsed.description.trim().slice(0, 250) : null;
+  if (desc && category && !desc.startsWith('[')) {
+    desc = `[${category}] ${desc}`.slice(0, 250);
+  }
+
+  return {
+    merchant:    typeof parsed.merchant === 'string' && parsed.merchant.trim() ? parsed.merchant.trim().slice(0, 120) : null,
+    invoiceNumber: typeof parsed.invoiceNumber === 'string' && parsed.invoiceNumber.trim() ? parsed.invoiceNumber.trim().slice(0, 60) : null,
+    date:        _isoDate(parsed.date),
+    time:        _time(parsed.time),
+    category,
+    currency:    _currency(parsed.currency),
+    total:       usableTotal,
+    // Tax cannot exceed the total; if it does, one of the two was misread and
+    // neither should be presented as fact.
+    tax:         (tax !== null && tax > 0 && (usableTotal === null || tax <= usableTotal)) ? tax : (_taxFromLines(lineItems, usableTotal) ?? (tax === 0 ? 0 : null)),
+    subTotal:    sub !== null && sub >= 0 && (usableTotal === null || sub <= usableTotal) ? sub : null,
+    description: desc,
+    lineItems,
+    confidence:  parsed.confidence === 'high' ? 'high' : 'low',
+    box:         _box(parsed.box_2d),
+  };
+}
+
+// Normalises a whole response. Accepts both shapes: { receipts: [...] } and a
+// bare single object, because a model asked for an array will still sometimes
+// return one object and that must not be treated as a failure.
+function normaliseMany(parsed) {
+  const list = Array.isArray(parsed?.receipts) ? parsed.receipts
+             : Array.isArray(parsed)           ? parsed
+             : parsed && typeof parsed === 'object' ? [parsed]
+             : [];
+  const receipts = list.map(normalise).filter(Boolean);
+  if (!receipts.length) return null;
+  return { receipts, ...splittable(receipts) };
+}
+
+// A box is [ymin, xmin, ymax, xmax] normalised 0-1000. Anything malformed
+// becomes null, which stops that receipt from being split out.
+function _box(value) {
+  if (!Array.isArray(value) || value.length !== 4) return null;
+  const n = value.map(v => Number(v));
+  if (n.some(v => !Number.isFinite(v) || v < 0 || v > 1000)) return null;
+  const [ymin, xmin, ymax, xmax] = n;
+  if (ymax <= ymin || xmax <= xmin) return null;
+  return [ymin, xmin, ymax, xmax];
+}
+
+function _area(b) { return (b[2] - b[0]) * (b[3] - b[1]); }
+
+function _overlapFraction(a, b) {
+  const dy = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
+  const dx = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+  if (dy <= 0 || dx <= 0) return 0;
+  return (dy * dx) / Math.min(_area(a), _area(b));
+}
+
+// The smallest slice of the frame a real receipt could plausibly occupy. Below
+// this it is far more likely to be a stray box than a document.
+const MIN_BOX_AREA = 0.02 * 1000 * 1000;   // 2% of the image
+// Above this the model has almost certainly cut one receipt in half.
+const MAX_BOX_OVERLAP = 0.25;
+
+// Decides whether a multi-receipt read is trustworthy enough to split on
+// WITHOUT asking. Auto-splitting is only safe when the evidence is unambiguous;
+// anything doubtful falls back to a single record holding the whole image,
+// because inventing a second receipt is worse than not splitting one.
+//
+// Exported and tested directly — this function is the whole safety argument.
+function splittable(receipts) {
+  if (!Array.isArray(receipts) || receipts.length < 2) return { split: false, reason: 'single' };
+
+  const boxes = receipts.map(r => r.box);
+  if (boxes.some(b => !b)) return { split: false, reason: 'a receipt has no usable box' };
+  if (boxes.some(b => _area(b) < MIN_BOX_AREA)) return { split: false, reason: 'a box is too small to be a receipt' };
+
+  // Every receipt needs SOMETHING identifying, or it is probably not a receipt.
+  if (receipts.some(r => !r.merchant && r.total === null)) {
+    return { split: false, reason: 'a detected receipt has neither a merchant nor a total' };
+  }
+
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      if (_overlapFraction(boxes[i], boxes[j]) > MAX_BOX_OVERLAP) {
+        return { split: false, reason: 'boxes overlap, so one receipt may have been cut in half' };
+      }
+    }
+  }
+  return { split: true, reason: null };
+}
+
+
+// Reads a receipt image. Returns a normalised record, or null if it could not
+// be read — never throws at the caller, because a parse failure must not lose
+// the receipt. See routes/receipts.js.
+async function parseReceiptImage(userId, buffer, mime, { maxAttempts = 2 } = {}) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) return null;
+
+  const dataUri = `data:${mime};base64,${buffer.toString('base64')}`;
+  return _readWith(userId, [
+    { type: 'text', text: 'Read this receipt and return the JSON described.' },
+    { type: 'image_url', image_url: { url: dataUri } },
+  ], maxAttempts);
+}
+
+// A PDF with a text layer is read from that text. Same prompt, same
+// normaliser, no image: the model cannot place a box on text, so box_2d is
+// simply absent and a text PDF is never split by region (pages do that).
+const MAX_TEXT_CHARS = 20000;
+async function parseReceiptText(userId, text, { maxAttempts = 2 } = {}) {
+  const body = typeof text === 'string' ? text.trim() : '';
+  if (!body) return null;
+  return _readWith(userId,
+    `Read this receipt text (extracted from a PDF, so there is no image and no box_2d) and return the JSON described.\n\n${body.slice(0, MAX_TEXT_CHARS)}`,
+    maxAttempts);
+}
+
+// Several page images that are ONE document: a hotel folio, a multi-page
+// invoice. Read together, so the total on the last page and the lines on the
+// first belong to one receipt. Never split, whatever the model returns.
+async function parseReceiptPages(userId, pages, { maxAttempts = 2 } = {}) {
+  const list = (pages || []).filter(p => p && Buffer.isBuffer(p.buffer) && p.buffer.length);
+  if (!list.length) return null;
+  if (list.length === 1) {
+    const one = await parseReceiptImage(userId, list[0].buffer, list[0].mime, { maxAttempts });
+    return one ? { receipts: [one.receipts[0]], split: false, reason: 'single page' } : null;
+  }
+  const content = [{ type: 'text', text:
+    `These ${list.length} images are the PAGES of ONE document (a hotel folio, an invoice or a statement), in order. ` +
+    `Read them together as a single receipt and return { "receipts": [ one entry ] }: one merchant, one invoiceNumber, ` +
+    `one total (the final amount charged, usually on the last page), one currency, EVERY line item from EVERY page, and no box_2d. ` +
+    `Never return one entry per page.` }];
+  list.forEach((p, i) => {
+    content.push({ type: 'text', text: `Page ${i + 1} of ${list.length}:` });
+    content.push({ type: 'image_url', image_url: { url: `data:${p.mime};base64,${p.buffer.toString('base64')}` } });
+  });
+  const result = await _readWith(userId, content, maxAttempts, { maxTokens: 6000 });
+  if (!result) return null;
+  return { receipts: [result.receipts[0]], split: false, reason: 'pages of one document' };
+}
+
+// One attempt loop for both readers: a transient model error or an unusable
+// shape earns a second try, then the receipt is left for the user.
+async function _readWith(userId, userContent, maxAttempts, { maxTokens = 3000 } = {}) {
+  const messages = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user',   content: userContent },
+  ];
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const content = await callGemini(userId, messages, { temperature: 0, maxTokens });
+      const result  = normaliseMany(parseLlmJson(content));
+      if (result) return result;
+      logger.warn('Receipt parse returned an unusable shape', { userId, attempt });
+    } catch (err) {
+      logger.warn('Receipt parse attempt failed', { userId, attempt, error: err.message });
+    }
+  }
+  return null;
+}
+
+
+// ── Reading several receipts in one call ────────────────────────────────────
+//
+// One call per receipt means a nine-receipt claim is nine round trips, each
+// throttled to stay inside the per-minute quota — minutes of waiting for work
+// the model could do together. Batching sends several images in one request.
+//
+// The risk is attribution: the model returning the right figures against the
+// wrong image. So each image is numbered in the prompt, the reply must carry
+// that number back, and a reply whose count does not match the batch is
+// DISCARDED and the batch re-read one at a time. Faster when it works, exactly
+// as accurate as before when it does not.
+const BATCH_SIZE = 5;
+
+function _batchPrompt(count) {
+  return `You are reading ${count} SEPARATE receipts. They are unrelated to each other.
+
+Return ONLY a JSON array with exactly ${count} entries, one per image, in the order given:
+[{"index": 1, "merchant": ..., "date": ..., "time": ..., "category": ..., "currency": ..., "total": ..., "tax": ..., "subTotal": ..., "description": ..., "lineItems": [...], "confidence": ...}]
+
+"index" is the image's position, starting at 1. Every image must appear exactly once.
+Apply the field rules and corporate description formatting from the system prompt to each receipt independently — never carry a figure from one receipt to another.`;
+}
+
+// Reads a batch. Returns an array the same length as `images`, with null where a
+// receipt could not be read, or null overall if the reply cannot be trusted.
+async function _readBatch(userId, images) {
+  const content = [{ type: 'text', text: _batchPrompt(images.length) }];
+  images.forEach((img, i) => {
+    content.push({ type: 'text', text: `Receipt ${i + 1}:` });
+    content.push({ type: 'image_url', image_url: { url: `data:${img.mime};base64,${img.buffer.toString('base64')}` } });
+  });
+
+  const raw = await callGemini(userId, [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content },
+  ], { temperature: 0, maxTokens: Math.max(4000, 800 * images.length) });
+
+  const parsed = parseLlmJson(raw);
+  const list = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.receipts) ? parsed.receipts : null);
+  // A reply that does not account for every image cannot be attributed safely.
+  if (!list || list.length !== images.length) return null;
+
+  const out = new Array(images.length).fill(null);
+  for (const item of list) {
+    const idx = Number(item && item.index);
+    // Fall back to position when the model omits the index, but never overwrite.
+    const at = Number.isInteger(idx) && idx >= 1 && idx <= images.length ? idx - 1 : list.indexOf(item);
+    if (at < 0 || at >= images.length || out[at]) continue;
+    out[at] = normalise(item);
+  }
+  return out.some(x => x) ? out : null;
+}
+
+// Reads many receipts, batching where it can and falling back per-image where it
+// cannot. `onProgress(doneCount)` fires as results land so a job can report it.
+async function parseReceiptBatch(userId, images, { batchSize = BATCH_SIZE, onProgress } = {}) {
+  const results = new Array(images.length).fill(null);
+  let done = 0;
+
+  for (let start = 0; start < images.length; start += batchSize) {
+    const slice = images.slice(start, start + batchSize);
+
+    let batch = null;
+    if (slice.length > 1) {
+      try { batch = await _readBatch(userId, slice); }
+      catch (err) { logger.warn('Receipt batch failed, falling back to one at a time', { userId, size: slice.length, error: err.message }); }
+    }
+
+    if (batch) {
+      batch.forEach((r, i) => { results[start + i] = r; });
+      done += slice.length;
+      onProgress && onProgress(done);
+      continue;
+    }
+
+    // Either a single image, or a batch whose reply could not be trusted.
+    for (let i = 0; i < slice.length; i++) {
+      const single = await parseReceiptImage(userId, slice[i].buffer, slice[i].mime);
+      results[start + i] = single && single.receipts ? single.receipts[0] : null;
+      done++;
+      onProgress && onProgress(done);
+    }
+  }
+
+  return results;
+}
+
+module.exports = { parseReceiptImage, parseReceiptText, parseReceiptPages, parseReceiptBatch, _readBatch, BATCH_SIZE, normalise, normaliseMany, splittable, SYSTEM_PROMPT, _num, _isoDate, _time, _currency, _box, _overlapFraction };

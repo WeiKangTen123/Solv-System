@@ -1,0 +1,44 @@
+const BASE = '/api';
+
+function getToken() {
+  return localStorage.getItem('token');
+}
+
+function clearSession() {
+  localStorage.removeItem('token');
+  // Hard-navigate to login so all React state is wiped — avoids stale UI
+  // showing for a split second after an expired-token 401.
+  // Phone capture pages (/capture/:token) are deliberately unauthenticated and must never redirect to login.
+  const path = window.location.pathname;
+  if (!path.startsWith('/login') && !path.startsWith('/capture')) {
+    window.location.href = '/login';
+  }
+}
+
+async function request(path, options = {}) {
+  const token   = getToken();
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res  = await fetch(`${BASE}${path}`, { ...options, headers });
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    if (res.status === 401) clearSession();
+    // A 401 throws too. On most pages the navigation above wins the race and
+    // the caller never runs; on /login (no navigation) a wrong password used to
+    // come back as `undefined` and blow up as "cannot read 'token'" instead of
+    // the server's own message.
+    const err    = new Error(data.error || (res.status === 401 ? 'Your session has expired. Sign in again.' : `HTTP ${res.status}`));
+    err.status   = res.status;
+    throw err;
+  }
+  return data;
+}
+
+export const api = {
+  get:    (path)       => request(path),
+  post:   (path, body) => request(path, { method: 'POST',   body: JSON.stringify(body) }),
+  patch:  (path, body) => request(path, { method: 'PATCH',  body: JSON.stringify(body) }),
+  delete: (path)       => request(path, { method: 'DELETE' }),
+};
