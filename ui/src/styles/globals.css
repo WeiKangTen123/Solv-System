@@ -278,7 +278,7 @@ body {
 
 .form-input:focus + .input-icon,
 .input-wrapper:focus-within .input-icon {
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 .form-input::placeholder {
@@ -327,10 +327,11 @@ body {
   transform: none;
 }
 
+/* The one gradient on the page. Indigo to violet, primary action only. */
 .btn-primary {
   background: var(--accent-gradient);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(15,110,86,0.35);
+  color: var(--accent-text);
+  box-shadow: var(--shadow-xs);
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -429,8 +430,10 @@ body {
 .badge-red    { background: var(--danger-subtle);  color: var(--danger); }
 .badge-yellow { background: var(--warning-subtle); color: var(--warning); }
 .badge-blue   { background: var(--info-subtle);    color: var(--info); }
-.badge-violet { background: var(--violet-subtle);  color: var(--violet); }
-.badge-purple { background: var(--violet-subtle);  color: var(--violet); }
+.badge-teal   { background: var(--teal-subtle);    color: var(--teal); }
+/* Kept so ported components that still name these classes keep working. */
+.badge-violet,
+.badge-purple { background: var(--teal-subtle);    color: var(--teal); }
 .badge-gray   { background: var(--bg-hover);       color: var(--text-muted); }
 
 /* Live dot for active status */
@@ -611,7 +614,7 @@ body {
 
 .help-btn:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 /* ── Utilities ───────────────────────────────────── */

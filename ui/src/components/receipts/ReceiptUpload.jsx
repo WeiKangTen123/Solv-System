@@ -68,7 +68,7 @@ export default function ReceiptUpload({ onUploaded }) {
           className="btn btn-sm"
           disabled={busy}
           onClick={() => fileRef.current?.click()}
-          style={{ background: 'var(--accent-subtle)', color: 'var(--accent)', border: '1px solid var(--accent)', whiteSpace: 'nowrap' }}
+          style={{ background: 'var(--accent-subtle)', color: 'var(--accent-ink)', border: '1px solid var(--accent)', whiteSpace: 'nowrap' }}
         >
           {busy ? 'Uploading…' : '+ Add expense'}
         </button>

@@ -68,11 +68,11 @@ export default function Login() {
 
   const isDark = theme === 'dark';
 
-  // The drifting fields behind the card: coral and violet on indigo at night,
-  // the same two hues turned down over sand by day.
+  // The drifting fields behind the card: indigo into violet, with one cool
+  // teal a long way off. The same hues turned down for daylight.
   const orb = isDark
-    ? ['rgba(255,107,82,0.16)', 'rgba(167,139,250,0.14)', 'rgba(111,168,255,0.10)']
-    : ['rgba(201,74,52,0.18)',  'rgba(91,63,196,0.12)',   'rgba(44,95,168,0.10)'];
+    ? ['rgba(97,96,238,0.22)',  'rgba(130,80,240,0.16)', 'rgba(45,212,191,0.07)']
+    : ['rgba(91,91,214,0.16)',  'rgba(124,77,224,0.12)', 'rgba(15,118,110,0.06)'];
 
   return (
     <div style={{ position: 'relative', minHeight: '100vh', display: 'flex', overflow: 'hidden', background: 'var(--bg-primary)' }}>
@@ -101,8 +101,8 @@ export default function Login() {
         <div style={{
           position: 'absolute', inset: 0,
           backgroundImage: isDark
-            ? 'linear-gradient(rgba(237,230,218,0.022) 1px, transparent 1px), linear-gradient(90deg, rgba(237,230,218,0.022) 1px, transparent 1px)'
-            : 'linear-gradient(rgba(23,27,51,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(23,27,51,0.05) 1px, transparent 1px)',
+            ? 'linear-gradient(rgba(255,255,255,0.028) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.028) 1px, transparent 1px)'
+            : 'linear-gradient(rgba(11,12,14,0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(11,12,14,0.045) 1px, transparent 1px)',
           backgroundSize: '40px 40px',
         }} />
       </div>
@@ -282,7 +282,7 @@ export default function Login() {
                   disabled={loading}
                   style={{
                     width:       '100%', padding: '12px 0',
-                    background:  'var(--accent)',
+                    background:  'var(--accent-gradient)',
                     color:       'var(--accent-text)', border: 'none', borderRadius: 10,
                     fontSize:    15, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer',
                     fontFamily:  'inherit',
@@ -291,8 +291,8 @@ export default function Login() {
                     boxShadow:   'var(--shadow-sm)',
                     transition:  'all 0.2s ease',
                   }}
-                  onMouseEnter={e => { if (!loading) { e.currentTarget.style.background = 'var(--accent-hover)'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'var(--accent)'; e.currentTarget.style.transform = 'none'; }}
+                  onMouseEnter={e => { if (!loading) { e.currentTarget.style.filter = 'brightness(1.1)'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
+                  onMouseLeave={e => { e.currentTarget.style.filter = 'none'; e.currentTarget.style.transform = 'none'; }}
                 >
                   {loading && <span className="btn-spinner" />}
                   {loading
