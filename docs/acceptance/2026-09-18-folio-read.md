@@ -1,6 +1,6 @@
 # Acceptance: the two Marriott folios read end to end
 
-**Date:** 18 Sep 2026 · **Reader:** Gemini through `main/utils/receipt-parser.js`, pages rendered by `main/utils/pdf-render.js` at 150 dpi · **Script:** `node main/scripts/read-sample.js <file>`
+**Date:** 18 Sep 2026 · **Reader:** Gemini through `main/receipts/receipt-parser.js`, pages rendered by `main/pdf/render.js` at 150 dpi · **Script:** `node main/scripts/read-sample.js <file>`
 
 Both files in `samples/receipts/` are scanned PDFs with no text layer. Each was rendered to page images and read as ONE document in a single model call. Raw outputs: `2026-09-18-jw-marriott-mumbai.json`, `2026-09-18-courtyard-marriott-pune.json`. The same Pune file was also uploaded through the running production server (`POST /api/receipts`) and came back as one expense in `review-needed` after about 27 seconds with the figures below.
 

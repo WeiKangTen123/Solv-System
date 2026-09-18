@@ -1,7 +1,7 @@
 const mockCreateInvoices = jest.fn();
 const mockAttach = jest.fn().mockResolvedValue({});
 jest.mock('xero-node', () => ({ AccountingApi: jest.fn(() => ({ createInvoices: mockCreateInvoices, createInvoiceAttachmentByFileName: mockAttach })) }));
-jest.mock('../utils/token-cache', () => ({ forCompany: () => ({ getValidToken: async () => 'tok' }), getPersistedTenants: jest.fn(() => [{ tenantId: 't1', tenantName: 'Solv Pte Ltd' }]) }));
+jest.mock('./token-cache', () => ({ forCompany: () => ({ getValidToken: async () => 'tok' }), getPersistedTenants: jest.fn(() => [{ tenantId: 't1', tenantName: 'Solv Pte Ltd' }]) }));
 jest.mock('./contacts', () => ({ getOrCreateContact: jest.fn().mockResolvedValue('contact-1') }));
 jest.mock('./category-account', () => ({
   ...jest.requireActual('./category-account'),
@@ -54,7 +54,7 @@ describe('xero/bills — postReport', () => {
   beforeEach(async () => {
     jest.resetModules(); require('../db/migrate').run();
     mockCreateInvoices.mockReset(); mockAttach.mockClear();
-    users = require('../utils/users'); store = require('../store/expenses'); reports = require('../store/reports'); wf = require('../reports/workflow'); bills = require('./bills');
+    users = require('../store/users'); store = require('../store/expenses'); reports = require('../store/reports'); wf = require('../reports/workflow'); bills = require('./bills');
     admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
     mgr = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: admin.companyId, role: 'manager' });
     fin = await users.createUser({ email: 'f@solv.sg', password: 'password123', companyId: admin.companyId, role: 'finance' });

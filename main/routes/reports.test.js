@@ -9,7 +9,7 @@ describe('routes/reports', () => {
   let app, users, store, admin, mgr, fin, emp, other, tokens;
   beforeEach(async () => {
     jest.resetModules(); require('../db/migrate').run();
-    users = require('../utils/users'); store = require('../store/expenses');
+    users = require('../store/users'); store = require('../store/expenses');
     admin = await users.createUser({ email: 'a@solv.sg', password: 'password123', name: 'Admin' });
     mgr = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: admin.companyId, role: 'manager', name: 'Henry Bennett' });
     fin = await users.createUser({ email: 'f@solv.sg', password: 'password123', companyId: admin.companyId, role: 'finance', name: 'Fin' });

@@ -2,14 +2,14 @@ const express = require('express');
 const router  = express.Router();
 const { requireAuth } = require('../middleware/auth-middleware');
 const { canAccessUser } = require('../middleware/roles');
-const users   = require('../utils/users');
+const users   = require('../store/users');
 const store   = require('../store/expenses');
-const receiptStore = require('../utils/receipt-store');
+const receiptStore = require('../receipts/receipt-store');
 const { issueImageToken } = require('./receipts');
 const { readOne, applyRead, flagIfSuspected } = require('../receipts/read-receipt');
 const { applyFx, overrideFx } = require('../fx/apply');
 const { isLocked } = require('../reports/workflow');
-const { canonicalCategory } = require('../claims/categories');
+const { canonicalCategory } = require('../intake/categories');
 const logger  = require('../utils/logger');
 
 // An expense is one claimable receipt after reading. Employees work on their

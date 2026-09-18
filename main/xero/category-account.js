@@ -1,5 +1,5 @@
 const { withRetry } = require('./xero-utils');
-const { CATEGORY_NAMES } = require('../claims/categories');
+const { CATEGORY_NAMES } = require('../intake/categories');
 const logger = require('../utils/logger');
 
 // Which Xero account a report line lands on, decided by its category against
@@ -19,7 +19,7 @@ const CATEGORY_HINTS = {
   'Other':              ['general expenses', 'sundry', 'miscellaneous', 'other expenses'],
 };
 for (const name of Object.keys(CATEGORY_HINTS)) {
-  if (!CATEGORY_NAMES.includes(name)) throw new Error(`CATEGORY_HINTS names "${name}", which claims/categories.js does not list`);
+  if (!CATEGORY_NAMES.includes(name)) throw new Error(`CATEGORY_HINTS names "${name}", which intake/categories.js does not list`);
 }
 
 // A claim is a cost: revenue, assets and liabilities are never the answer, and
@@ -53,7 +53,7 @@ async function _directory(kind, companyId, tenantId, fetch, { force = false } = 
   const hit = _cache.get(key);
   if (hit && !force && Date.now() - hit.at < TTL_MS) return hit.value;
   const { AccountingApi } = require('xero-node');
-  const token = await require('../utils/token-cache').forCompany(companyId).getValidToken(tenantId);
+  const token = await require('./token-cache').forCompany(companyId).getValidToken(tenantId);
   const api = new AccountingApi();
   api.accessToken = token;
   const value = await fetch(api);

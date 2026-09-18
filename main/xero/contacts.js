@@ -3,7 +3,7 @@ const { withRetry }              = require('./xero-utils');
 const logger                     = require('../utils/logger');
 
 async function getOrCreateContact(companyId, tenantId, { vendorName, sourceEmail, address, phone, email, invoiceType }) {
-  const cache = require('../utils/token-cache').forCompany(companyId);
+  const cache = require('./token-cache').forCompany(companyId);
   const token = await cache.getValidToken(tenantId);
 
   const accountingApi       = new AccountingApi();

@@ -24,7 +24,7 @@ function requireAuth(req, res, next) {
   //
   // users.js is required lazily to avoid a require-cycle at module load
   // (users.js doesn't need this module, but plenty of routes require both).
-  const users = require('../utils/users');
+  const users = require('../store/users');
   const live  = users.findById(claims.id);
   if (!live) return res.status(401).json({ error: 'Account no longer exists' });
   req.user = { ...claims, id: live.id, email: live.email, role: live.role };

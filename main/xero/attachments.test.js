@@ -3,7 +3,7 @@ const fs = require('fs');
 
 describe('xero/attachments', () => {
   let attachments, receiptStore;
-  beforeEach(() => { jest.resetModules(); attachments = require('./attachments'); receiptStore = require('../utils/receipt-store'); });
+  beforeEach(() => { jest.resetModules(); attachments = require('./attachments'); receiptStore = require('../receipts/receipt-store'); });
 
   test('a small image and a small PDF are attached as they are', async () => {
     const files = receiptStore.forUser('att-user');

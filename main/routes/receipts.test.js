@@ -3,10 +3,10 @@ const express = require('express');
 const jwt     = require('jsonwebtoken');
 const { serverFor } = require('../scripts/test-server');
 
-jest.mock('../utils/receipt-parser', () => ({
+jest.mock('../receipts/receipt-parser', () => ({
   parseReceiptImage: jest.fn().mockResolvedValue(null), parseReceiptText: jest.fn().mockResolvedValue(null), parseReceiptPages: jest.fn().mockResolvedValue(null),
 }));
-jest.mock('../utils/pdf-render', () => ({ renderPdfPages: jest.fn().mockResolvedValue(null) }));
+jest.mock('../pdf/render', () => ({ renderPdfPages: jest.fn().mockResolvedValue(null) }));
 jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 1, rateDate: '2026-09-01', providerDate: '2026-09-01', source: 'frankfurter', fetchedAt: 'x' }) }));
 
 describe('routes/receipts', () => {
@@ -17,9 +17,9 @@ describe('routes/receipts', () => {
   beforeEach(async () => {
     jest.resetModules();
     require('../db/migrate').run();
-    users = require('../utils/users'); store = require('../store/expenses');
-    receiptStore = require('../utils/receipt-store'); pairing = require('../utils/pairing'); pairing._reset();
-    parser = require('../utils/receipt-parser'); parser.parseReceiptImage.mockReset(); parser.parseReceiptImage.mockResolvedValue(null);
+    users = require('../store/users'); store = require('../store/expenses');
+    receiptStore = require('../receipts/receipt-store'); pairing = require('../receipts/pairing'); pairing._reset();
+    parser = require('../receipts/receipt-parser'); parser.parseReceiptImage.mockReset(); parser.parseReceiptImage.mockResolvedValue(null);
     routes = require('./receipts');
     u = await users.createUser({ email: `r${Date.now()}@solv.sg`, password: 'password123' });
     token = jwt.sign({ id: u.id, email: u.email, role: u.role }, require('../middleware/auth-middleware').jwtSecret());

@@ -3,7 +3,7 @@ describe('store/expenses', () => {
   beforeEach(async () => {
     jest.resetModules();
     require('../db/migrate').run();
-    users = require('../utils/users');
+    users = require('./users');
     store = require('./expenses');
     u = await users.createUser({ email: 'e@solv.sg', password: 'password123' });
   });

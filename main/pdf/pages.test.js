@@ -1,6 +1,6 @@
 jest.mock('pdf-parse');
 const pdfParse = require('pdf-parse');
-const { extractPages, splittablePages, MIN_PAGE_CHARS } = require('./pdf-pages');
+const { extractPages, splittablePages, MIN_PAGE_CHARS } = require('./pages');
 
 // Builds a fake pdf-parse that feeds the given page texts through pagerender,
 // which is how the real library hands pages over one at a time.
@@ -19,7 +19,7 @@ const LONG = 'Receipt total 18.40 SGD merchant Grab date 2026-08-24 thank you fo
 
 beforeEach(() => jest.clearAllMocks());
 
-describe('utils/pdf-pages', () => {
+describe('pdf/pages', () => {
   describe('extractPages', () => {
     test('returns one entry per page, in order', async () => {
       pdfParse.mockImplementation(fakePdf([`${LONG} one`, `${LONG} two`, `${LONG} three`]));
@@ -94,7 +94,7 @@ describe('utils/pdf-pages', () => {
 });
 
 describe('pdf-pages — sameDocument', () => {
-  const { sameDocument, splittablePages } = require('./pdf-pages');
+  const { sameDocument, splittablePages } = require('./pages');
   const folio = n => `COURTYARD BY MARRIOTT PUNE CHAKAN TAX INVOICE Invoice # : 93/713-181024 Page ${n} of 4 charges ...`;
 
   test('pages sharing an invoice number are one document', () => {

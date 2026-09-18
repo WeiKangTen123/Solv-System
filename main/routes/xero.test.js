@@ -11,7 +11,7 @@ describe('routes/xero', () => {
   beforeEach(async () => {
     jest.resetModules(); require('../db/migrate').run();
     axios = require('axios'); axios.post.mockReset(); axios.get.mockReset();
-    users = require('../utils/users');
+    users = require('../store/users');
     admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
     emp = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId });
     const secret = require('../middleware/auth-middleware').jwtSecret();

@@ -15,11 +15,11 @@ process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || '0'.repeat(64);
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'demo';
 require('../db/migrate').run();
 
-const users = require('../utils/users');
+const users = require('../store/users');
 const store = require('../store/expenses');
 const reports = require('../store/reports');
 const wf = require('../reports/workflow');
-const receiptStore = require('../utils/receipt-store');
+const receiptStore = require('../receipts/receipt-store');
 const { hashBuffer } = require('../intake/dedup');
 const { applyFx } = require('../fx/apply');
 const { reportPayload } = require('../reports/expense-payload');

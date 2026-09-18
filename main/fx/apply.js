@@ -1,5 +1,5 @@
 const store  = require('../store/expenses');
-const users  = require('../utils/users');
+const users  = require('../store/users');
 const rates  = require('./rates');
 const logger = require('../utils/logger');
 

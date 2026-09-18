@@ -1,5 +1,5 @@
 const pdfParse = require('pdf-parse');
-const logger   = require('./logger');
+const logger   = require('../utils/logger');
 
 // Splits a PDF into per-page text.
 //

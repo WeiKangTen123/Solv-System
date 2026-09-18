@@ -15,7 +15,7 @@ const { suggestCategories } = require('./claim-categories');
 // Nothing here writes to Xero. The output is local records for a person to
 // review, plus a reconciliation showing which lines need their attention.
 
-// No pacing here. utils/gemini-client.js already holds every caller to the
+// No pacing here. llm/gemini-client.js already holds every caller to the
 // quota (a 15-a-minute sliding window per user), and a second, blind sleep
 // on top of it only made a large claim take four seconds longer per read.
 // Kept as a knob (deps.waitMs) so a test can still slow the loop down.

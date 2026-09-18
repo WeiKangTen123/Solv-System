@@ -9,7 +9,7 @@ const store = require('./receipt-store');
 const uid = () => `test-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]); // enough to be a real buffer
 
-describe('utils/receipt-store', () => {
+describe('receipts/receipt-store', () => {
   const created = [];
   function userStore() { const id = uid(); created.push(id); return { id, s: store.forUser(id) }; }
 

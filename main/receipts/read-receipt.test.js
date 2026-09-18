@@ -1,9 +1,9 @@
-jest.mock('../utils/receipt-parser', () => ({
+jest.mock('./receipt-parser', () => ({
   parseReceiptImage: jest.fn(), parseReceiptText: jest.fn(), parseReceiptPages: jest.fn(),
 }));
-jest.mock('../utils/pdf-render', () => ({ renderPdfPages: jest.fn() }));
+jest.mock('../pdf/render', () => ({ renderPdfPages: jest.fn() }));
 jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 0.01341, rateDate: '2026-09-04', providerDate: '2026-09-04', source: 'frankfurter', fetchedAt: '2026-09-18T03:00:00.000Z' }) }));
-jest.mock('../utils/pdf-pages', () => ({
+jest.mock('../pdf/pages', () => ({
   extractPages: jest.fn(), splittablePages: jest.fn(() => ({ split: false, reason: 'single' })), sameDocument: jest.fn(() => false),
 }));
 
@@ -24,8 +24,8 @@ describe('receipts/read-receipt', () => {
   beforeEach(async () => {
     jest.resetModules();
     require('../db/migrate').run();
-    users = require('../utils/users'); store = require('../store/expenses');
-    parser = require('../utils/receipt-parser'); render = require('../utils/pdf-render'); pdfPages = require('../utils/pdf-pages');
+    users = require('../store/users'); store = require('../store/expenses');
+    parser = require('./receipt-parser'); render = require('../pdf/render'); pdfPages = require('../pdf/pages');
     read = require('./read-receipt');
     u = await users.createUser({ email: 'e@solv.sg', password: 'password123' });
     [parser.parseReceiptImage, parser.parseReceiptText, parser.parseReceiptPages, render.renderPdfPages, pdfPages.extractPages].forEach(f => f.mockReset());

@@ -4,7 +4,7 @@ const jwt     = require('jsonwebtoken');
 const { requireAuth, jwtSecret } = require('../middleware/auth-middleware');
 const { canAccessUser } = require('../middleware/roles');
 const asyncHandler = require('../middleware/async-handler');
-const users   = require('../utils/users');
+const users   = require('../store/users');
 const store   = require('../store/expenses');
 const reports = require('../store/reports');
 const wf      = require('../reports/workflow');
@@ -22,7 +22,7 @@ function _load(req, res) {
 }
 // canDecide means "can act on it now": the right person, and a report awaiting a decision.
 function _view(r, req) {
-  const tenant = require('../utils/token-cache').getPersistedTenants(r.companyId)[0] || null;
+  const tenant = require('../xero/token-cache').getPersistedTenants(r.companyId)[0] || null;
   return { report: r, canDecide: ['submitted', 'approved'].includes(r.status) && wf.canDecide(r.id, req.user), editable: wf.isEditable(r), isOwner: r.userId === req.user.id,
            xero: { connected: !!tenant, tenantName: tenant ? tenant.tenantName : null } };
 }

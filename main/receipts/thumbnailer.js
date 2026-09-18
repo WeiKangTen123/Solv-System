@@ -1,6 +1,6 @@
 const fs    = require('fs');
 const path  = require('path');
-const logger = require('./logger');
+const logger = require('../utils/logger');
 
 // Scaled-down copies of receipt images, cached next to the original.
 //

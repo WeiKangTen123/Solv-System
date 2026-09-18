@@ -2,12 +2,12 @@ const { execFile } = require('child_process');
 const fs     = require('fs');
 const os     = require('os');
 const path   = require('path');
-const logger = require('./logger');
+const logger = require('../utils/logger');
 
 // A scanned PDF has no text layer, so its pages are drawn to images for the
 // vision reader. Rendering runs in a child process (see the .mjs worker) with
 // a hard timeout; a failure returns null and the receipt stays typeable.
-const WORKER     = path.join(__dirname, 'pdf-render-worker.mjs');
+const WORKER     = path.join(__dirname, 'render-worker.mjs');
 const DPI        = 150;    // legible small print on a folio; ~1240 px wide for A4
 const MAX_PAGES  = 20;
 const TIMEOUT_MS = 90_000;

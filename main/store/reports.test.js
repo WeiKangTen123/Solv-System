@@ -2,7 +2,7 @@ describe('store/reports', () => {
   let store, reports, users, u, m;
   beforeEach(async () => {
     jest.resetModules(); require('../db/migrate').run();
-    users = require('../utils/users'); store = require('./expenses'); reports = require('./reports');
+    users = require('./users'); store = require('./expenses'); reports = require('./reports');
     u = await users.createUser({ email: 'e@solv.sg', password: 'password123', name: 'Elaine' });
     m = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: u.companyId, role: 'manager', name: 'Henry' });
   });

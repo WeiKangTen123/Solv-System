@@ -11,7 +11,7 @@
 // interrupted one up to MAX_ATTEMPTS and then sets it aside, and recovers what
 // was pending on boot. Types register a handler; claim-import is the first.
 //
-//   const jobs = require('../jobs');
+//   const jobs = require('./');
 //   jobs.registerJobType('bill-import', { run, defaultDeps });
 //   const { job, error } = jobs.enqueue(userId, { type: 'bill-import', label, payload: { pdfs } });
 //   jobs.startWorker(userId); jobs.kickWorker(userId);

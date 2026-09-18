@@ -31,18 +31,31 @@ Production: `npm run build:ui` then `NODE_ENV=production npm start` (serves the 
 
 ```
 main/
+  index.js       mounts every /api route, serves ui/dist in production
   routes/        auth users company receipts expenses claims reports fx xero dashboard
-  receipts/      read-receipt.js — how a file is read (photo / text PDF / scanned PDF) and how lines are built
-  utils/         receipt-parser (Gemini prompts + normaliser), pdf-render (pages → JPEG in a child process),
-                 pdf-pages, receipt-store, thumbnailer, pairing (QR tokens), token-cache, gemini-client, users
-  store/         expenses.js (receipts, expenses, lines, cents), reports.js (reports, totals, events)
-  fx/            providers (Frankfurter/ECB, open.er-api), rates (cache, manual priority), apply (per-line, policy, overrides)
-  reports/       workflow (state machine), expense-doc (pdfmake definition, CSV, workbook model), expense-export, expense-payload
-  xero/          connect/oauth/token cache (company-scoped), contacts, category-account, attachments, bills
-  claims/        ZIP + claim-form batch import, durable job queue and worker, categories
+  receipts/      read-receipt (photo / text PDF / scanned PDF, and how lines are built),
+                 receipt-parser (prompts + normaliser), receipt-store (files on disk),
+                 thumbnailer, pairing (phone-capture QR tokens)
+  intake/        what every document becomes on the way in: document.js (one shape),
+                 dedup.js (hash, number, near-match), categories.js (the category list)
+  llm/           gemini-client (company keys, rate limit), llm-json (parsing what a model returns)
+  pdf/           render.js + render-worker.mjs (pages → JPEG in a child process), pages.js (one document or many)
+  store/         expenses.js (receipts, expenses, lines, cents), reports.js (reports, totals, events),
+                 users.js (companies, staff, roles, company config)
+  fx/            providers (Frankfurter/ECB, open.er-api), rates (cache, manual priority),
+                 apply (per-line, policy, overrides)
+  reports/       workflow (state machine), expense-payload, expense-doc (pdfmake definition, CSV,
+                 workbook model), expense-export (PDF/XLSX/CSV bytes)
+  xero/          connect + oauth + oauth-state + token-cache (company-scoped), reconnect, contacts,
+                 category-account, attachments, bills
+  claims/        ZIP and claim-form batch import, durable job queue and worker, category suggestions
+  db/            schema.sql, migrations, backups     middleware/  auth, roles, rate limit
+  utils/         the generic helpers only: base64, crypto, ids, logger, paths
   scripts/       read-sample.js, fx-sample.js, demo-report.js, smoke-flow.js, jest setup
-ui/src/          pages: Login, Home, MyExpenses, ExpenseReview, Reports, ReportDetail, Approvals, Settings, Capture
-docs/            plan/ (illustrated plan), superpowers/specs and plans, acceptance/ (real outputs from the sample folios)
+ui/src/          pages: Login, Home, MyExpenses, ExpenseReview, Reports, ReportDetail, Approvals,
+                 Settings, Capture
+docs/            specs/, plans/, acceptance/ (+ exports/), reference/ — see docs/README.md
+samples/         receipts/ (the two Marriott folios), reads/ (the reader's saved output for each)
 ```
 
 ## Scripts

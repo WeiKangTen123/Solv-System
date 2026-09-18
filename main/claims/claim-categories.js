@@ -1,5 +1,5 @@
 const logger = require('../utils/logger');
-const { parseLlmJson } = require('../utils/llm-json');
+const { parseLlmJson } = require('../llm/llm-json');
 
 // Suggests which category column a claim line belongs to.
 //
@@ -61,7 +61,7 @@ function linesNeedingCategory(matches) {
 }
 
 async function suggestCategories(userId, matches, categories, deps = {}) {
-  const callGemini = deps.callGemini || require('../utils/gemini-client').callGemini;
+  const callGemini = deps.callGemini || require('../llm/gemini-client').callGemini;
   const lines = linesNeedingCategory(matches);
   if (!lines.length || !categories.length) return [];
 

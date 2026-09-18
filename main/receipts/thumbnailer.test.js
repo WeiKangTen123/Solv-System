@@ -30,7 +30,7 @@ async function writeJpeg(name, width = 240, height = 320) {
   return p;
 }
 
-describe('utils/thumbnailer — which requests are honoured', () => {
+describe('receipts/thumbnailer — which requests are honoured', () => {
   test('only whitelisted widths, so one caller cannot fill the disk with variants', () => {
     expect(thumbnailer.allowedWidth(160)).toBe(160);
     expect(thumbnailer.allowedWidth('160')).toBe(160);
@@ -53,7 +53,7 @@ describe('utils/thumbnailer — which requests are honoured', () => {
   });
 });
 
-describe('utils/thumbnailer — generating', () => {
+describe('receipts/thumbnailer — generating', () => {
   test('produces a genuinely smaller file at the requested width', async () => {
     const src = await writeJpeg('r.jpg');
     const out = await thumbnailer.thumbnailPath(src, dir, 'r.jpg', 160, 'image/jpeg');
@@ -96,7 +96,7 @@ describe('utils/thumbnailer — generating', () => {
   });
 });
 
-describe('utils/thumbnailer — falling back rather than failing', () => {
+describe('receipts/thumbnailer — falling back rather than failing', () => {
   // Each of these returns null, and the route reads null as "send the original".
   test('an unsupported width is declined, not clamped to something arbitrary', async () => {
     const src = await writeJpeg('r.jpg');

@@ -1,19 +1,19 @@
 jest.mock('axios');
-jest.mock('../utils/oauth-state', () => ({
+jest.mock('./oauth-state', () => ({
   create:  jest.fn(() => 'fake-state-abc'),
   consume: jest.fn(),
 }));
-jest.mock('../utils/users', () => ({
+jest.mock('../store/users', () => ({
   getCompanyConfig:  jest.fn(),
   saveCompanyConfig: jest.fn(),
 }));
-jest.mock('../utils/token-cache', () => ({
+jest.mock('./token-cache', () => ({
   forCompany: jest.fn(() => ({ cacheToken: jest.fn(), pruneTenants: jest.fn() })),
 }));
 
 const axios = require('axios');
-const { getCompanyConfig, saveCompanyConfig } = require('../utils/users');
-const tokenCache = require('../utils/token-cache');
+const { getCompanyConfig, saveCompanyConfig } = require('../store/users');
+const tokenCache = require('./token-cache');
 const oauth = require('./oauth');
 
 // Client ID/Secret are per-user (each user brings their own Xero Web app); only the
