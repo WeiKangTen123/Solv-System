@@ -53,6 +53,7 @@ const expenseRoutes   = require('./routes/expenses');
 const claimRoutes     = require('./routes/claims');
 const fxRoutes        = require('./routes/fx');
 const reportRoutes    = require('./routes/reports');
+const xeroRoutes      = require('./routes/xero');
 const dashRoutes      = require('./routes/dashboard');
 app.use('/api/auth',      authRoutes);
 app.use('/api/users',     userRoutes);
@@ -62,6 +63,7 @@ app.use('/api/expenses',  expenseRoutes);
 app.use('/api/claims',    claimRoutes);
 app.use('/api/fx',        fxRoutes);
 app.use('/api/reports',   reportRoutes);
+app.use('/api/xero',      xeroRoutes);
 app.use('/api/dashboard', dashRoutes);
 app.get('/dashboard/health', dashRoutes.health);
 
