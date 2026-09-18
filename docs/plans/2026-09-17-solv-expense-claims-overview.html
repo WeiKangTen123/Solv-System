@@ -174,7 +174,7 @@ ol.dec .r b{color:var(--ink);font-weight:600}
 <section id="samples">
 <h2>What the samples say</h2>
 <h3>The receipts</h3>
-<p>Both files in <code>Sample/</code> are Indian hotel tax invoices for the same traveller, Ms Elaine Xin Yu Khoo of Singapore. They are harder than the Singapore receipts the Xero app was tuned on, in five ways that shape the design.</p>
+<p>Both files in <code>samples/receipts/</code> are Indian hotel tax invoices for the same traveller, Ms Elaine Xin Yu Khoo of Singapore. They are harder than the Singapore receipts the Xero app was tuned on, in five ways that shape the design.</p>
 <div class="wide"><table class="tbl">
 <thead><tr><th>Folio</th><th>Pages</th><th>Stay</th><th class="num">Total</th><th class="num">Of which GST</th><th>What is inside</th></tr></thead>
 <tbody>
@@ -189,7 +189,7 @@ ol.dec .r b{color:var(--ink);font-weight:600}
   <li><strong>They are in INR with Indian GST.</strong> The tax is recorded, but it is foreign tax: it stays inside the claimed amount and is not Singapore input tax. The report says so.</li>
 </ol>
 <h3>The report structure</h3>
-<p>The two images in <code>Structure/</code> are two templates that answer different questions. The first (Business Trip Expense Report) has a trip cover: employee, department, purpose, trip dates, days of stay, destination, total. Its table has four category columns. The second (Expense Report) has a pay-period cover with statement number, employee ID and manager, eight category columns, a subtotal, an advances line and a total reimbursement, an itemised "Other" box, and an office-use area. Solv's report takes the union: the trip cover from the first, the column set, advances and office-use block from the second, and adds what neither has because neither is multi-currency: original currency, rate, base amount, and a rate footnote. The category columns are configurable per company, so the default can be either template's set.</p>
+<p>The two images in <code>docs/reference/report-templates/</code> are two templates that answer different questions. The first (Business Trip Expense Report) has a trip cover: employee, department, purpose, trip dates, days of stay, destination, total. Its table has four category columns. The second (Expense Report) has a pay-period cover with statement number, employee ID and manager, eight category columns, a subtotal, an advances line and a total reimbursement, an itemised "Other" box, and an office-use area. Solv's report takes the union: the trip cover from the first, the column set, advances and office-use block from the second, and adds what neither has because neither is multi-currency: original currency, rate, base amount, and a rate footnote. The category columns are configurable per company, so the default can be either template's set.</p>
 </section>
 
 <section id="reuse">
@@ -595,7 +595,7 @@ ol.dec .r b{color:var(--ink);font-weight:600}
   <li>Originals are stored at full size; the 3 MB limit applies only to the copy attached to a Xero bill.</li>
   <li>The claim-form XLSX that staff email today (date, description, currency, amount, exchange rate, SGD amount, category columns) stays supported through the batch import; Solv's own screens make it optional.</li>
 </ul>
-<p>After your answers, the next step is a written spec in <code>docs/superpowers/specs/</code> and an implementation plan for Phase 0 and Phase 1, task by task, test first.</p>
+<p>After your answers, the next step is a written spec in <code>docs/specs/</code> and an implementation plan for Phase 0 and Phase 1, task by task, test first.</p>
 </section>
 </main>
 </div>

@@ -1787,7 +1787,7 @@ describe('utils/pdf-render', () => {
     expect(await renderPdfPages(Buffer.alloc(0))).toBeNull();
   }, 60000);
 
-  const sample = path.join(__dirname, '../../Sample/jw marriott mumbai.pdf');
+  const sample = path.join(__dirname, '../../samples/receipts/jw-marriott-mumbai.pdf');
   (fs.existsSync(sample) ? test : test.skip)('the scanned Mumbai folio renders both pages', async () => {
     const out = await renderPdfPages(fs.readFileSync(sample));
     expect(out.numPages).toBe(2);
@@ -4011,7 +4011,7 @@ git add -A && git commit -m "feat(ui): settings — company, staff and reader ke
 ```js
 // Reads one receipt file through the real reader and prints what Solv would
 // store. Needs a Gemini key: Gemini_API_KEY in main/.env or the environment.
-//   node main/scripts/read-sample.js "Sample/jw marriott mumbai.pdf"
+//   node main/scripts/read-sample.js "samples/receipts/jw-marriott-mumbai.pdf"
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 process.env.NODE_ENV = process.env.NODE_ENV || 'development';
 const fs = require('fs');
@@ -4037,8 +4037,8 @@ const { readOne, buildLines } = require('../receipts/read-receipt');
 
 Run (with a key in `main/.env`):
 ```bash
-node main/scripts/read-sample.js "Sample/jw marriott mumbai.pdf"
-node main/scripts/read-sample.js "Sample/courtyard marriott pune.pdf"
+node main/scripts/read-sample.js "samples/receipts/jw-marriott-mumbai.pdf"
+node main/scripts/read-sample.js "samples/receipts/courtyard-marriott-pune.pdf"
 ```
 Expected, per the checklist: one result each (not one per page); merchant names the hotel; currency INR; totals 44,309.00 and 88,188.77; tax 6,759.00 and 13,452.52; lines split Lodging and Meals summing to the total; a line marked on behalf of Tan Suan Kuan on each. Write the actual JSON and a pass/fail per checklist row into `docs/acceptance/2026-09-18-folio-read.md`. Any row that fails becomes a prompt or normaliser fix in `receipt-parser.js` with a unit test, and the script is rerun.
 

@@ -6,9 +6,9 @@
 
 | Output | Result |
 |---|---|
-| `EXP-2026-0001_Elaine-Xin-Yu-Khoo.pdf` | 7 pages, 765 KB: the report page, then R1 (2 pages, JW Marriott Mumbai) and R2 (4 pages, Courtyard Pune) appended |
-| `EXP-2026-0001_Elaine-Xin-Yu-Khoo.xlsx` | sheets Cover, Lines (with a SUM formula), Rates, Receipts |
-| `EXP-2026-0001_Elaine-Xin-Yu-Khoo.csv` | 8 lines, one per category line |
+| `docs/acceptance/exports/EXP-2026-0001_Elaine-Xin-Yu-Khoo.pdf` | 7 pages, 765 KB: the report page, then R1 (2 pages, JW Marriott Mumbai) and R2 (4 pages, Courtyard Pune) appended |
+| `docs/acceptance/exports/EXP-2026-0001_Elaine-Xin-Yu-Khoo.xlsx` | sheets Cover, Lines (with a SUM formula), Rates, Receipts |
+| `docs/acceptance/exports/EXP-2026-0001_Elaine-Xin-Yu-Khoo.csv` | 8 lines, one per category line |
 
 **Figures on the report** (SGD, rate INR→SGD 0.01341 for 1 Sep and 4 Sep 2026, ECB via Frankfurter):
 

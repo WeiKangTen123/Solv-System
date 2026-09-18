@@ -1,8 +1,8 @@
 // Builds the real expense report from the two Marriott folios, end to end, in
 // a throwaway data directory: Elaine files both expenses, submits, Henry
-// approves, and the PDF, XLSX and CSV land in docs/acceptance/.
+// approves, and the PDF, XLSX and CSV land in docs/acceptance/exports/.
 //   node main/scripts/demo-report.js
-// Expenses come from the saved reader output (docs/acceptance/*.json) so no
+// Expenses come from the saved reader output (samples/reads/*.json) so no
 // model call is needed; the exchange rate is fetched live.
 const fs   = require('fs');
 const os   = require('os');
@@ -30,8 +30,8 @@ const { buildLines } = require('../receipts/read-receipt');
 
 const ROOT = path.join(__dirname, '../..');
 const SAMPLES = [
-  { json: 'docs/acceptance/2026-09-18-jw-marriott-mumbai.json', pdf: 'Sample/jw marriott mumbai.pdf', purpose: 'Client meetings, Mumbai office' },
-  { json: 'docs/acceptance/2026-09-18-courtyard-marriott-pune.json', pdf: 'Sample/courtyard marriott pune.pdf', purpose: 'Client site visit, Chakan plant' },
+  { json: 'samples/reads/jw-marriott-mumbai.json', pdf: 'samples/receipts/jw-marriott-mumbai.pdf', purpose: 'Client meetings, Mumbai office' },
+  { json: 'samples/reads/courtyard-marriott-pune.json', pdf: 'samples/receipts/courtyard-marriott-pune.pdf', purpose: 'Client site visit, Chakan plant' },
 ];
 
 (async () => {
@@ -86,7 +86,7 @@ const SAMPLES = [
 
   const payload = await reportPayload(report.id, { withReceipts: true });
   const name = doc.exportFilename(payload);
-  const outDir = path.join(ROOT, 'docs/acceptance');
+  const outDir = path.join(ROOT, 'docs/acceptance/exports');
   const pdfBuf = await exporter.pdfBuffer(doc.expenseReportDoc(payload));
   fs.writeFileSync(path.join(outDir, `${name}.pdf`), pdfBuf);
   fs.writeFileSync(path.join(outDir, `${name}.xlsx`), await exporter.xlsxBuffer(payload));

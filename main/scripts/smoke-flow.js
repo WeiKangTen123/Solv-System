@@ -40,7 +40,7 @@ const step = (n, msg) => console.log(`${String(n).padStart(2)}. ${msg}`);
   const H = (await call('POST', '/api/auth/login', { body: { email: 'henry@solv.sg', password: 'password123' } })).token;
   const F = (await call('POST', '/api/auth/login', { body: { email: 'finance@solv.sg', password: 'password123' } })).token;
 
-  const pdf = fs.readFileSync(path.join(ROOT, 'Sample/jw marriott mumbai.pdf'));
+  const pdf = fs.readFileSync(path.join(ROOT, 'samples/receipts/jw-marriott-mumbai.pdf'));
   const up = await call('POST', '/api/receipts', { token: E, body: { mime: 'application/pdf', data: pdf.toString('base64'), filename: 'jw marriott mumbai.pdf' } });
   step(4, `uploaded the Mumbai folio as Elaine: expense ${up.expense.id} (${up.expense.status})`);
   let exp;
