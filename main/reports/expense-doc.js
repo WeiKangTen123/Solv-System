@@ -31,7 +31,8 @@ function fmtStamp(iso, tz) {
 // so a name in another script produces a readable placeholder rather than a
 // stream that dies mid-page. The en dash, right quote, double dagger and
 // arrow are kept: they are drawn by these fonts and the report uses them.
-const latin1 = v => String(v ?? '').replace(/[^ -ÿ–‘’‡→]/g, '?');
+// The arrow is not in the standard font's encoding at all, so it becomes the word.
+const latin1 = v => String(v ?? '').replace(/\s*→\s*/g, ' to ').replace(/[^ -ÿ–—‘’‡•]/g, '?');
 
 function buildModel(payload) {
   const { company, report, lines = [] } = payload;
