@@ -1,0 +1,601 @@
+<title>Solv Expense Claims Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --paper:#F6F5F1; --surface:#FFFFFF; --surface-2:#EEF0EA; --ink:#17262B; --ink-2:#4B5A5F; --ink-3:#7A878B;
+  --rule:#D8DBD4; --accent:#0F6E56; --accent-ink:#0B5341; --accent-tint:#E3F0EA; --amber:#B7791F; --amber-ink:#8A5A12; --amber-tint:#F7EEDD;
+  --warn:#B45309; --danger:#B42318; --mono-bg:#F0F1EC; --focus:#0F6E56;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0F1514; --surface:#161D1B; --surface-2:#1C2523; --ink:#E6EBE8; --ink-2:#A2ACA7; --ink-3:#7B8783;
+    --rule:#27312E; --accent:#3EB38C; --accent-ink:#7ED9B8; --accent-tint:#173A30; --amber:#E0A64C; --amber-ink:#F0C070; --amber-tint:#3A2E17;
+    --warn:#F59E0B; --danger:#F87171; --mono-bg:#121917; --focus:#3EB38C;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0F1514; --surface:#161D1B; --surface-2:#1C2523; --ink:#E6EBE8; --ink-2:#A2ACA7; --ink-3:#7B8783;
+  --rule:#27312E; --accent:#3EB38C; --accent-ink:#7ED9B8; --accent-tint:#173A30; --amber:#E0A64C; --amber-ink:#F0C070; --amber-tint:#3A2E17;
+  --warn:#F59E0B; --danger:#F87171; --mono-bg:#121917; --focus:#3EB38C;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.62 "IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;padding-inline:20px;padding-block:0 64px;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-ink)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.page{max-width:1180px;margin:0 auto}
+@media (min-width:1080px){.page{display:grid;grid-template-columns:216px minmax(0,1fr);gap:56px;align-items:start}}
+.rail{position:sticky;top:env(safe-area-inset-top,0px);padding-top:40px;font-size:13px}
+@media (max-width:1079px){.rail{position:static;padding-top:28px}}
+.rail .k{font:600 11px/1 "IBM Plex Mono",ui-monospace,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin-bottom:12px}
+.rail ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+@media (max-width:1079px){.rail ol{flex-direction:row;flex-wrap:wrap;gap:6px 14px}}
+.rail a{color:var(--ink-2);text-decoration:none;border-bottom:1px solid transparent}
+.rail a:hover{color:var(--ink);border-bottom-color:var(--rule)}
+main{padding-top:40px;min-width:0}
+header.title{padding-bottom:28px;border-bottom:1px solid var(--rule);margin-bottom:36px}
+.eyebrow{font:600 11px/1 "IBM Plex Mono",ui-monospace,Menlo,monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin-bottom:14px}
+h1{font:600 38px/1.12 "IBM Plex Serif",Georgia,"Times New Roman",serif;margin:0 0 14px;text-wrap:balance;letter-spacing:-.01em}
+.byline{color:var(--ink-2);font-size:13.5px;display:flex;flex-wrap:wrap;gap:6px 18px}
+.byline code{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:12.5px}
+h2{font:600 25px/1.2 "IBM Plex Serif",Georgia,serif;margin:56px 0 14px;padding-top:22px;border-top:1px solid var(--rule);text-wrap:balance;scroll-margin-top:24px}
+h3{font:600 16.5px/1.3 "IBM Plex Sans",system-ui,sans-serif;margin:30px 0 8px}
+p,ul,ol{max-width:70ch}
+p{margin:0 0 14px}
+ul,ol{margin:0 0 16px;padding-left:22px}
+li{margin:0 0 6px}
+li>ul,li>ol{margin-top:6px}
+strong{font-weight:600}
+code,kbd{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:.92em;background:var(--mono-bg);padding:1px 5px;border-radius:3px}
+.lead{font-size:17px;line-height:1.55;color:var(--ink);max-width:66ch}
+.answer{background:var(--surface);border:1px solid var(--rule);padding:22px 24px;margin:0 0 8px;max-width:none}
+.answer .k{font:600 11px/1 "IBM Plex Mono",monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin-bottom:10px}
+.answer p{max-width:72ch}
+.answer p:last-child{margin-bottom:0}
+.wide{overflow-x:auto;margin:14px 0 22px;max-width:100%}
+table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;line-height:1.45;min-width:640px}
+table.tbl th{text-align:left;font:600 11px/1.3 "IBM Plex Mono",monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:0 10px 10px 0;border-bottom:1px solid var(--ink-2);vertical-align:bottom}
+table.tbl td{padding:9px 10px 9px 0;border-bottom:1px solid var(--rule);vertical-align:top}
+table.tbl td:first-child{white-space:nowrap}
+table.tbl .num{text-align:right;font-variant-numeric:tabular-nums;font-family:"IBM Plex Mono",monospace;font-size:13px;white-space:nowrap}
+table.tbl th.num{text-align:right}
+table.tbl tr.total td{border-bottom:none;border-top:1px solid var(--ink-2);font-weight:600}
+.chip{display:inline-block;font:600 10.5px/1 "IBM Plex Mono",monospace;letter-spacing:.06em;text-transform:uppercase;padding:4px 7px;border-radius:3px;white-space:nowrap;vertical-align:middle}
+.chip.port{background:var(--accent-tint);color:var(--accent-ink)}
+.chip.extend{background:var(--amber-tint);color:var(--amber-ink)}
+.chip.new{background:var(--surface-2);color:var(--ink);border:1px solid var(--ink-2)}
+.chip.later{background:transparent;color:var(--ink-2);border:1px dashed var(--ink-3)}
+.chip.skip{background:transparent;color:var(--ink-3);border:1px solid var(--rule)}
+pre.wire{font:12px/1.38 "IBM Plex Mono",ui-monospace,Menlo,monospace;background:var(--mono-bg);border:1px solid var(--rule);padding:16px 18px;margin:12px 0 8px;overflow-x:auto;color:var(--ink);tab-size:2}
+.cap{font-size:13px;color:var(--ink-2);margin:0 0 22px;max-width:70ch}
+.note{border-left:3px solid var(--accent);background:var(--accent-tint);padding:12px 16px;margin:16px 0 20px;max-width:72ch}
+.note.fx{border-left-color:var(--amber);background:var(--amber-tint)}
+.note.risk{border-left-color:var(--danger);background:var(--surface-2)}
+.note p:last-child{margin-bottom:0}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:14px 0 20px}
+.opt{background:var(--surface);border:1px solid var(--rule);padding:16px 18px}
+.opt.rec{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.opt h4{margin:0 0 6px;font:600 15px/1.3 "IBM Plex Sans",sans-serif}
+.opt .tag{font:600 10.5px/1 "IBM Plex Mono",monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+.opt ul{padding-left:18px;margin:6px 0 0;font-size:13.5px}
+.opt p{font-size:13.5px;margin:0 0 6px}
+figure{margin:18px 0 26px}
+figure svg{max-width:100%;height:auto;display:block;color:var(--ink)}
+figcaption{font-size:13px;color:var(--ink-2);margin-top:10px;max-width:72ch}
+.box{fill:var(--surface);stroke:currentColor;stroke-width:1.1}
+.box.new{fill:var(--accent-tint);stroke:var(--accent);stroke-width:1.4}
+.box.ext{fill:none;stroke:currentColor;stroke-dasharray:4 3}
+.lbl{font:12px "IBM Plex Sans",sans-serif;fill:currentColor}
+.lbl.b{font-weight:600}
+.lbl.s{font-size:10.5px;fill:var(--ink-2)}
+.edge{stroke:currentColor;stroke-width:1.1;fill:none}
+.edge.later{stroke-dasharray:4 3}
+ol.dec{counter-reset:d;list-style:none;padding:0;max-width:none}
+ol.dec>li{counter-increment:d;display:grid;grid-template-columns:36px minmax(0,1fr);gap:10px;padding:14px 0;border-bottom:1px solid var(--rule)}
+ol.dec>li::before{content:counter(d);font:600 15px/1.4 "IBM Plex Mono",monospace;color:var(--accent)}
+ol.dec .q{font-weight:600;margin-bottom:4px}
+ol.dec .r{font-size:14px;color:var(--ink-2)}
+ol.dec .r b{color:var(--ink);font-weight:600}
+.phase{display:grid;grid-template-columns:110px minmax(0,1fr);gap:14px;padding:14px 0;border-bottom:1px solid var(--rule)}
+.phase .n{font:600 13px/1.4 "IBM Plex Mono",monospace;color:var(--accent)}
+.phase .n small{display:block;color:var(--ink-3);font-weight:500;font-size:11.5px}
+.phase h4{margin:0 0 4px;font:600 15px/1.3 "IBM Plex Sans",sans-serif}
+.phase p{font-size:14px;margin:0 0 4px;max-width:78ch}
+.phase ul{font-size:13.5px;margin:4px 0 0;padding-left:18px}
+.first{border:1px solid var(--accent);background:var(--surface);padding:18px 20px;margin:20px 0}
+.first .k{font:600 11px/1 "IBM Plex Mono",monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+.first p{max-width:74ch}
+.first p:last-child{margin-bottom:0}
+@media (max-width:520px){h1{font-size:30px}h2{font-size:22px}.phase{grid-template-columns:1fr}ol.dec>li{grid-template-columns:28px 1fr}}
+@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+</style>
+
+<div class="page">
+<nav class="rail" aria-label="Contents">
+  <div class="k">Contents</div>
+  <ol>
+    <li><a href="#answer">The answer</a></li>
+    <li><a href="#ask">What you asked for</a></li>
+    <li><a href="#samples">What the samples say</a></li>
+    <li><a href="#reuse">Reuse from the Xero app</a></li>
+    <li><a href="#gaps">What Solv must add</a></li>
+    <li><a href="#options">Architecture options</a></li>
+    <li><a href="#system">System shape</a></li>
+    <li><a href="#data">Data model</a></li>
+    <li><a href="#pipeline">Pipeline</a></li>
+    <li><a href="#fx">Exchange rates</a></li>
+    <li><a href="#report">The report</a></li>
+    <li><a href="#screens">Screens</a></li>
+    <li><a href="#api">API</a></li>
+    <li><a href="#ops">Security, ops, tests</a></li>
+    <li><a href="#phases">Phases and what first</a></li>
+    <li><a href="#decisions">Decisions needed</a></li>
+    <li><a href="#assumptions">Assumptions</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="title">
+  <div class="eyebrow">Planning document · before any code</div>
+  <h1>Solv Expense Claims: system plan from receipt to report</h1>
+  <div class="byline">
+    <span>Prepared 17 Sep 2026</span>
+    <span>For Wei Kang, Solv</span>
+    <span>Reuse source: <code>xero-invoice-app-master</code> at <code>master 99ba5ef</code></span>
+    <span>Samples: 2 Marriott folios (INR), 2 report templates</span>
+  </div>
+</header>
+
+<section id="answer">
+<div class="answer">
+  <div class="k">The answer</div>
+  <p><strong>Build Solv as a new, standalone app on the same stack as the Xero automation</strong> (Node 22, Express, SQLite, React + Vite, Gemini as the receipt reader) and port about twenty of its proven modules with their tests: the AI receipt reader, two-tier duplicate detection, the crash-safe job queue, phone QR capture, ZIP + claim-form import, client-side photo compression, authentication and the deploy/backup tooling.</p>
+  <p><strong>Solv then adds the five things the Xero app does not have:</strong> reading scanned PDFs (both of your samples are scans with no text layer, and the Xero app stores those without reading them), exchange-rate conversion with the rate, its date, its source and the fetch time frozen on every line, an Expense Report entity with a cover, a PDF/XLSX export in your template's structure with the receipts appended, and an employee → manager → finance approval flow.</p>
+  <p><strong>What first:</strong> scaffold the repo and prove the reader on your two Marriott folios before touching exchange rates or the report. Extraction is the only uncertain component; everything downstream of it is deterministic. Eight decisions are listed at the end; my recommendation is marked on each.</p>
+</div>
+</section>
+
+<section id="ask">
+<h2>What you asked for, and what it means in the build</h2>
+<div class="wide"><table class="tbl">
+<thead><tr><th>Your words</th><th>Requirement</th><th>Where it lands</th></tr></thead>
+<tbody>
+<tr><td>"a cover and place that can submit expenses"</td><td>A home screen that is the front door of the system, an Add Expense flow (upload, phone camera, batch ZIP + form), and a cover page on every printed report</td><td>Home screen, Add Expense, report cover</td></tr>
+<tr><td>"after each expenses, user can output to a report"</td><td>Expenses are grouped into an Expense Report (a trip or a pay period) that exports as PDF, XLSX and CSV in the layout of your two template images</td><td>Expense Report entity, export</td></tr>
+<tr><td>"receipts might have different currency, so we need real time currency exchange rate"</td><td>Every foreign line is converted to the company base currency (SGD) with a live rate fetched from a provider, cached, and stored on the line so it never silently changes</td><td>FX service, <code>fx_rates</code> table</td></tr>
+<tr><td>"the report have to tell when"</td><td>The report prints, per line, the original amount, the rate and the base amount, and in a footnote the rate date, the source and the moment it was fetched, plus the rounding rule</td><td>Report footnote block</td></tr>
+<tr><td>"analyse from the xero automation … expenses claim module and AI detection"</td><td>An inventory of what is ported unchanged, what is extended, what is reused later, and what is left behind</td><td>Section "Reuse from the Xero app"</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="samples">
+<h2>What the samples say</h2>
+<h3>The receipts</h3>
+<p>Both files in <code>Sample/</code> are Indian hotel tax invoices for the same traveller, Ms Elaine Xin Yu Khoo of Singapore. They are harder than the Singapore receipts the Xero app was tuned on, in five ways that shape the design.</p>
+<div class="wide"><table class="tbl">
+<thead><tr><th>Folio</th><th>Pages</th><th>Stay</th><th class="num">Total</th><th class="num">Of which GST</th><th>What is inside</th></tr></thead>
+<tbody>
+<tr><td>Courtyard by Marriott, Pune Chakan</td><td>4, scanned</td><td>1 – 4 Sep 2026, 3 nights</td><td class="num">INR 88,188.77</td><td class="num">INR 13,452.52</td><td>Room packages, a colleague's room ("TAN SUAN KUAN #126 ⇒ Khoo #110") transferred onto this bill, six MoMo Cafe meals, CGST 9% + SGST 9% on every line, HSN/SAC summary (996311 rooms, 996332 food)</td></tr>
+<tr><td>JW Marriott, Mumbai Sahar</td><td>2, scanned</td><td>31 Aug – 1 Sep 2026, 1 night</td><td class="num">INR 44,309.00</td><td class="num">INR 6,759.00</td><td>Two rooms (one transferred from Tan Suan Kuan #1155), two breakfasts, CGST + SGST, HSN summary</td></tr>
+</tbody></table></div>
+<ol>
+  <li><strong>They are scans.</strong> Extracting text with the Xero app's own parser returns zero characters for both. The Xero app's rule for that case is "stored but not read; type the fields by hand". Solv must render the pages to images and read them with the vision model.</li>
+  <li><strong>They are multi-page single documents.</strong> The Xero app splits a PDF page by page into separate claims, which is right for a stack of taxi receipts and wrong for a four-page folio. Solv needs a document-level read: all pages of one invoice number in one model call.</li>
+  <li><strong>One receipt spans several report columns.</strong> A folio is Lodging and Meals at once. The report template has category columns, so one receipt must be able to split into several lines that still add up to the receipt total.</li>
+  <li><strong>They carry a colleague's charges.</strong> Both hotels moved a second guest's room onto Elaine's bill. The claim needs a "paid on behalf of" flag per line so finance can see who really incurred it.</li>
+  <li><strong>They are in INR with Indian GST.</strong> The tax is recorded, but it is foreign tax: it stays inside the claimed amount and is not Singapore input tax. The report says so.</li>
+</ol>
+<h3>The report structure</h3>
+<p>The two images in <code>Structure/</code> are two templates that answer different questions. The first (Business Trip Expense Report) has a trip cover: employee, department, purpose, trip dates, days of stay, destination, total. Its table has four category columns. The second (Expense Report) has a pay-period cover with statement number, employee ID and manager, eight category columns, a subtotal, an advances line and a total reimbursement, an itemised "Other" box, and an office-use area. Solv's report takes the union: the trip cover from the first, the column set, advances and office-use block from the second, and adds what neither has because neither is multi-currency: original currency, rate, base amount, and a rate footnote. The category columns are configurable per company, so the default can be either template's set.</p>
+</section>
+
+<section id="reuse">
+<h2>Reuse from the Xero automation</h2>
+<p>The Xero app is 43,000 lines with tests beside every module. Roughly sixty percent of Solv's backend arrives by copying files whose tests already pass. The verdicts:</p>
+<p><span class="chip port">Port</span> copy unchanged &nbsp; <span class="chip extend">Extend</span> copy, then change &nbsp; <span class="chip new">New</span> written for Solv &nbsp; <span class="chip later">Later</span> reused in a late phase &nbsp; <span class="chip skip">Skip</span> not needed</p>
+<div class="wide"><table class="tbl">
+<thead><tr><th>Module (in the Xero app)</th><th>What it does</th><th>Verdict</th><th>Note for Solv</th></tr></thead>
+<tbody>
+<tr><td><code>utils/gemini-client.js</code></td><td>Gemini calls with key rotation, model rotation on quota, 15 requests/min per user, 5 in flight</td><td><span class="chip port">Port</span></td><td>The reader is one function; the model can be swapped later in one file</td></tr>
+<tr><td><code>utils/receipt-parser.js</code></td><td>Vision and text prompts, strict JSON normalisation, batch reading of 5 images with attribution guard, multi-receipt photo split guard</td><td><span class="chip extend">Extend</span></td><td>Add a multi-page single-document mode, a category on each line item, and tax-summary extraction</td></tr>
+<tr><td><code>claims/categories.js</code>, <code>category-account.js</code></td><td>One category list feeding the prompt, the normaliser and the Xero account hints</td><td><span class="chip extend">Extend</span></td><td>Categories become a per-company list that is also the report's column set</td></tr>
+<tr><td><code>intake/document.js</code>, <code>intake/dedup.js</code>, <code>intake/profiles.js</code></td><td>Number, date and currency cleaning; SHA-256 exact duplicates plus vendor + date + amount suspicion; per-type rules</td><td><span class="chip port">Port</span></td><td>Unchanged</td></tr>
+<tr><td><code>claims/claim-queue.js</code>, <code>claim-worker.js</code>, <code>jobs/index.js</code></td><td>Disk-backed job queue with atomic writes, 3 retries then poison, 10 jobs per user, recovery on boot</td><td><span class="chip port">Port</span></td><td>Runs imports and scanned-PDF renders</td></tr>
+<tr><td><code>claims/claim-archive.js</code>, <code>claim-form.js</code>, <code>claim-matcher.js</code>, <code>claim-import.js</code></td><td>ZIP extraction, header-based XLSX claim-form parser (already reads Currency, Amount, Exchange Rate, SGD Amount columns), date-led one-to-one matching with amount discrepancies, staged import job</td><td><span class="chip extend">Extend</span></td><td>Import result files into a draft Expense Report instead of flat rows</td></tr>
+<tr><td><code>claims/claim-record.js</code></td><td>One builder for every claim record</td><td><span class="chip extend">Extend</span></td><td>Targets the new <code>expense_lines</code> schema</td></tr>
+<tr><td><code>routes/receipts.js</code></td><td>Upload, QR pairing, phone capture, signed image URLs, thumbnails, re-read, split and merge</td><td><span class="chip extend">Extend</span></td><td>Same routes; the record it creates is an expense, and the PDF branch gains the renderer</td></tr>
+<tr><td><code>utils/receipt-store.js</code>, <code>thumbnailer.js</code>, <code>pdf-pages.js</code>, <code>pairing.js</code></td><td>Per-user file store, sharp thumbnails, per-page PDF text, single-use QR tokens</td><td><span class="chip port">Port</span></td><td>Store keeps full-size originals; the 3 MB cap moves to the Xero attachment copy</td></tr>
+<tr><td><code>routes/auth.js</code>, <code>utils/users.js</code>, <code>utils/crypto.js</code>, <code>middleware/*</code></td><td>JWT login, bcrypt, AES-256-GCM secrets at rest, per-user rate limits, admin guard</td><td><span class="chip extend">Extend</span></td><td>Add roles employee / manager / finance / admin and a manager relation</td></tr>
+<tr><td><code>db/schema.sql</code>, <code>db/migrate.js</code>, <code>db/backup.js</code></td><td>SQLite with WAL, cents as integers, versioned migrations, verified daily backup</td><td><span class="chip extend">Extend</span></td><td>New tables; same conventions</td></tr>
+<tr><td><code>reports/budget-doc.js</code>, <code>budget-render.js</code></td><td>pdfmake document built as plain data so the rows and totals are unit-tested without rendering; exceljs export from the same payload</td><td><span class="chip extend">Extend</span></td><td>The pattern for the expense report export</td></tr>
+<tr><td><code>scripts/deploy.sh</code>, <code>ecosystem.config.js</code>, <code>.github/workflows/ci.yml</code>, <code>docs/RUNBOOK.md</code></td><td>Deploy that waits for green CI, backs up, reloads pm2, proves the commit; restore and rollback steps</td><td><span class="chip port">Port</span></td><td>Second pm2 app on the same VM or its own</td></tr>
+<tr><td><code>ui/src/components/receipts/receipt-upload.js</code></td><td>Browser-side resize to 2000 px and JPEG re-encode, EXIF-upright, HEIC on iPhone</td><td><span class="chip port">Port</span></td><td>Unchanged</td></tr>
+<tr><td><code>ui/src/pages/Capture.jsx</code>, <code>PhonePairingModal.jsx</code>, <code>ReceiptUpload.jsx</code>, <code>ClaimImport.jsx</code>, <code>CroppedImage.jsx</code></td><td>Phone camera page, QR modal with live arrivals, add controls, staged import dialog with reconciliation, box-cropped image</td><td><span class="chip port">Port</span></td><td>Copy, re-point at the new endpoints</td></tr>
+<tr><td><code>ui/src/styles/theme.css</code>, <code>api/client.js</code>, layout, contexts, <code>useVisiblePolling</code></td><td>Design tokens in light and dark, API client that throws on non-OK, sidebar and bottom nav, polling hook</td><td><span class="chip port">Port</span></td><td>Solv gets its own palette but keeps the token names</td></tr>
+<tr><td><code>xero/oauth.js</code>, <code>token-cache.js</code>, <code>contacts.js</code>, <code>invoices.js</code>, <code>currency.js</code></td><td>Xero connection, bill creation as ACCPAY with attachment, contact lookup, base-currency conversion using Xero's stamped rate</td><td><span class="chip later">Later</span></td><td>Phase 5 posting; bills carry <code>CurrencyRate</code> so Xero's base figure equals the report's</td></tr>
+<tr><td><code>email/*</code> (IMAP watcher, template parser), <code>xero/reports.js</code>, <code>XeroInsights.jsx</code>, <code>chat-agent.js</code></td><td>Email-to-invoice automation, financial dashboards, chat assistant</td><td><span class="chip skip">Skip</span></td><td>Not part of an expense claim system; email intake of claims can be added later using the same watcher</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="gaps">
+<h2>What Solv must add</h2>
+<p>These are the capabilities the Xero app does not have. Each one maps to a phase below.</p>
+<div class="wide"><table class="tbl">
+<thead><tr><th>Gap</th><th>Evidence</th><th>How Solv closes it</th></tr></thead>
+<tbody>
+<tr><td>Scanned PDFs are not read</td><td>Both samples: 0 text characters; the guidelines say "stored but not read"</td><td>Render each page with <code>pdfjs-dist</code> + <code>@napi-rs/canvas</code> at 150 dpi (no system dependency; poppler's <code>pdftoppm</code> is on your Mac but not guaranteed on a server), downscale with sharp, send to the vision reader</td></tr>
+<tr><td>A multi-page document becomes several claims</td><td><code>pdf-pages.js</code> splits by page when every page has text</td><td>One vision call carrying all pages as images, prompted as one document; for text PDFs, pages sharing an invoice number are merged before reading</td></tr>
+<tr><td>No exchange rates</td><td>Currency is stored; no rate, no base amount; <code>currency.js</code> only reads the rate Xero stamped</td><td>FX service with a provider chain, an <code>fx_rates</code> cache and a frozen rate on every line</td></tr>
+<tr><td>No Expense Report</td><td>Claims are flat rows in the invoices table, grouped only by import batch</td><td><code>expense_reports</code> with cover fields, status, totals, advances, and lines attached to it</td></tr>
+<tr><td>No claim export</td><td>Only the budget-variance PDF/XLSX exists</td><td>Expense report PDF, XLSX and CSV, with the receipts appended as numbered pages</td></tr>
+<tr><td>No approval flow, two roles only</td><td>Stated non-goal in the 26 Aug design: "No approval workflow"</td><td>Roles employee, manager, finance, admin; submit → approve or reject → paid, with an audit trail</td></tr>
+<tr><td>One receipt, one category</td><td>A folio is Lodging and Meals; the template has both columns</td><td>Line split editor: N lines per receipt, each with a category, that must sum to the receipt total</td></tr>
+<tr><td>Charges paid on behalf of a colleague</td><td>Both folios carry a transferred room</td><td>"On behalf of" flag with the colleague's name on a line, printed with a mark on the report</td></tr>
+<tr><td>3 MB cap on every stored file</td><td>Inherited from Xero's attachment limit</td><td>Originals are kept at full size; a ≤ 3 MB copy is made only when posting to Xero</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="options">
+<h2>Architecture options</h2>
+<div class="grid2">
+  <div class="opt rec">
+    <div class="tag">Recommended</div>
+    <h4>B. New Solv app, same stack, ported modules</h4>
+    <p>A fresh repository with the Xero app's layout (<code>main/</code>, <code>ui/</code>, co-located tests). Modules are copied file by file, each with its test, and the tests must pass before Solv-specific code is written.</p>
+    <ul>
+      <li>Clean company / employee / report model built for approvals</li>
+      <li>Ported tests keep protecting ported code</li>
+      <li>Xero posting later through the same ported <code>xero/</code> modules</li>
+      <li>Cost: one to two days of scaffolding; some duplication with the Xero app until a shared package is worth it</li>
+    </ul>
+  </div>
+  <div class="opt">
+    <div class="tag">Alternative</div>
+    <h4>A. Extend the Xero app in place</h4>
+    <p>Add reports, FX and approvals to the existing app.</p>
+    <ul>
+      <li>Fastest first demo; nothing to port</li>
+      <li>But its model is "each user connects their own Xero org", with strict per-user isolation, and claims share the invoices table with bills</li>
+      <li>Company-wide approvals fight that isolation; two products end up in one repo and one deploy</li>
+    </ul>
+  </div>
+  <div class="opt">
+    <div class="tag">Alternative</div>
+    <h4>C. Monorepo with a shared package</h4>
+    <p>Extract the reader, dedup, queue and stores into a package both apps depend on.</p>
+    <ul>
+      <li>Best long-term shape</li>
+      <li>Premature now: worth doing the second time both apps change the same module</li>
+    </ul>
+  </div>
+</div>
+</section>
+
+<section id="system">
+<h2>System shape</h2>
+<figure>
+<svg viewBox="0 0 1260 300" role="img" aria-label="One receipt's path through Solv: three intake sources feed the intake API, which stores the original first, enqueues a read job, the reader extracts fields and lines, the FX service freezes a base amount using a rate fetched by receipt date from Frankfurter with an open.er-api fallback, the line is reviewed, submitted and approved, then exported as PDF or XLSX; posting to Xero is a later phase. Tinted boxes are new in Solv; plain boxes are ported from the Xero automation.">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+  </defs>
+  <!-- legend -->
+  <rect x="950" y="14" width="14" height="14" class="box new"/><text x="970" y="25" class="lbl s">new in Solv</text>
+  <rect x="1060" y="14" width="14" height="14" class="box"/><text x="1080" y="25" class="lbl s">ported from the Xero automation</text>
+  <!-- sources -->
+  <rect x="20" y="60" width="112" height="36" class="box"/><text x="76" y="82" class="lbl" text-anchor="middle">Desktop upload</text>
+  <rect x="20" y="110" width="112" height="36" class="box"/><text x="76" y="132" class="lbl" text-anchor="middle">Phone camera, QR</text>
+  <rect x="20" y="160" width="112" height="36" class="box"/><text x="76" y="182" class="lbl" text-anchor="middle">ZIP + claim form</text>
+  <path d="M132,78 C146,78 146,128 160,128" class="edge" marker-end="url(#arr)"/>
+  <path d="M132,128 L160,128" class="edge" marker-end="url(#arr)"/>
+  <path d="M132,178 C146,178 146,128 160,128" class="edge" marker-end="url(#arr)"/>
+  <!-- intake -->
+  <rect x="160" y="104" width="110" height="48" class="box"/><text x="215" y="124" class="lbl b" text-anchor="middle">Intake API</text><text x="215" y="140" class="lbl s" text-anchor="middle">JWT or QR token</text>
+  <path d="M270,128 L300,128" class="edge" marker-end="url(#arr)"/><text x="285" y="98" class="lbl s" text-anchor="middle">stores first</text>
+  <!-- store -->
+  <rect x="300" y="104" width="120" height="48" class="box"/><text x="360" y="124" class="lbl b" text-anchor="middle">Store</text><text x="360" y="140" class="lbl s" text-anchor="middle">originals on disk, SQLite</text>
+  <path d="M420,128 L450,128" class="edge" marker-end="url(#arr)"/><text x="435" y="98" class="lbl s" text-anchor="middle">enqueue</text>
+  <!-- job runner -->
+  <rect x="450" y="104" width="110" height="48" class="box"/><text x="505" y="124" class="lbl b" text-anchor="middle">Job runner</text><text x="505" y="140" class="lbl s" text-anchor="middle">disk queue, 3 retries</text>
+  <path d="M560,128 L590,128" class="edge" marker-end="url(#arr)"/>
+  <!-- reader -->
+  <rect x="590" y="92" width="130" height="72" class="box"/><text x="655" y="112" class="lbl b" text-anchor="middle">Read</text>
+  <text x="655" y="128" class="lbl s" text-anchor="middle">photo → vision</text>
+  <text x="655" y="141" class="lbl s" text-anchor="middle">text PDF → text reader</text>
+  <text x="655" y="154" class="lbl s" text-anchor="middle">scan → render → vision</text>
+  <path d="M720,128 L750,128" class="edge" marker-end="url(#arr)"/><text x="735" y="98" class="lbl s" text-anchor="middle">fields, lines</text>
+  <!-- fx -->
+  <rect x="750" y="104" width="110" height="48" class="box new"/><text x="805" y="124" class="lbl b" text-anchor="middle">FX service</text><text x="805" y="140" class="lbl s" text-anchor="middle">rate frozen on the line</text>
+  <path d="M860,128 L890,128" class="edge" marker-end="url(#arr)"/><text x="875" y="98" class="lbl s" text-anchor="middle">base amount</text>
+  <rect x="730" y="214" width="150" height="46" class="box ext"/><text x="805" y="233" class="lbl" text-anchor="middle">Frankfurter (ECB rates)</text><text x="805" y="249" class="lbl s" text-anchor="middle">fallback: open.er-api</text>
+  <path d="M805,214 L805,152" class="edge" marker-end="url(#arr)"/><text x="815" y="186" class="lbl s">GET rate for the receipt date,</text><text x="815" y="199" class="lbl s">cached in fx_rates</text>
+  <!-- review -->
+  <rect x="890" y="104" width="120" height="48" class="box new"/><text x="950" y="124" class="lbl b" text-anchor="middle">Review, approve</text><text x="950" y="140" class="lbl s" text-anchor="middle">employee → manager</text>
+  <path d="M1010,128 L1040,128" class="edge" marker-end="url(#arr)"/><text x="1025" y="98" class="lbl s" text-anchor="middle">approved</text>
+  <!-- export -->
+  <rect x="1040" y="104" width="110" height="48" class="box new"/><text x="1095" y="124" class="lbl b" text-anchor="middle">Export</text><text x="1095" y="140" class="lbl s" text-anchor="middle">PDF, XLSX, CSV</text>
+  <rect x="1040" y="214" width="110" height="46" class="box ext"/><text x="1095" y="233" class="lbl" text-anchor="middle">Xero bill</text><text x="1095" y="249" class="lbl s" text-anchor="middle">with attachment</text>
+  <path d="M1095,152 L1095,214" class="edge later" marker-end="url(#arr)"/><text x="1105" y="186" class="lbl s">phase 5</text>
+</svg>
+<figcaption>One receipt's path. The original file is written before any read is attempted, so a model failure can never lose a receipt. Inside "Read", the page renderer is the new part; the vision and text readers are ported.</figcaption>
+</figure>
+<p>Deployment is the same as today: one VM, pm2, nginx, SQLite on the same disk, a verified daily backup, a deploy script that waits for CI. Solv runs as a second pm2 process on that VM or on its own; the runbook transfers unchanged.</p>
+</section>
+
+<section id="data">
+<h2>Data model</h2>
+<p>SQLite, WAL mode, foreign keys on, cents stored as integers, timestamps in UTC and formatted in the company timezone. Every table hangs off <code>companies</code> so a second company can be added later without a migration.</p>
+<div class="wide"><table class="tbl">
+<thead><tr><th>Table</th><th>Purpose</th><th>Key columns</th></tr></thead>
+<tbody>
+<tr><td><code>companies</code></td><td>The claiming entity</td><td>id, name, base_currency (SGD), fx_policy (receipt_date | submission_date | monthly_fixed), timezone, report_columns (JSON list of categories), logo, next_report_no</td></tr>
+<tr><td><code>users</code></td><td>People and roles</td><td>id, company_id, email, password_hash, name, employee_id, department, role (employee | manager | finance | admin), manager_id → users, created_at, last_seen_at</td></tr>
+<tr><td><code>receipts</code></td><td>One stored file, image or PDF</td><td>id, company_id, user_id, file, mime, size_bytes, sha256, pages, source (upload | phone | import), group_id, received_at, parsed_at, parse_json (the raw model reply), confidence</td></tr>
+<tr><td><code>expenses</code></td><td>One claimable receipt after reading</td><td>id, receipt_id, user_id, report_id (nullable = unfiled), merchant, receipt_date, receipt_time, invoice_no, currency, total_cents, tax_cents, subtotal_cents, purpose (typed by the claimant), status (reading | review-needed | reviewed | duplicate | rejected), duplicate_of, ai_read_at, box, page</td></tr>
+<tr><td><code>expense_lines</code></td><td>The report rows; one or many per expense</td><td>id, expense_id, category, description, amount_cents, currency, fx_rate, fx_rate_date, fx_source, fx_fetched_at, fx_policy, fx_override_by, base_cents, on_behalf_of (name), account_code, sort_order</td></tr>
+<tr><td><code>expense_reports</code></td><td>The cover and the workflow</td><td>id, company_id, user_id, number (EXP-2026-0007), kind (trip | period), title, purpose, period_from, period_to, destination, nights, days, status (draft | submitted | approved | rejected | paid | posted), submitted_at, approved_by, approved_at, rejected_reason, advances_cents, total_base_cents, paid_at, xero_invoice_id, notes</td></tr>
+<tr><td><code>fx_rates</code></td><td>Rate cache; historical rows never expire</td><td>base, quote, rate_date, rate, source, fetched_at, is_latest; primary key (base, quote, rate_date, source)</td></tr>
+<tr><td><code>report_events</code></td><td>Audit trail</td><td>id, report_id, actor_id, action (created | submitted | approved | rejected | paid | exported | posted | fx_overridden), note, at</td></tr>
+<tr><td><code>user_gemini_keys</code>, <code>company_credentials</code></td><td>Reader keys and Xero connection, encrypted at rest</td><td>As in the Xero app; Xero credentials move from per-user to per-company</td></tr>
+</tbody></table></div>
+<p>Pairing tokens stay in memory with a short TTL and job files stay on disk under <code>data/users/&lt;id&gt;/</code>, exactly as now.</p>
+</section>
+
+<section id="pipeline">
+<h2>Pipeline: one receipt's journey</h2>
+<ol>
+  <li><strong>Arrive.</strong> Desktop drag-drop, phone camera through a QR pairing token, or a ZIP plus claim-form XLSX. Photos are resized and re-encoded in the browser; PDFs pass through untouched.</li>
+  <li><strong>Store before anything else.</strong> The file is hashed (SHA-256) and written to disk; a receipt row and an expense row in status <code>reading</code> are created. An exact hash match is a certain duplicate: the expense is marked <code>duplicate</code> pointing at the original and no second file is written.</li>
+  <li><strong>Classify and read.</strong> An image goes to the vision reader. A PDF with a text layer goes to the text reader, with pages that share an invoice number merged first. A PDF with no text layer is rendered page by page and all pages go to the vision reader in one call as one document. Photos holding several receipts are split using the existing bounding-box guard.</li>
+  <li><strong>Normalise.</strong> Merchant, date, time, currency, total, tax, subtotal, invoice number, line items each with a category, confidence. Unlisted categories are dropped, tax above total is rejected, negatives are treated as unread. Everything is the Xero app's normaliser plus the per-line category.</li>
+  <li><strong>Suspect duplicates.</strong> Same merchant, same date, same amount as an existing expense raises a warning for a person to settle; it never auto-marks.</li>
+  <li><strong>Convert.</strong> The FX service looks up the rate for (currency → base, policy date), serving from <code>fx_rates</code> or fetching and caching it, and freezes rate, rate date, source and fetch time on every line. If no provider answers, the line is marked <em>rate pending</em> and the report cannot be exported until finance supplies one.</li>
+  <li><strong>Split into lines.</strong> Line items are grouped by category into report lines (a folio becomes Lodging and Meals). The claimant can edit the split; the lines must total the receipt.</li>
+  <li><strong>File.</strong> The expense is offered to the open draft report whose dates cover the receipt date, or stays "unfiled" on the home screen until the claimant files it.</li>
+  <li><strong>Review.</strong> The claimant checks the fields against the image, types the business purpose (the reader never invents one), marks lines paid on behalf of a colleague, and marks the expense reviewed.</li>
+  <li><strong>Submit, approve, pay.</strong> Submitting locks the report. The manager approves or rejects lines with a reason. Finance exports, marks paid, and, in phase 5, posts to Xero.</li>
+</ol>
+<div class="note risk"><p><strong>Failure rules, carried over from the Xero app and kept:</strong> the file is stored before any parse; a parse failure yields a saved expense with blank fields, never a lost receipt; a model outage degrades to manual entry; every job survives a restart and is retried up to three times before it is set aside with its error visible.</p></div>
+</section>
+
+<section id="fx">
+<h2>Exchange rates</h2>
+<p>The report has to say what rate was used, for which date, from where, and when it was fetched. That is only possible if the rate is written down at the moment it is applied and never recomputed. Everything below follows from that.</p>
+<h3>Direction and arithmetic</h3>
+<p>A rate is the number of base-currency units per one unit of the foreign currency (SGD per INR). Each line is converted and rounded to the cent on its own; the report total is the sum of the lines. Your samples show why the rule has to be printed: the Mumbai folio converts to 594.18 as one figure but its two lines round to 556.21 and 37.98, which sum to 594.19. Neither is wrong; the report states which rule it follows.</p>
+<h3>Policy, a company setting</h3>
+<ul>
+  <li><strong>Rate on the receipt date</strong> (default and recommended): the accounting convention, and what IRAS expects for a foreign-currency expense.</li>
+  <li><strong>Rate on the submission date</strong>: simpler for the claimant, less defensible in an audit.</li>
+  <li><strong>Monthly fixed table</strong>: finance uploads one rate per currency per month; the report cites the table.</li>
+</ul>
+<h3>Providers, tried in order</h3>
+<div class="wide"><table class="tbl">
+<thead><tr><th>Provider</th><th>Coverage</th><th>Historical</th><th>Cost</th><th>Verified today</th></tr></thead>
+<tbody>
+<tr><td>Frankfurter v1 (European Central Bank reference rates)</td><td>30 currencies: SGD, USD, EUR, GBP, AUD, INR, MYR, IDR, THB, PHP, CNY, HKD, JPY, KRW, NZD and others</td><td>Yes, by date; a weekend date returns the last business day with that date in the reply</td><td>Free, no key</td><td>INR→SGD 0.01341 for 4 Sep 2026 and for 1 Sep 2026; the Sunday 6 Sep resolved to 4 Sep</td></tr>
+<tr><td>open.er-api.com (ExchangeRate-API free tier)</td><td>160+ currencies</td><td>Latest only, refreshed daily</td><td>Free, no key</td><td>SGD per INR 0.013291, published 17 Sep 2026 00:02 UTC</td></tr>
+<tr><td>Manual entry by finance</td><td>Anything</td><td>Any date, with a reason</td><td>—</td><td>Recorded as source "manual" with the entering user</td></tr>
+</tbody></table></div>
+<p>Historical rows are cached forever. The "latest" row is refreshed hourly while the app is used. Provider calls time out at five seconds and run inside the job runner, so a slow provider never blocks an upload.</p>
+<div class="note fx"><p><strong>What the report prints, per foreign line:</strong> <code>INR 43,131.36 × 0.01341 = SGD 578.39</code>. <strong>And once per (currency, rate date) in the footnote:</strong> "INR→SGD 0.01341, European Central Bank reference rate for 4 Sep 2026, via Frankfurter, fetched 17 Sep 2026 15:31 SGT. Policy: rate on the receipt date. Each line is converted and rounded to the cent; the total is the sum of the lines."</p></div>
+<p>When a report is posted to Xero, the bill carries the same rate in <code>CurrencyRate</code>, so Xero's base-currency figure matches the printed one instead of Xero applying its own rate of the day.</p>
+</section>
+
+<section id="report">
+<h2>The report</h2>
+<p>Built as a pdfmake document definition that is plain data, so the rows, columns and totals are unit-tested without rendering a byte, and the XLSX is produced from the same payload. Landscape A4. Category columns come from the company setting; the default below is the eight-column template collapsed to the columns actually used, which is what a reader wants on paper.</p>
+<pre class="wire">
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│ SOLV PTE LTD                                                     EXPENSE REPORT       │
+│                                                                  EXP-2026-0007        │
+│ Employee    Elaine Xin Yu Khoo       Purpose      Client site visits, India           │
+│ Employee ID S0042                    Trip         31 Aug – 4 Sep 2026 · 4 nights      │
+│ Department  Sales                    Destination  Mumbai and Pune, India              │
+│ Manager     Henry Bennett            Status       Approved 10 Sep 2026                │
+│                                                                                      │
+│ TOTAL REIMBURSEMENT                                                   SGD 1,776.80   │
+│ Advances received                                                     SGD     0.00   │
+├──────────────────────────────────────────────────────────────────────────────────────┤
+│ #  Date    Description                    Ccy  Amount      Rate     Lodging   Meals   Total SGD │
+│ 1  31 Aug  JW Marriott Mumbai, 1 night    INR  41,477.00   0.01341   556.21             556.21 │
+│ 2  31 Aug  Breakfast ×2, JW Cafe          INR   2,832.00   0.01341             37.98     37.98 │
+│ 3  01 Sep  Courtyard Pune, 3 nights       INR  43,131.36   0.01341   578.39             578.39 │
+│ 4  01 Sep  Room for Tan Suan Kuan ‡       INR  36,713.34   0.01341   492.33             492.33 │
+│ 5  01 Sep  MoMo Cafe meals ×6, 1–4 Sep    INR   8,344.07   0.01341            111.89    111.89 │
+│    Category totals                                                 1,626.93  149.87  1,776.80 │
+│                                                                                      │
+│ EXCHANGE RATES  Policy: rate on the receipt date. Source: European Central Bank      │
+│ reference rates via Frankfurter, fetched 17 Sep 2026 15:31 SGT.                      │
+│ INR→SGD 0.01341 (1 Sep 2026) · INR→SGD 0.01341 (4 Sep 2026)                          │
+│ Each line is converted and rounded to the cent; the total is the sum of the lines.  │
+│ ‡ Paid on behalf of Tan Suan Kuan; room transferred to this folio by the hotel.      │
+│ Indian GST (CGST 9% + SGST 9%) is included in the amounts and is not Singapore       │
+│ input tax.                                                                           │
+│                                                                                      │
+│ Claimant   Elaine Xin Yu Khoo   signed 5 Sep 2026     Approved by  Henry Bennett     │
+│                                                       10 Sep 2026 14:02 SGT          │
+│ For office use   Paid 12 Sep 2026 · Xero bill BILL-0231 · Receipts R1–R2 attached    │
+└──────────────────────────────────────────────────────────────────────────────────────┘
+  Appendix: R1 JW Marriott Mumbai (2 pages) · R2 Courtyard Pune (4 pages), each page
+  headed "R2 · Courtyard by Marriott Pune Chakan · page 3 of 4 · INR 88,188.77"
+</pre>
+<p class="cap">Names, employee ID, department and manager are example values taken from your samples and the template image. Figures are the real ones from the two folios at the real ECB rate.</p>
+<p>The cover block repeats on every export. A pay-period report replaces Trip and Destination with "Period from / to" and "Statement no.", as in the second template. The XLSX has one sheet per section (Cover, Lines, Rates, Receipts) with live SUM formulas so finance can check it.</p>
+</section>
+
+<section id="screens">
+<h2>Screens</h2>
+<p>Navigation: Home, My expenses, Reports, Approvals (managers), Finance (finance role), Settings. Desktop has a sidebar; the phone gets a bottom bar. The phone capture page is reused as is. The palette is Solv's own; the token names stay the Xero app's so ported components drop in.</p>
+
+<h3>Home, the cover of the system</h3>
+<pre class="wire">
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ SOLV EXPENSES        Home   My expenses   Reports   Approvals (3)   Settings  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  Good afternoon, Elaine                                                       │
+│                                                                              │
+│  ┌──────────────────────┐ ┌──────────────────────┐ ┌──────────────────────┐  │
+│  │ Add expense          │ │ Use my phone         │ │ Import a claim       │  │
+│  │ photo, PDF or drop   │ │ scan a code, shoot   │ │ ZIP of receipts +    │  │
+│  │ files here           │ │ receipts on the spot │ │ claim form XLSX      │  │
+│  └──────────────────────┘ └──────────────────────┘ └──────────────────────┘  │
+│                                                                              │
+│  UNFILED (2)                                   OPEN REPORTS                   │
+│  JW Marriott Mumbai   INR 44,309.00 = SGD 594.19  India trip, Sep 2026       │
+│  Courtyard Pune       INR 88,188.77 = SGD 1,182.61  Draft · 5 lines           │
+│  [File both into "India trip, Sep 2026"]          SGD 1,776.80  [Open] [Submit]│
+│                                                                              │
+│  WAITING FOR MY APPROVAL (managers only)                                     │
+│  EXP-2026-0006  Tan Suan Kuan   SGD 812.40   submitted 2 days ago   [Review] │
+└──────────────────────────────────────────────────────────────────────────────┘
+</pre>
+<p class="cap">The three entry points are the first thing on the page. Unfiled expenses and open reports are the two states that need an action; approvals appear only for managers.</p>
+
+<h3>Expense review</h3>
+<pre class="wire">
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ ← My expenses    Courtyard by Marriott Pune Chakan    R-0142       [Delete]   │
+├─────────────────────────────────┬────────────────────────────────────────────┤
+│  RECEIPT · 4 pages · scanned    │  Merchant    [Courtyard By Marriott Pune  ] │
+│  ┌───────────────────────────┐  │  Date        [2026-09-04]   Time  [08:23]   │
+│  │ page 1 of 4               │  │  Invoice no. [93/713-181024]                │
+│  │ (rendered image)          │  │  Currency    [INR ▾]   Total  [88,188.77]   │
+│  │ zoom · rotate · ‹ 1/4 ›   │  │  Tax         [13,452.52]  CGST + SGST       │
+│  └───────────────────────────┘  │  Purpose     [Client site visit, Chakan   ] │
+│  Read by AI · high confidence   │  ────────────────────────────────────────── │
+│  [Re-read]  [Open original]     │  EXCHANGE RATE                              │
+│                                 │  INR → SGD 0.01341   ECB rate for 4 Sep     │
+│                                 │  fetched 17 Sep 15:31 SGT   [Override…]     │
+│                                 │  ────────────────────────────────────────── │
+│                                 │  LINES                       INR       SGD  │
+│                                 │  Lodging  Rooms, 3 nights  43,131.36  578.39│
+│                                 │  Lodging  Room, T.S. Kuan  36,713.34  492.33│
+│                                 │           ☑ paid on behalf of Tan Suan Kuan │
+│                                 │  Meals    MoMo Cafe ×6      8,344.07  111.89│
+│                                 │  [+ line]   lines total 88,188.77 ✓         │
+│                                 │  ────────────────────────────────────────── │
+│                                 │  Report  [India trip, Sep 2026 ▾]           │
+│                                 │                    [Save]  [Mark reviewed →]│
+└─────────────────────────────────┴────────────────────────────────────────────┘
+</pre>
+<p class="cap">Image left, fields right, as in the Xero app, with two additions: the rate panel that shows exactly what the report will print, and the line split that must reconcile to the receipt total before the expense can be marked reviewed.</p>
+
+<h3>Report detail</h3>
+<pre class="wire">
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ ← Reports   EXP-2026-0007  India trip, Sep 2026        DRAFT   [Export ▾] [Submit] │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  COVER                                                                       │
+│  Purpose      [Client site visits, India        ]  Kind      (•) Trip ( ) Period │
+│  From / to    [2026-08-31] – [2026-09-04]          Destination [Mumbai and Pune ] │
+│  Advances     [0.00]                               Notes     [                ] │
+│                                                                              │
+│  LINES (5)                                             Lodging   Meals   SGD │
+│  ▸ 31 Aug  JW Marriott Mumbai        INR 41,477.00  0.01341   556.21          556.21 │
+│  ▸ 31 Aug  Breakfast ×2              INR  2,832.00  0.01341            37.98   37.98 │
+│  ▸ 01 Sep  Courtyard Pune, 3 nights  INR 43,131.36  0.01341   578.39          578.39 │
+│  ▸ 01 Sep  Room for T.S. Kuan ‡      INR 36,713.34  0.01341   492.33          492.33 │
+│  ▸ 01 Sep  MoMo Cafe meals ×6        INR  8,344.07  0.01341           111.89  111.89 │
+│    Totals                                                    1,626.93 149.87 1,776.80 │
+│  [+ Add unfiled expenses (0)]                                                 │
+│                                                                              │
+│  RATES USED   INR→SGD 0.01341 (1 Sep, 4 Sep) · ECB via Frankfurter · fetched 17 Sep │
+│  HISTORY      Created 5 Sep by Elaine · 2 expenses filed 5 Sep                      │
+└──────────────────────────────────────────────────────────────────────────────┘
+</pre>
+<p class="cap">Submitting locks the cover and the lines. A manager sees the same page with Approve and Reject (with reason, per line or whole report); finance sees Mark paid and, in phase 5, Post to Xero.</p>
+
+<h3>Other screens</h3>
+<ul>
+  <li><strong>My expenses:</strong> the list with filters by status, report and date, thumbnails, and the same add controls as Home. Batch imports show the reconciliation dialog ported from the Xero app: matched, amount mismatches, missing receipts, duplicates.</li>
+  <li><strong>Approvals:</strong> a queue for managers, oldest first, each row showing claimant, total, submitted date and any flags (duplicate suspicion, rate overridden, paid on behalf).</li>
+  <li><strong>Finance:</strong> approved reports awaiting payment, export in bulk, the rates table with manual overrides, Xero connection status.</li>
+  <li><strong>Settings:</strong> company (name, base currency, FX policy, report columns, logo, timezone), users and roles with manager assignment, reader keys, Xero credentials.</li>
+  <li><strong>Phone capture:</strong> unchanged from the Xero app: scan the QR, shoot, see "read: Courtyard Pune, INR 88,188.77" appear, close.</li>
+</ul>
+</section>
+
+<section id="api">
+<h2>API</h2>
+<p>Express routers, one per area, JWT on everything except login, the phone capture token routes and health. Routes marked "ported" keep their shape from the Xero app.</p>
+<div class="wide"><table class="tbl">
+<thead><tr><th>Area</th><th>Routes</th><th>Origin</th></tr></thead>
+<tbody>
+<tr><td>Auth</td><td><code>POST /api/auth/login</code> · <code>POST /api/auth/register</code> (first account only) · <code>GET /api/auth/me</code> · <code>POST /api/auth/logout</code></td><td>ported</td></tr>
+<tr><td>Company and users</td><td><code>GET|PATCH /api/company</code> · <code>GET|POST /api/users</code> · <code>PATCH|DELETE /api/users/:id</code> (role, manager, department)</td><td>extended</td></tr>
+<tr><td>Receipts</td><td><code>POST /api/receipts</code> · <code>POST /api/receipts/pair</code> · <code>GET|DELETE /api/receipts/pair/:token</code> · <code>GET|POST /api/receipts/capture/:token</code> · <code>GET /api/receipts/capture/:token/status</code> · <code>GET /api/receipts/:id/token</code> · <code>GET /api/receipts/:id/image?page=</code> · <code>POST /api/receipts/:id/reread</code> · <code>GET /api/receipts/:id/group</code> · <code>POST /api/receipts/:id/merge</code></td><td>ported, PDF branch extended</td></tr>
+<tr><td>Expenses</td><td><code>GET /api/expenses?status&amp;report&amp;from&amp;to</code> · <code>GET|PATCH|DELETE /api/expenses/:id</code> · <code>PUT /api/expenses/:id/lines</code> (replace the split; must total the receipt) · <code>PATCH /api/expenses/:id/status</code> · <code>PATCH /api/expenses/:id/fx</code> (override with reason; finance)</td><td>new</td></tr>
+<tr><td>Reports</td><td><code>GET|POST /api/reports</code> · <code>GET|PATCH /api/reports/:id</code> · <code>POST /api/reports/:id/expenses</code> · <code>DELETE /api/reports/:id/expenses/:expenseId</code> · <code>POST /api/reports/:id/submit|approve|reject|paid</code> · <code>GET /api/reports/:id/export-url?format=pdf|xlsx|csv</code> · <code>GET /api/reports/:id/export</code> (signed token)</td><td>new</td></tr>
+<tr><td>Exchange rates</td><td><code>GET /api/fx/rate?from=INR&amp;to=SGD&amp;date=2026-09-04</code> · <code>GET /api/fx/rates</code> · <code>POST /api/fx/rates</code> (manual or monthly table; finance) · <code>POST /api/fx/refresh</code></td><td>new</td></tr>
+<tr><td>Batch import</td><td><code>POST /api/claims/import</code> · <code>GET /api/claims/active</code> · <code>GET|DELETE /api/claims/import/:jobId</code> · <code>DELETE /api/claims/group/:groupId</code></td><td>ported</td></tr>
+<tr><td>Approvals and audit</td><td><code>GET /api/approvals</code> (manager queue) · <code>GET /api/reports/:id/events</code> · <code>GET /api/admin/audit</code> · <code>GET /api/admin/logs</code></td><td>new</td></tr>
+<tr><td>Xero (phase 5)</td><td><code>GET /api/xero/oauth/connect|callback</code> · <code>POST /api/reports/:id/post</code> · <code>GET /api/xero/accounts</code></td><td>ported later</td></tr>
+<tr><td>Health</td><td><code>GET /api/dashboard/health</code> returns status and the running commit</td><td>ported</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="ops">
+<h2>Security, operations, tests</h2>
+<h3>Security</h3>
+<ul>
+  <li>Kept from the Xero app: JWT with role read from the database on every request, bcrypt passwords, AES-256-GCM for stored secrets, helmet, per-user rate limits, signed short-lived image and export tokens, single-use QR tokens that grant upload only, path sanitisation, per-user file directories.</li>
+  <li>Added: route-level role checks (an employee sees only their own expenses; a manager sees their direct reports' submitted reports; finance sees the company), an audit table written on every status change and rate override, and report locking after submission.</li>
+</ul>
+<h3>Operations</h3>
+<ul>
+  <li>pm2 with restart backoff, nginx in front, daily verified SQLite backup, <code>npm run backup:pull</code> to copy the set off the box, deploy that waits for green CI and proves the running commit. All ported.</li>
+  <li>New: a nightly job that refreshes "latest" rates and reports any line still pending a rate; storage growth is watched because originals are now full size.</li>
+</ul>
+<h3>Tests</h3>
+<ul>
+  <li>Jest and supertest, tests co-located, data and logs in a temp directory under test. Ported modules bring their tests; the port is not done until they pass in the new repo.</li>
+  <li>New tests: the page renderer (page count, size, a text-free PDF yields images), the multi-page single-document read against both Marriott folios with mocked model replies, the FX service (cache hit, provider fallback order, weekend resolution, manual override, rate pending), the line split reconciliation, the report document definition (rows, columns, category totals, the footnote content, rounding rule) without rendering, the approval state machine, and role guards on every route.</li>
+</ul>
+</section>
+
+<section id="phases">
+<h2>Phases and what first</h2>
+<div class="first">
+  <div class="k">What first</div>
+  <p><strong>Phase 0 and Phase 1, in that order, with your two Marriott folios as the acceptance test.</strong> The reader is the only part of this system whose result is uncertain: a four-page scanned Indian GST folio with a colleague's room on it is a harder document than anything the Xero app has read. Exchange rates and the report are deterministic and can be built with confidence once the extracted fields are trustworthy. The acceptance test for Phase 1 is concrete: upload each folio and get one expense (not four), the right merchant, dates, currency, total and tax, lines split into Lodging and Meals that sum to the total, and the transferred room detected as paid on behalf of a colleague.</p>
+</div>
+<div class="phase"><div class="n">Phase 0<small>2 to 3 days</small></div><div><h4>Scaffold and port the foundation</h4><p>New repository with the Xero app's layout. Port auth, users, crypto, logger, database and migrations, backup, job runner, receipt store, thumbnailer, Gemini client, the UI shell and API client, CI and deploy. Add companies, roles, and the new tables. Every ported test passes.</p></div></div>
+<div class="phase"><div class="n">Phase 1<small>about 1 week</small></div><div><h4>Intake and reading</h4><p>Port upload, phone capture and batch import. Add the page renderer, the multi-page single-document read, per-line categories, tax summary, and the on-behalf detection. Expense review screen with the line split. Validate on the two folios and the Singapore samples; write the accuracy checklist down.</p></div></div>
+<div class="phase"><div class="n">Phase 2<small>2 to 3 days</small></div><div><h4>Exchange rates</h4><p>FX service with Frankfurter then open.er-api then manual; <code>fx_rates</code> cache; company policy; rate panel on the review screen; rate pending state; override with reason and audit.</p></div></div>
+<div class="phase"><div class="n">Phase 3<small>about 1 week</small></div><div><h4>Expense reports and export</h4><p>Report entity, cover, filing of expenses, totals and advances, Home screen, PDF and XLSX and CSV export in the template structure with the rate footnote and receipts appendix.</p></div></div>
+<div class="phase"><div class="n">Phase 4<small>3 to 4 days</small></div><div><h4>Roles and approval</h4><p>Manager and finance roles, submit, approve, reject with reasons, paid, locking, audit trail, the Approvals and Finance screens, email notification on submit and decision (optional).</p></div></div>
+<div class="phase"><div class="n">Phase 5<small>about 3 days</small></div><div><h4>Post to Xero</h4><p>One ACCPAY bill per approved report (or per line, your choice) with <code>CurrencyRate</code> and the receipts attached at ≤ 3 MB, accounts chosen by category through the ported account matcher. Nothing is sent before finance clicks Post.</p></div></div>
+<div class="phase"><div class="n">Later<small>as needed</small></div><div><h4>Not in this plan on purpose</h4><p>Email intake of claims, mileage and per-diem lines, policy limits and flags (a meal over SGD 50, a taxi after 22:00), multi-company, a native phone app.</p></div></div>
+</section>
+
+<section id="decisions">
+<h2>Decisions needed from you</h2>
+<p>Answer by number. Where you have no preference, I take the recommendation.</p>
+<ol class="dec">
+  <li><div><div class="q">Standalone Solv app, or extend the Xero app?</div><div class="r"><b>Recommended: standalone</b>, same stack, ported modules. Extending is faster for a demo and slower for everything after it.</div></div></li>
+  <li><div><div class="q">Company name and base currency on the report?</div><div class="r"><b>Assumed: Solv, SGD, Asia/Singapore.</b> Say if the claiming entity is a different company or if any staff claim in a different base.</div></div></li>
+  <li><div><div class="q">Exchange-rate policy by default?</div><div class="r"><b>Recommended: rate on the receipt date</b> from ECB reference rates, with a manual override for finance. Alternatives: submission-date rate, or a monthly fixed table.</div></div></li>
+  <li><div><div class="q">Report columns?</div><div class="r"><b>Recommended: configurable per company, defaulting to</b> Air &amp; Transport, Lodging, Meals, Entertainment, Phone, Fuel/Mileage, Other (the second template), collapsed to used columns on paper. Or keep the four-column trip layout.</div></div></li>
+  <li><div><div class="q">One receipt to many lines, or one line per receipt?</div><div class="r"><b>Recommended: many lines</b>, split by category, reconciled to the receipt total. A hotel folio is the case for it.</div></div></li>
+  <li><div><div class="q">Approval chain?</div><div class="r"><b>Recommended: one manager, then finance marks paid.</b> Two-level approval can be added later as a company setting.</div></div></li>
+  <li><div><div class="q">Xero posting granularity, when it comes?</div><div class="r"><b>Recommended: one bill per report</b>, with a line per expense line and the receipts attached. One bill per line is possible if finance prefers to match receipts one to one.</div></div></li>
+  <li><div><div class="q">Keep Gemini as the reader?</div><div class="r"><b>Recommended: yes for now</b>; the keys, rotation and rate limiting are already built. The reader is one function, so a different model is a one-file change if the folio accuracy test disappoints.</div></div></li>
+</ol>
+</section>
+
+<section id="assumptions">
+<h2>Assumptions I made</h2>
+<ul>
+  <li>"Cover" means both the system's home screen and the cover page of every printed report; I built the plan for both.</li>
+  <li>Employees, managers and finance are staff of one company; the design keeps a company table so a second one is a data change, not a migration.</li>
+  <li>The Xero app keeps running as it is; nothing in this plan changes it.</li>
+  <li>Originals are stored at full size; the 3 MB limit applies only to the copy attached to a Xero bill.</li>
+  <li>The claim-form XLSX that staff email today (date, description, currency, amount, exchange rate, SGD amount, category columns) stays supported through the batch import; Solv's own screens make it optional.</li>
+</ul>
+<p>After your answers, the next step is a written spec in <code>docs/superpowers/specs/</code> and an implementation plan for Phase 0 and Phase 1, task by task, test first.</p>
+</section>
+</main>
+</div>
