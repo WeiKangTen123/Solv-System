@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -13,6 +14,9 @@ export default function Settings() {
   const [users, setUsers] = useState([]);
   const [keys, setKeys] = useState([]);
   const [rates, setRates] = useState([]);
+  const [xero, setXero] = useState(null);
+  const [xeroForm, setXeroForm] = useState({ XERO_CLIENT_ID: '', XERO_CLIENT_SECRET: '', XERO_OAUTH_CLIENT_ID: '', XERO_OAUTH_CLIENT_SECRET: '', DEFAULT_ACCOUNT_CODE: '' });
+  const [params, setParams] = useSearchParams();
   const [newRate, setNewRate] = useState({ from: '', date: new Date().toISOString().slice(0, 10), rate: '' });
   const [newUser, setNewUser] = useState({ email: '', password: '', name: '', role: 'employee', department: '', employeeId: '', managerId: '' });
   const [newKey, setNewKey] = useState({ apiKey: '', label: '' });
@@ -25,7 +29,17 @@ export default function Settings() {
     setUsers((await api.get('/users')).users);
     setKeys((await api.get('/company/llm-keys')).keys);
     setRates((await api.get('/fx/rates')).rates.slice(0, 30));
+    const x = await api.get('/xero'); setXero(x);
+    setXeroForm(f => ({ ...f, XERO_CLIENT_ID: x.fields.XERO_CLIENT_ID.value, XERO_OAUTH_CLIENT_ID: x.fields.XERO_OAUTH_CLIENT_ID.value, DEFAULT_ACCOUNT_CODE: x.fields.DEFAULT_ACCOUNT_CODE.value, XERO_CLIENT_SECRET: '', XERO_OAUTH_CLIENT_SECRET: '' }));
   }
+  // Back from Xero's consent screen: finish the connection while signed in.
+  useEffect(() => {
+    if (params.get('xero_oauth') === 'pending' && params.get('code') && params.get('state')) {
+      api.post('/xero/oauth/complete', { code: params.get('code'), state: params.get('state') })
+        .then(() => { ok('Xero connected.'); return loadAll(); }).catch(fail).finally(() => setParams({}, { replace: true }));
+    } else if (params.get('xero_oauth') === 'error') { fail(new Error('Xero did not complete the connection. Try again.')); setParams({}, { replace: true }); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => { loadAll().catch(e => setMsg({ tone: 'error', text: e.message })); }, []);
   const ok = text => setMsg({ tone: 'success', text });
   const fail = e => setMsg({ tone: 'error', text: e.message });
@@ -47,6 +61,16 @@ export default function Settings() {
   async function addRate(e) {
     e.preventDefault();
     try { await api.post('/fx/rates', { from: newRate.from.toUpperCase(), date: newRate.date, rate: Number(newRate.rate) }); setNewRate({ ...newRate, from: '', rate: '' }); await loadAll(); ok('Rate saved.'); } catch (err) { fail(err); }
+  }
+  async function saveXero(e) {
+    e.preventDefault();
+    try { await api.patch('/xero/credentials', xeroForm); await loadAll(); ok('Xero settings saved.'); } catch (err) { fail(err); }
+  }
+  async function testXero() {
+    try { const r = await api.post('/xero/test', {}); await loadAll(); ok(`Connected: ${r.tenants.map(t => t.tenantName).join(', ')}`); } catch (err) { fail(err); }
+  }
+  async function connectXero() {
+    try { const d = await api.get('/xero/oauth/connect'); window.location.href = d.url; } catch (err) { fail(err); }
   }
   async function addKey(e) {
     e.preventDefault();
@@ -104,6 +128,29 @@ export default function Settings() {
           </form>
         )}
       </div>
+
+      {xero && (
+        <form className="card" onSubmit={saveXero}>
+          <div className="card-title">Xero</div>
+          <div className="card-subtitle">Approved reports post to Xero as draft bills payable to the claimant. Connect with a Custom Connection (client id and secret) or with the OAuth web-app flow.</div>
+          <div style={{ fontSize: 13, marginBottom: 12 }}>
+            {xero.tenants.length ? <span style={{ color: 'var(--success)' }}>Connected to {xero.tenants.map(t => t.tenantName).join(', ')} ({xero.connectionType || 'custom'})</span> : <span style={{ color: 'var(--text-muted)' }}>Not connected.</span>}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0 12px' }}>
+            <div className="form-group"><label className="form-label" htmlFor="x-cid">Custom Connection client ID</label><input id="x-cid" className="form-input" value={xeroForm.XERO_CLIENT_ID} onChange={e => setXeroForm({ ...xeroForm, XERO_CLIENT_ID: e.target.value })} /></div>
+            <div className="form-group"><label className="form-label" htmlFor="x-sec">Client secret {xero.fields.XERO_CLIENT_SECRET.isSet ? '(stored; blank keeps it)' : ''}</label><input id="x-sec" className="form-input" type="password" value={xeroForm.XERO_CLIENT_SECRET} onChange={e => setXeroForm({ ...xeroForm, XERO_CLIENT_SECRET: e.target.value })} /></div>
+            <div className="form-group"><label className="form-label" htmlFor="x-ocid">OAuth web app client ID</label><input id="x-ocid" className="form-input" value={xeroForm.XERO_OAUTH_CLIENT_ID} onChange={e => setXeroForm({ ...xeroForm, XERO_OAUTH_CLIENT_ID: e.target.value })} /></div>
+            <div className="form-group"><label className="form-label" htmlFor="x-osec">OAuth client secret {xero.fields.XERO_OAUTH_CLIENT_SECRET.isSet ? '(stored; blank keeps it)' : ''}</label><input id="x-osec" className="form-input" type="password" value={xeroForm.XERO_OAUTH_CLIENT_SECRET} onChange={e => setXeroForm({ ...xeroForm, XERO_OAUTH_CLIENT_SECRET: e.target.value })} /></div>
+            <div className="form-group"><label className="form-label" htmlFor="x-acc">Default account code</label><input id="x-acc" className="form-input" placeholder="429" value={xeroForm.DEFAULT_ACCOUNT_CODE} onChange={e => setXeroForm({ ...xeroForm, DEFAULT_ACCOUNT_CODE: e.target.value })} /></div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" type="submit">Save Xero settings</button>
+            <button className="btn btn-outline" type="button" onClick={testXero}>Test Custom Connection</button>
+            <button className="btn btn-outline" type="button" onClick={connectXero} disabled={!xero.oauthRedirectConfigured} title={xero.oauthRedirectConfigured ? '' : 'Set XERO_OAUTH_REDIRECT_URI on the server first'}>Connect with Xero (OAuth)</button>
+            {xero.tenants.length > 0 && <button className="btn btn-ghost" type="button" onClick={() => api.delete('/xero/oauth/disconnect').then(loadAll).catch(fail)}>Disconnect</button>}
+          </div>
+        </form>
+      )}
 
       <div className="card">
         <div className="card-title">Exchange rates</div>

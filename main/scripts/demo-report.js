@@ -62,6 +62,28 @@ const SAMPLES = [
   wf.submit(report.id, elaine);
   wf.approve(report.id, henry);
 
+  // --xero-dry-run: the bill that WOULD be posted, against Xero's default
+  // Singapore chart of accounts and tax rates, with a pretend connected org.
+  // Nothing reaches Xero: postReport is asked for a dry run.
+  if (process.argv.includes('--xero-dry-run')) {
+    const catAcc = require('../xero/category-account');
+    catAcc.getAccounts = async () => [
+      { code: '420', name: 'Entertainment', type: 'EXPENSE', status: 'ACTIVE' }, { code: '429', name: 'General Expenses', type: 'EXPENSE', status: 'ACTIVE' },
+      { code: '449', name: 'Motor Vehicle Expenses', type: 'EXPENSE', status: 'ACTIVE' }, { code: '461', name: 'Printing & Stationery', type: 'EXPENSE', status: 'ACTIVE' },
+      { code: '485', name: 'Subscriptions', type: 'EXPENSE', status: 'ACTIVE' }, { code: '489', name: 'Telephone & Internet', type: 'EXPENSE', status: 'ACTIVE' },
+      { code: '493', name: 'Travel - National', type: 'EXPENSE', status: 'ACTIVE' }, { code: '494', name: 'Travel - International', type: 'EXPENSE', status: 'ACTIVE' },
+    ];
+    catAcc.getTaxRates = async () => [{ name: 'GST on Expenses', taxType: 'INPUT', status: 'ACTIVE', displayTaxRate: 9, canApplyToExpenses: true }, { name: 'No Tax', taxType: 'NONE', status: 'ACTIVE', displayTaxRate: 0, canApplyToExpenses: true }];
+    require('../db').prepare("INSERT INTO xero_tenants (company_id, tenant_id, tenant_name, connected_at) VALUES (?, 'demo-tenant', 'Solv Pte Ltd (demo)', ?)").run(admin.companyId, new Date().toISOString());
+    users.saveCompanyConfig(admin.companyId, { DEFAULT_ACCOUNT_CODE: '429' });
+    const finance = await users.createUser({ email: 'finance@solv.sg', password: 'password123', companyId: admin.companyId, role: 'finance', name: 'Finance' });
+    const dry = await require('../xero/bills').postReport(report.id, finance, { dryRun: true });
+    console.log(JSON.stringify({ xeroDryRun: { tenant: dry.tenantName, contact: dry.bill.contact, invoice: { ...dry.bill.invoice, lineItems: undefined }, total: dry.bill.total, attachments: dry.bill.attachments,
+      lines: dry.bill.invoice.lineItems.map(l => ({ description: l.description, amount: l.unitAmount, account: l.accountCode, tax: l.taxType })) } }, null, 1));
+    fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
+    return;
+  }
+
   const payload = await reportPayload(report.id, { withReceipts: true });
   const name = doc.exportFilename(payload);
   const outDir = path.join(ROOT, 'docs/acceptance');
