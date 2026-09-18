@@ -113,6 +113,15 @@ describe('routes/expenses', () => {
     expect(r.body.expense.lines[0]).toMatchObject({ fxRate: 0.02, baseAmount: 4 });   // an override survives an edit
   });
 
+  test('an expense in a submitted report cannot be edited', async () => {
+    const reports = require('../store/reports'); const wf = require('../reports/workflow');
+    const e = seed(emp, { status: 'reviewed', lines: [{ category: 'Lodging', amount: 100, baseAmount: 1.34, fxRate: 0.0134, fxRateDate: '2026-09-04', fxSource: 'frankfurter', fxFetchedAt: 'x' }] });
+    const r = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'T' });
+    reports.addExpense(r.id, e.id); wf.submit(r.id, emp);
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ purpose: 'x' }).expect(409);
+    await request(serverFor(app)).get(`/api/expenses/${e.id}`).set(as(emp)).expect(200);
+  });
+
   test('delete removes the expense and the file once nothing references it', async () => {
     const receiptStore = require('../utils/receipt-store');
     const files = receiptStore.forUser(emp.id);
