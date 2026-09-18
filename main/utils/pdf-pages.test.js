@@ -92,3 +92,23 @@ describe('utils/pdf-pages', () => {
     });
   });
 });
+
+describe('pdf-pages — sameDocument', () => {
+  const { sameDocument, splittablePages } = require('./pdf-pages');
+  const folio = n => `COURTYARD BY MARRIOTT PUNE CHAKAN TAX INVOICE Invoice # : 93/713-181024 Page ${n} of 4 charges ...`;
+
+  test('pages sharing an invoice number are one document', () => {
+    expect(sameDocument([folio(1), folio(2), folio(3)])).toBe(true);
+    expect(splittablePages({ pages: [folio(1), folio(2)], hasText: true })).toMatchObject({ split: false, reason: 'pages of one document' });
+  });
+
+  test('pages with different numbers are separate receipts', () => {
+    expect(sameDocument(['GRAB Receipt No: A1 total 18.40 for the ride home tonight', 'GRAB Receipt No: B2 total 22.10 for the ride home tonight'])).toBe(false);
+  });
+
+  test('without numbers, a header repeated on every page means one document', () => {
+    const head = 'JW MARRIOTT MUMBAI SAHAR TAX INVOICE folio for Ms Khoo';
+    expect(sameDocument([`${head} page one lines and charges`, `${head} page two totals and taxes`])).toBe(true);
+    expect(sameDocument(['Grab ride 18.40 on Monday from home to the office', 'Gojek ride 25.00 on Tuesday from the office back'])).toBe(false);
+  });
+});

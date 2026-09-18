@@ -46,10 +46,29 @@ async function extractPages(buffer) {
   }
 }
 
+// Are these text pages ONE document? A hotel folio repeats its invoice number
+// on every page; a scan of several receipts does not. Failing a number, a
+// header that opens every page is taken as the same document.
+// The token must carry a digit: "Receipt total" is not a receipt number.
+const NUMBER_RE = /(?:invoice|bill|receipt|folio|statement)\s*(?:no|number|num|#)?\.?\s*[:#]?\s*((?=[A-Z0-9\/-]*\d)[A-Z0-9][A-Z0-9\/-]{2,})/i;
+function sameDocument(pages = []) {
+  const texts = pages.filter(p => typeof p === 'string' && p.trim().length >= MIN_PAGE_CHARS);
+  if (texts.length < 2) return false;
+  const nums = texts.map(t => { const m = NUMBER_RE.exec(t); return m ? m[1].toUpperCase() : null; });
+  if (nums.every(Boolean)) return new Set(nums).size === 1;
+  // A repeated header only counts for the document kinds that run to several
+  // pages. Two taxi e-receipts share a header too, and those are two receipts.
+  const norm = t => t.toLowerCase().replace(/\s+/g, ' ').trim();
+  const head = norm(texts[0]).slice(0, 48);
+  if (head.length < 20 || !/\b(invoice|folio|statement)\b/.test(head)) return false;
+  return texts.slice(1).every(t => norm(t).includes(head));
+}
+
 // Which pages are worth making a record for. A one-page PDF is never "split" —
 // it is just an ordinary single receipt.
 function splittablePages({ pages = [], hasText = false } = {}) {
   if (!hasText || pages.length < 2) return { split: false, pageNumbers: [], reason: !hasText ? 'no text layer — the PDF is a scan' : 'single page' };
+  if (sameDocument(pages)) return { split: false, pageNumbers: [], reason: 'pages of one document' };
   const pageNumbers = pages
     .map((text, i) => ({ text, page: i + 1 }))
     .filter(p => p.text.length >= MIN_PAGE_CHARS)
@@ -61,4 +80,4 @@ function splittablePages({ pages = [], hasText = false } = {}) {
   return { split: true, pageNumbers, reason: null };
 }
 
-module.exports = { extractPages, splittablePages, MIN_PAGE_CHARS };
+module.exports = { extractPages, splittablePages, sameDocument, MIN_PAGE_CHARS };
