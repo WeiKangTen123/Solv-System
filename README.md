@@ -60,11 +60,17 @@ samples/         receipts/ (the two Marriott folios), reads/ (the reader's saved
 
 ## Look and feel
 
-Midnight indigo: a deep indigo ground with warm sand text, coral for actions, and a separate hue for every status. Dark is the default; the toggle in the header switches to the sand-and-ink light theme and the choice is remembered. The whole palette is [ui/src/styles/theme.css](ui/src/styles/theme.css), around fifty lines of tokens, and nothing outside that file names a colour, so a repaint means editing one file.
+Nocturne: a near-black, almost colourless ground with one indigo-to-violet gradient on the primary action, and a separate hue for every status. Dark is the default; the toggle switches to the daylight version and the choice is remembered. The whole palette is [ui/src/styles/theme.css](ui/src/styles/theme.css), tokens only, and nothing outside that file names a colour, so a repaint means editing one file.
 
-Three rules the palette keeps: the accent means "you can do this" and is never also the success colour; each status owns a hue (blue in progress, amber needs you, green settled, violet paid, rose refused); and the destructive button is tinted rather than filled, so Reject never outweighs Submit.
+Three rules the palette keeps:
 
-Manrope carries the interface and IBM Plex Mono every figure, so amounts line up down a column. Both are self-hosted in `ui/public/fonts` (Latin and Latin Extended, 94 kB in total) because the server's content security policy allows styles and fonts from itself only, and because no staff browser should have to call Google to render an expense claim. To refresh them, fetch the family from the Google Fonts CSS API, keep the `latin` and `latin-ext` faces, and regenerate `ui/src/styles/fonts.css` to match.
+- The accent means "you can do this" and is never also the success colour.
+- Each status owns a hue: blue in progress, amber needs you, green settled, teal paid, rose refused. Teal keeps every status clear of the indigo the buttons use.
+- An accent that fills and an accent that is text are different colours. Indigo dark enough for white to sit on it is too dark to read as text on a near-black card, so `--accent` fills and `--accent-ink` writes.
+
+Every foreground and background pair in both themes was measured against 4.5:1, and muted helper text against 3:1.
+
+Inter Tight carries the interface and IBM Plex Mono every figure, so amounts line up down a column. Both are self-hosted in `ui/public/fonts` (Latin and Latin Extended) because the server's content security policy allows styles and fonts from itself only, and because no staff browser should have to call Google to render an expense claim. To refresh them, fetch the family from the Google Fonts CSS API with a browser user agent, keep the `latin` and `latin-ext` faces, and rewrite `ui/src/styles/fonts.css` to match.
 
 ## Scripts
 

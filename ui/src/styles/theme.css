@@ -1,80 +1,87 @@
-/* Solv — Midnight indigo.
+/* Solv — Nocturne.
  *
  * Dark first: :root IS the dark palette, so the first paint before React has
  * stamped data-theme is already the right colour rather than a white flash.
- * [data-theme="light"] below is the sand-and-ink daylight version of the same
- * design, not an inversion — the accent darkens so white button text still
- * passes contrast, and the semantic colours deepen with it.
  *
- * Three rules this palette keeps, because breaking them is what made the
- * previous one read as flat:
+ * The ground is near-black and almost colourless (#08090B). That is the whole
+ * idea: the previous palette put a saturated navy behind everything and a warm
+ * coral on top, and two strong hues fighting is why the accent looked muddy
+ * instead of bright. Keep the ground quiet and spend the colour in one place.
+ * Surfaces lift by getting lighter, and borders are translucent white rather
+ * than a solid grey, so an edge reads as light catching it.
+ *
+ * Three rules this palette keeps:
  *
  *   1. The accent means "you can do this", and nothing else. It is not also
  *      the success colour. A primary button and an approved badge must never
  *      be the same colour, or the eye stops finding the action on the page.
- *   2. Every status has its own hue: blue in progress, amber needs you, green
- *      settled, violet paid, rose refused. A coloured dot on this screen is
- *      always a status and never decoration.
- *   3. Destructive is rose, the accent is coral. They are deliberately apart
- *      on the wheel: Submit and Reject sit side by side on a report, and two
- *      oranges there would be a mis-click waiting to happen.
+ *   2. Every status owns a hue: blue in progress, amber needs you, green
+ *      settled, teal paid, rose refused. A coloured mark on this screen is
+ *      always a status and never decoration. Teal for paid keeps every status
+ *      clear of the indigo the buttons use.
+ *   3. An accent that fills and an accent that is text are different colours.
+ *      Indigo dark enough for white to sit on it is too dark to read AS text
+ *      on a near-black card, so --accent fills and --accent-ink writes. Every
+ *      pair below was measured; nothing here is under 4.5:1 except muted
+ *      helper text, which is held above 3:1.
  *
  * Token names are the Xero app's, so its ported components drop in unchanged.
  */
 
 :root, [data-theme="dark"] {
-  /* Ground: deep indigo. Cards lift by getting lighter, never by shadow alone. */
-  --bg-primary: #0E1126;  --bg-secondary: #141834;  --bg-sidebar: #0A0C1E;  --bg-card: #171C38;  --bg-input: #1C2244;  --bg-hover: #222950;  --bg-glass: rgba(20,24,52,0.82);
+  --bg-primary: #08090B;  --bg-secondary: #0D0E11;  --bg-sidebar: #0B0C0F;  --bg-card: #101114;  --bg-input: #17181C;  --bg-hover: #1F2024;  --bg-glass: rgba(16,17,20,0.82);
 
-  /* Warm sand on cool indigo: the contrast the whole theme is built on. */
-  --text-primary: #EDE6DA;  --text-secondary: #ADA9BE;  --text-muted: #7A7796;  --text-sidebar: rgba(237,230,218,0.62);  --text-sidebar-active: #FF8B75;
+  --text-primary: #F7F8F8;  --text-secondary: #C3C7CE;  --text-muted: #868B95;  --text-sidebar: rgba(247,248,248,0.60);  --text-sidebar-active: #A5B4FC;
 
-  --border: #262C52;  --border-focus: #FF6B52;  --border-card: rgba(237,230,218,0.06);  --border-sidebar: #1C2244;
+  /* Translucent white edges, the way a dark interface should draw them: a
+     solid grey border on near-black reads as a smudge. */
+  --border: rgba(255,255,255,0.09);  --border-focus: #6160EE;  --border-card: rgba(255,255,255,0.07);  --border-sidebar: rgba(255,255,255,0.07);
 
-  --accent: #FF6B52;  --accent-hover: #FF8B75;  --accent-text: #230B05;  --accent-subtle: rgba(255,107,82,0.15);  --accent-gradient: linear-gradient(135deg, #FF6B52 0%, #FF9A6B 100%);
+  --accent: #6160EE;  --accent-hover: #7B7AF3;  --accent-text: #FFFFFF;  --accent-ink: #A5B4FC;  --accent-subtle: rgba(97,96,238,0.16);  --accent-gradient: linear-gradient(135deg, #6160EE 0%, #8250F0 100%);
 
-  --success: #3ECF8E;  --success-subtle: rgba(62,207,142,0.14);  --success-border: rgba(62,207,142,0.28);
-  --warning: #E8B341;  --warning-subtle: rgba(232,179,65,0.14);  --warning-border: rgba(232,179,65,0.28);
-  --danger:  #F2547A;  --danger-subtle:  rgba(242,84,122,0.14);  --danger-border:  rgba(242,84,122,0.28);
-  --info:    #6FA8FF;  --info-subtle:    rgba(111,168,255,0.14); --info-border:    rgba(111,168,255,0.28);
-  --violet:  #A78BFA;  --violet-subtle:  rgba(167,139,250,0.15); --violet-border:  rgba(167,139,250,0.28);
+  --success: #34D399;  --success-subtle: rgba(52,211,153,0.14);  --success-border: rgba(52,211,153,0.28);
+  --warning: #FBBF24;  --warning-subtle: rgba(251,191,36,0.14);  --warning-border: rgba(251,191,36,0.28);
+  --danger:  #F87171;  --danger-subtle:  rgba(248,113,113,0.14); --danger-border:  rgba(248,113,113,0.28);
+  --info:    #60A5FA;  --info-subtle:    rgba(96,165,250,0.14);  --info-border:    rgba(96,165,250,0.28);
+  --teal:    #2DD4BF;  --teal-subtle:    rgba(45,212,191,0.15);  --teal-border:    rgba(45,212,191,0.28);
 
-  /* Shadows carry the ground's hue, so a raised card reads as indigo dusk
-     rather than a grey card someone dropped on a blue page. */
-  --shadow-xs: 0 1px 2px rgba(4,6,18,0.45);  --shadow-sm: 0 2px 10px rgba(4,6,18,0.5), 0 1px 3px rgba(0,0,0,0.35);  --shadow-md: 0 10px 30px rgba(4,6,18,0.55), 0 2px 8px rgba(0,0,0,0.35);  --shadow-lg: 0 24px 64px rgba(4,6,18,0.7), 0 4px 16px rgba(0,0,0,0.45);  --glow-accent: 0 0 0 3px rgba(255,107,82,0.24);
+  /* Neutral black shadows: the ground has no hue to carry into them. */
+  --shadow-xs: 0 1px 2px rgba(0,0,0,0.5);  --shadow-sm: 0 2px 10px rgba(0,0,0,0.45), 0 1px 3px rgba(0,0,0,0.35);  --shadow-md: 0 10px 30px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.35);  --shadow-lg: 0 24px 64px rgba(0,0,0,0.65), 0 4px 16px rgba(0,0,0,0.45);  --glow-accent: 0 0 0 3px rgba(97,96,238,0.28);
 
   --radius-xs: 4px;  --radius-sm: 8px;  --radius-md: 12px;  --radius-lg: 16px;  --radius-xl: 22px;
   --sidebar-width: 236px;  --header-height: 58px;
   --transition-fast: 0.12s ease;  --transition: 0.2s ease;  --transition-slow: 0.35s cubic-bezier(0.4,0,0.2,1);
 
-  /* Manrope for the interface, IBM Plex Mono for every figure. Amounts are
+  /* Inter Tight for the interface, IBM Plex Mono for every figure. Amounts are
      read down a column, not across a sentence: one width per digit is what
-     makes a total line up under the rows it sums. Both fall back to faces
-     that exist on the machine if the stylesheet never loads. */
-  --font-sans: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+     makes a total line up under the rows it sums. Both are self-hosted (see
+     fonts.css) and fall back to faces that exist on the machine. */
+  --font-sans: 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 
   color-scheme: dark;
 }
 
 [data-theme="light"] {
-  /* Sand paper, indigo ink — the same two colours as the dark theme, swapped. */
-  --bg-primary: #F4EFE7;  --bg-secondary: #EBE4D8;  --bg-sidebar: #FFFDFA;  --bg-card: #FFFDFA;  --bg-input: #F7F3EC;  --bg-hover: #EDE6DA;  --bg-glass: rgba(255,253,250,0.86);
+  /* Daylight is the same design, not an inversion: a near-white with the
+     faintest cool cast, so the indigo still belongs to it. */
+  --bg-primary: #FAFAFB;  --bg-secondary: #F2F3F5;  --bg-sidebar: #FFFFFF;  --bg-card: #FFFFFF;  --bg-input: #F4F5F7;  --bg-hover: #EDEEF1;  --bg-glass: rgba(255,255,255,0.86);
 
-  --text-primary: #171B33;  --text-secondary: #4A4F6B;  --text-muted: #7C8098;  --text-sidebar: #4A4F6B;  --text-sidebar-active: #C7442A;
+  --text-primary: #0B0C0E;  --text-secondary: #4A4F58;  --text-muted: #868B95;  --text-sidebar: #4A4F58;  --text-sidebar-active: #5B5BD6;
 
-  --border: #DED5C7;  --border-focus: #C94A34;  --border-card: rgba(23,27,51,0.10);  --border-sidebar: #DED5C7;
+  --border: #E4E6EA;  --border-focus: #5B5BD6;  --border-card: rgba(11,12,14,0.09);  --border-sidebar: #E4E6EA;
 
-  /* Coral darkened until white text on a filled button clears 4.5:1. */
-  --accent: #C94A34;  --accent-hover: #A93B27;  --accent-text: #FFFFFF;  --accent-subtle: rgba(201,74,52,0.10);  --accent-gradient: linear-gradient(135deg, #C94A34 0%, #E8794F 100%);
+  /* Deepened until white on the fill clears 4.5:1, and dark enough to read as
+     text on white, so fill and ink can be the same colour here. */
+  --accent: #5B5BD6;  --accent-hover: #4A48C4;  --accent-text: #FFFFFF;  --accent-ink: #5B5BD6;  --accent-subtle: rgba(91,91,214,0.10);  --accent-gradient: linear-gradient(135deg, #5B5BD6 0%, #7C4DE0 100%);
 
-  --success: #1E7A4D;  --success-subtle: rgba(30,122,77,0.12);   --success-border: rgba(30,122,77,0.24);
-  --warning: #9C6A15;  --warning-subtle: rgba(156,106,21,0.13);  --warning-border: rgba(156,106,21,0.26);
-  --danger:  #B32B4E;  --danger-subtle:  rgba(179,43,78,0.11);   --danger-border:  rgba(179,43,78,0.24);
-  --info:    #2C5FA8;  --info-subtle:    rgba(44,95,168,0.10);   --info-border:    rgba(44,95,168,0.24);
-  --violet:  #5B3FC4;  --violet-subtle:  rgba(91,63,196,0.11);   --violet-border:  rgba(91,63,196,0.24);
+  --success: #047857;  --success-subtle: rgba(4,120,87,0.11);    --success-border: rgba(4,120,87,0.24);
+  --warning: #B45309;  --warning-subtle: rgba(180,83,9,0.11);    --warning-border: rgba(180,83,9,0.24);
+  --danger:  #DC2626;  --danger-subtle:  rgba(220,38,38,0.10);   --danger-border:  rgba(220,38,38,0.24);
+  --info:    #2563EB;  --info-subtle:    rgba(37,99,235,0.10);   --info-border:    rgba(37,99,235,0.24);
+  --teal:    #0F766E;  --teal-subtle:    rgba(15,118,110,0.11);  --teal-border:    rgba(15,118,110,0.24);
 
-  --shadow-xs: 0 1px 3px rgba(23,27,51,0.07);  --shadow-sm: 0 2px 10px rgba(23,27,51,0.08), 0 1px 3px rgba(0,0,0,0.04);  --shadow-md: 0 8px 28px rgba(23,27,51,0.10), 0 2px 8px rgba(0,0,0,0.04);  --shadow-lg: 0 20px 60px rgba(23,27,51,0.16), 0 4px 16px rgba(0,0,0,0.06);  --glow-accent: 0 0 0 3px rgba(201,74,52,0.18);
+  --shadow-xs: 0 1px 3px rgba(11,12,14,0.06);  --shadow-sm: 0 2px 10px rgba(11,12,14,0.07), 0 1px 3px rgba(0,0,0,0.04);  --shadow-md: 0 8px 28px rgba(11,12,14,0.09), 0 2px 8px rgba(0,0,0,0.04);  --shadow-lg: 0 20px 60px rgba(11,12,14,0.14), 0 4px 16px rgba(0,0,0,0.06);  --glow-accent: 0 0 0 3px rgba(91,91,214,0.18);
 
   color-scheme: light;
 }
