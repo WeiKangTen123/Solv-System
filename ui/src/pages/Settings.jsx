@@ -12,6 +12,8 @@ export default function Settings() {
   const [columns, setColumns] = useState('');
   const [users, setUsers] = useState([]);
   const [keys, setKeys] = useState([]);
+  const [rates, setRates] = useState([]);
+  const [newRate, setNewRate] = useState({ from: '', date: new Date().toISOString().slice(0, 10), rate: '' });
   const [newUser, setNewUser] = useState({ email: '', password: '', name: '', role: 'employee', department: '', employeeId: '', managerId: '' });
   const [newKey, setNewKey] = useState({ apiKey: '', label: '' });
   const [msg, setMsg] = useState(null);
@@ -22,6 +24,7 @@ export default function Settings() {
     const c = await api.get('/company'); setCompany(c.company); setColumns(c.company.reportColumns.join(', '));
     setUsers((await api.get('/users')).users);
     setKeys((await api.get('/company/llm-keys')).keys);
+    setRates((await api.get('/fx/rates')).rates.slice(0, 30));
   }
   useEffect(() => { loadAll().catch(e => setMsg({ tone: 'error', text: e.message })); }, []);
   const ok = text => setMsg({ tone: 'success', text });
@@ -41,6 +44,10 @@ export default function Settings() {
     catch (err) { fail(err); }
   }
   async function patchUser(id, patch) { try { await api.patch(`/users/${id}`, patch); await loadAll(); } catch (err) { fail(err); } }
+  async function addRate(e) {
+    e.preventDefault();
+    try { await api.post('/fx/rates', { from: newRate.from.toUpperCase(), date: newRate.date, rate: Number(newRate.rate) }); setNewRate({ ...newRate, from: '', rate: '' }); await loadAll(); ok('Rate saved.'); } catch (err) { fail(err); }
+  }
   async function addKey(e) {
     e.preventDefault();
     try { await api.post('/company/llm-keys', newKey); setNewKey({ apiKey: '', label: '' }); await loadAll(); ok('Reader key added.'); } catch (err) { fail(err); }
@@ -96,6 +103,32 @@ export default function Settings() {
             <button className="btn btn-primary" type="submit">Add staff</button>
           </form>
         )}
+      </div>
+
+      <div className="card">
+        <div className="card-title">Exchange rates</div>
+        <div className="card-subtitle">Rates used so far, newest first. A rate entered here beats the provider's for that day; use it for a monthly fixed table or a correction.</div>
+        <div style={{ overflowX: 'auto' }}>
+          <table className="data-table">
+            <thead><tr><th>Date</th><th>Pair</th><th style={{ textAlign: 'right' }}>Rate</th><th>Source</th><th></th></tr></thead>
+            <tbody>{rates.map(r => (
+              <tr key={`${r.from}-${r.to}-${r.rateDate}-${r.source}`}>
+                <td>{r.rateDate}{r.providerDate && r.providerDate !== r.rateDate ? <span style={{ color: 'var(--text-muted)' }}> (priced {r.providerDate})</span> : null}</td>
+                <td>{r.from} → {r.to}</td>
+                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.rate}</td>
+                <td>{r.source}{r.enteredBy ? <span style={{ color: 'var(--text-muted)' }}> · {r.enteredBy}</span> : null}</td>
+                <td>{r.source === 'manual' && <button className="btn btn-ghost btn-sm" onClick={() => api.delete(`/fx/rates?from=${r.from}&to=${r.to}&date=${r.rateDate}`).then(loadAll).catch(fail)}>Remove</button>}</td>
+              </tr>))}</tbody>
+          </table>
+          {!rates.length && <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '10px 0' }}>No rates fetched yet.</div>}
+        </div>
+        <form onSubmit={addRate} style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input id="rate-from" className="form-input" style={{ maxWidth: 90 }} placeholder="INR" maxLength={3} required value={newRate.from} onChange={e => setNewRate({ ...newRate, from: e.target.value })} aria-label="From currency" />
+          <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>→ {company.baseCurrency} on</span>
+          <input id="rate-date" className="form-input" type="date" style={{ maxWidth: 170 }} required value={newRate.date} onChange={e => setNewRate({ ...newRate, date: e.target.value })} aria-label="Date" />
+          <input id="rate-value" className="form-input" type="number" step="0.000001" min="0" style={{ maxWidth: 150 }} placeholder="0.01341" required value={newRate.rate} onChange={e => setNewRate({ ...newRate, rate: e.target.value })} aria-label="Rate" />
+          <button className="btn btn-primary" type="submit">Save rate</button>
+        </form>
       </div>
 
       <div className="card">
