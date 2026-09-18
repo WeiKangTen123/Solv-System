@@ -78,12 +78,13 @@ Inter Tight carries the interface and IBM Plex Mono every figure, so amounts lin
 
 | Command | What |
 |---|---|
-| `npm test` | 51 suites, jest + supertest, everything mocked at the network edge |
+| `npm test` | 52 suites, jest + supertest, everything mocked at the network edge |
 | `npm run lint` | eslint over server and UI (errors fail the suite too) |
 | `node main/scripts/read-sample.js <file>` | read one receipt with the live model and print the fields and lines |
 | `node main/scripts/fx-sample.js samples/reads/<folio>.json` | price a saved read with the live providers |
 | `node main/scripts/demo-report.js [--xero-dry-run]` | build the real report from the two sample folios into `docs/acceptance/exports/` |
 | `node main/scripts/smoke-flow.js` | the whole flow through the HTTP API on a fresh production server |
+| `node main/scripts/audit-flow.js` | every route, including who is refused and what a bad input returns (`--no-model` to skip the reader) |
 
 ## Exchange rates, stated
 

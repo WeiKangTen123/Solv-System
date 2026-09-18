@@ -7,6 +7,7 @@ const { decodeBase64 } = require('../utils/base64');
 const { hashBuffer }   = require('../intake/dedup');
 const { requireAuth, jwtSecret } = require('../middleware/auth-middleware');
 const asyncHandler = require('../middleware/async-handler');
+const { canAccessUser } = require('../middleware/roles');
 const users        = require('../store/users');
 const store        = require('../store/expenses');
 const receiptStore = require('../receipts/receipt-store');
@@ -113,7 +114,10 @@ function _phoneView(receiptIds, withToken, userId) {
 router.get('/pair/:token', requireAuth, (req, res) => {
   if (!pairing.ownedBy(req.params.token, req.user.id)) return res.status(404).json({ error: 'Pairing not found' });
   const state = pairing.status(req.params.token);
-  if (!state) return res.json({ alive: false, spent: false, uploads: 0, receipts: [] });
+  // Every field the caller reads, including on the dead branch: leaving
+  // expiresInMs out made the dialog's countdown read NaN:NaN once the code
+  // expired, with the QR still shown as if it were good.
+  if (!state) return res.json({ alive: false, spent: false, uploads: 0, usesLeft: 0, expiresInMs: 0, receipts: [] });
   res.json({ alive: state.alive, spent: state.spent, uploads: state.uses, usesLeft: state.usesLeft, expiresInMs: state.expiresInMs,
              receipts: _phoneView(state.receiptIds, true, req.user.id) });
 });
@@ -151,10 +155,14 @@ router.post('/capture/:token', (req, res) => {
 });
 
 // ── Images ──────────────────────────────────────────────────────────────────
+// Company-wide used to be enough here, which meant any colleague holding a
+// receipt id could mint a token and read the file. The duplicate-upload reply
+// hands out exactly that id ("already uploaded by a colleague"), so it was
+// reachable. Same rule as every other read: yourself, your reports, or finance.
 router.get('/:id/token', requireAuth, (req, res) => {
   const r = store.getReceipt(req.params.id);
   const me = users.findById(req.user.id);
-  if (!r || r.companyId !== me.companyId) return res.status(404).json({ error: 'Receipt not found' });
+  if (!r || r.companyId !== me.companyId || !canAccessUser(req.user, r.userId)) return res.status(404).json({ error: 'Receipt not found' });
   res.json({ token: issueImageToken(r.userId, r.id) });
 });
 

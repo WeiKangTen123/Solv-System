@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 // api/client prepends BASE = '/api', so paths here start at the route AFTER it.
 // Writing '/api/receipts' would request '/api/api/receipts' and 404.
 import { api } from '../../api/client';
@@ -13,6 +13,17 @@ import ClaimImport from './ClaimImport';
 // Nothing here talks to Xero. An uploaded receipt becomes a local record for the
 // user to review.
 export default function ReceiptUpload({ onUploaded }) {
+  // An import survives closing the panel, and GET /claims/active is how you
+  // find it again: without this the progress view, the reconciliation summary
+  // and the Undo button were gone for good the moment the dialog was closed.
+  const [runningJobId, setRunningJobId] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    api.get('/claims/active')
+      .then(d => { if (alive) setRunningJobId((d.jobs || d.active || []).map(j => j.id || j.jobId)[0] || null); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const fileRef = useRef(null);
   const [busy, setBusy]     = useState(false);
   const [error, setError]   = useState('');
@@ -119,7 +130,7 @@ export default function ReceiptUpload({ onUploaded }) {
       )}
 
       {importing && (
-        <ClaimImport onClose={() => setImporting(false)} onImported={onUploaded} />
+        <ClaimImport onClose={() => setImporting(false)} onImported={onUploaded} initialJobId={runningJobId} />
       )}
     </div>
   );

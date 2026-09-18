@@ -9,12 +9,18 @@ const FILTERS = [['', 'All'], ['review-needed', 'Needs review'], ['reviewed', 'R
 export default function MyExpenses() {
   const [expenses, setExpenses] = useState([]);
   const [status, setStatus] = useState('');
-  const load = useCallback(() => api.get(`/expenses${status ? `?status=${status}` : ''}`).then(d => setExpenses(d.expenses)).catch(() => {}), [status]);
+  const [err, setErr] = useState(null);
+  // Without this a failed request rendered the empty state, which says
+  // "No expenses yet." — the one thing it definitely does not mean.
+  const load = useCallback(() => api.get(`/expenses${status ? `?status=${status}` : ''}`)
+    .then(d => { setExpenses(d.expenses); setErr(null); })
+    .catch(e => setErr(e.message)), [status]);
   useEffect(() => { load(); }, [load]);
   useVisiblePolling(load, () => (expenses.some(e => e.status === 'reading') ? 2500 : 30000));
 
   return (
     <div>
+      {err && <div className="alert alert-error">Could not load your expenses: {err}</div>}
       <div className="page-header" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
         <div><h1>My expenses</h1><p>Every receipt you have added, newest first.</p></div>
         <ReceiptUpload onUploaded={load} />

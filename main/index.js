@@ -92,7 +92,11 @@ app.use((err, _req, res, _next) => {
 const HOST = process.env.HOST || (PROD ? '127.0.0.1' : '0.0.0.0');
 app.listen(PORT, HOST, () => {
   logger.info(`Solv server running on ${HOST}:${PORT} [${process.env.NODE_ENV || 'development'}]`);
-  try { require('./claims/claim-worker').recoverPendingJobs(); } catch (err) { logger.warn('Job recovery skipped', { error: err.message }); }
+  // recoverPendingJobs is async, so the try/catch this used to sit in
+  // caught only its synchronous prologue; a rejection went to
+  // unhandledRejection, which exits the process — a crash loop at boot.
+  require('./claims/claim-worker').recoverPendingJobs()
+    .catch(err => logger.warn('Could not recover pending import jobs', { error: err.message }));
 });
 
 module.exports = app;

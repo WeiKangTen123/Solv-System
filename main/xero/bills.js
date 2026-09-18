@@ -40,9 +40,28 @@ function buildBill(payload, { accounts = [], defaultAccountCode = null, taxRates
       foreign ? `${l.currency} ${money(l.amount)} × ${l.fxRate}` : null,
     ].filter(Boolean).join(' · ').slice(0, 4000);
     // Local GST only where the receipt shows tax in the base currency; foreign tax is never input tax.
-    const taxType = !foreign && Number(l.tax) > 0 && gst ? gst.taxType : zeroType;
-    return { description, quantity: 1, unitAmount: Number(l.baseAmount || 0), ...(accountCode ? { accountCode } : {}), taxType };
+    const taxed = !foreign && Number(l.tax) > 0 && gst;
+    const taxType = taxed ? gst.taxType : zeroType;
+    // Send the tax the receipt actually printed. Left to itself Xero derives it
+    // from the rate, which is only right when the receipt was taxed at exactly
+    // the organisation's top rate.
+    const taxAmount = taxed ? Number(l.baseTax ?? l.tax ?? 0) : undefined;
+    return { description, quantity: 1, unitAmount: Number(l.baseAmount || 0), ...(accountCode ? { accountCode } : {}), taxType,
+             ...(taxAmount ? { taxAmount: Math.round(taxAmount * 100) / 100 } : {}) };
   });
+  // The cover deducts any advance already paid, and the PDF prints the smaller
+  // figure as TOTAL REIMBURSEMENT. The bill has to agree, or finance pays the
+  // advance a second time: a negative line, so the total lands on what is owed.
+  const advances = Math.round(Number(report.advances || 0) * 100) / 100;
+  if (advances > 0) {
+    lineItems.push({
+      description: `Less advance already paid to ${owner.name || owner.email || 'the claimant'}`,
+      quantity: 1, unitAmount: -advances,
+      ...(defaultAccountCode ? { accountCode: defaultAccountCode } : {}),
+      taxType: zeroType,
+    });
+  }
+
   const date = (report.approvedAt || report.submittedAt || new Date().toISOString()).slice(0, 10);
   return {
     contact: { name: owner.name || owner.email || 'Claimant', email: owner.email || '' },
@@ -77,19 +96,29 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
   const bill = buildBill(payload, { accounts, defaultAccountCode: config.DEFAULT_ACCOUNT_CODE || null, taxRates });
   if (dryRun) return { dryRun: true, tenantId: tenant ? tenant.tenantId : null, tenantName: tenant ? tenant.tenantName : null, bill };
 
+  // From here on a bill is going to be created, so take the claim first: two
+  // clicks on Post used to make two draft bills for one report.
+  if (!reports.claimForPost(reportId)) throw new Error('This report is already being posted to Xero. Give it a moment and reload.');
+
   const { AccountingApi } = require('xero-node');
   const token = await tokenCache.forCompany(company.id).getValidToken(tenant.tenantId);
   const api = new AccountingApi();
   api.accessToken = token;
 
-  const contactID = await getOrCreateContact(company.id, tenant.tenantId, { vendorName: bill.contact.name, email: bill.contact.email, invoiceType: 'ACCPAY' });
+  let contactID;
+  try {
+    contactID = await getOrCreateContact(company.id, tenant.tenantId, { vendorName: bill.contact.name, email: bill.contact.email, invoiceType: 'ACCPAY' });
+  } catch (err) {
+    reports.releasePost(reportId, xeroErrMsg(err));
+    throw err;
+  }
   let created;
   try {
     const res = await withRetry(() => api.createInvoices(tenant.tenantId, { invoices: [{ ...bill.invoice, contact: { contactID } }] }));
     created = res.body.invoices[0];
   } catch (err) {
     const msg = xeroErrMsg(err);
-    reports.setState(reportId, { xeroError: msg });
+    reports.releasePost(reportId, msg);
     reports.addEvent(reportId, actor.id, 'xero_failed', msg);
     throw new Error(`Xero refused the bill: ${msg}`);
   }

@@ -13,13 +13,19 @@ export default function Approvals() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [reports, setReports] = useState([]);
+  const [err, setErr] = useState(null);
   const base = user?.baseCurrency || 'SGD';
-  const load = useCallback(() => api.get('/reports/queue').then(d => setReports(d.reports)).catch(() => {}), []);
+  // A swallowed failure here rendered "Nothing waiting", which is what a
+  // manager sees when the queue is genuinely empty.
+  const load = useCallback(() => api.get('/reports/queue')
+    .then(d => { setReports(d.reports); setErr(null); })
+    .catch(e => setErr(e.message)), []);
   useEffect(() => { load(); }, [load]);
   useVisiblePolling(load, 30000);
 
   return (
     <div>
+      {err && <div className="alert alert-error">Could not load the approval queue: {err}</div>}
       <div className="page-header"><h1>Approvals</h1><p>{user?.role === 'manager' ? 'Reports from your team waiting for your decision.' : 'Submitted reports to approve, and approved reports to pay.'}</p></div>
       <div className="card">
         {!reports.length ? <div style={{ padding: '22px 0', color: 'var(--text-muted)', fontSize: 13 }}>Nothing waiting.</div> : (

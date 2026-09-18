@@ -47,11 +47,27 @@ async function reportPayload(reportId, { withReceipts = true } = {}) {
       }
       ref = refs.get(e.receipt.id);
     }
-    for (const l of e.lines) {
+    // The receipt's tax belongs to the receipt, not to each of its lines. It
+    // used to be copied whole onto every line, so a folio split into four
+    // categories looked like it carried four times the GST it printed. Split
+    // it in proportion to the amounts instead, with the last line taking the
+    // rounding residual so the parts still add up to what was printed.
+    const taxCents = Math.round(Number(e.tax || 0) * 100);
+    const lineCents = e.lines.map(l => Math.round(Number(l.amount || 0) * 100));
+    const totalCents = lineCents.reduce((a, b) => a + b, 0);
+    let spread = 0;
+    e.lines.forEach((l, i) => {
+      const share = !taxCents || !totalCents ? 0
+        : i === e.lines.length - 1 ? taxCents - spread
+        : Math.round(taxCents * lineCents[i] / totalCents);
+      spread += share;
+      const rate = Number(l.fxRate) > 0 ? Number(l.fxRate) : null;
       lines.push({ ref, date: e.receiptDate, merchant: e.merchant, purpose: e.purpose, description: l.description, category: l.category, currency: l.currency || e.currency, amount: l.amount,
         fxRate: l.fxRate, fxRateDate: l.fxRateDate, fxSource: l.fxSource, fxFetchedAt: l.fxFetchedAt, fxOverrideBy: l.fxOverrideBy, fxOverrideReason: l.fxOverrideReason,
-        baseAmount: l.baseAmount, onBehalfOf: l.onBehalfOf, tax: e.tax });
-    }
+        baseAmount: l.baseAmount, onBehalfOf: l.onBehalfOf,
+        tax: Math.round(share) / 100,
+        baseTax: rate ? Math.round(share * rate) / 100 : Math.round(share) / 100 });
+    });
   }
   if (withReceipts) for (const r of receipts) r.pages = await _pagesFor(r.receipt);
   for (const r of receipts) delete r.receipt;

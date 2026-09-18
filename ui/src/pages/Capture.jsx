@@ -63,8 +63,13 @@ export default function Capture() {
     return () => { stop = true; clearInterval(timer); };
   }, [state, sent, token]);
 
-  // Object URLs hold the decoded image in memory until released.
-  useEffect(() => () => { sent.forEach(s => s.preview && URL.revokeObjectURL(s.preview)); }, [sent]);
+  // Object URLs hold the decoded image in memory until released. The list is
+  // held in a ref so the cleanup runs once, when the page goes away: with
+  // [sent] as the dependency it ran on every status poll instead, revoking
+  // URLs the thumbnails on screen were still pointing at.
+  const sentRef = useRef(sent);
+  sentRef.current = sent;
+  useEffect(() => () => { sentRef.current.forEach(s => s.preview && URL.revokeObjectURL(s.preview)); }, []);
 
   async function handleFiles(files) {
     const list = Array.from(files || []);

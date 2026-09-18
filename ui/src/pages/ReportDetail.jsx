@@ -31,14 +31,31 @@ export default function ReportDetail() {
     const d = await api.get(`/reports/${id}`);
     setView(d);
     setCover(Object.fromEntries(COVER.map(([k]) => [k, d.report[k] ?? ''])));
-    if (d.isOwner && d.editable) setUnfiled((await api.get('/expenses?unfiled=1&status=reviewed')).expenses); else setUnfiled([]);
-  }, [id]);
+    // An admin fixing someone else's report may file into it (the server allows
+    // it); before this they could take expenses out and never put any back.
+    // For that case the list has to be the report owner's, not the admin's.
+    const mayFile = d.editable && (d.isOwner || user?.role === 'admin');
+    if (mayFile) {
+      const q = d.isOwner ? '' : `&userId=${d.report.userId}`;
+      setUnfiled((await api.get(`/expenses?unfiled=1&status=reviewed${q}`)).expenses);
+    } else setUnfiled([]);
+  }, [id, user?.role]);
   useEffect(() => { setMsg(null); load().catch(e => setMsg({ tone: 'error', text: e.message })); }, [load]);
 
   const act = async (label, fn) => { setBusy(label); try { await fn(); await load(); } catch (e) { setMsg({ tone: 'error', text: e.message }); } finally { setBusy(''); } };
   async function exportAs(format) {
-    try { const d = await api.get(`/reports/${id}/export-url?format=${format}`); window.open(d.url, '_blank', 'noopener'); }
-    catch (e) { setMsg({ tone: 'error', text: e.message }); }
+    // The window has to be opened inside the click, before the await: opened
+    // afterwards the user gesture is spent and Safari blocks it outright, with
+    // nothing shown to say why. If the browser blocks it anyway, fall back to
+    // navigating this tab rather than failing silently.
+    const w = window.open('', '_blank', 'noopener');
+    try {
+      const d = await api.get(`/reports/${id}/export-url?format=${format}`);
+      if (w) w.location = d.url; else window.location.assign(d.url);
+    } catch (e) {
+      if (w) w.close();
+      setMsg({ tone: 'error', text: e.message });
+    }
   }
 
   if (!view) return <div style={{ color: 'var(--text-muted)' }}>{msg?.text || 'Loading…'}</div>;
@@ -112,7 +129,13 @@ export default function ReportDetail() {
                     <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{fmtMoney(e.total, e.currency)}</span>
                   </label>
                 ))}
-                <button className="btn btn-primary btn-sm" style={{ marginTop: 8 }} disabled={!picked.length || !!busy} onClick={() => act('file', async () => { await api.post(`/reports/${id}/expenses`, { expenseIds: picked }); setPicked([]); })}>File {picked.length || ''} into this report</button>
+                <button className="btn btn-primary btn-sm" style={{ marginTop: 8 }} disabled={!picked.length || !!busy} onClick={() => act('file', async () => {
+                  const r = await api.post(`/reports/${id}/expenses`, { expenseIds: picked });
+                  setPicked([]);
+                  // Anything the server refused comes back in `skipped`; saying
+                  // nothing made a refusal look like a successful filing.
+                  if ((r.skipped || []).length) setMsg({ tone: 'warning', text: `${r.skipped.length} not filed: ${r.skipped.map(x => x.why).join(', ')}.` });
+                })}>File {picked.length || ''} into this report</button>
               </div>
             )}
           </div>

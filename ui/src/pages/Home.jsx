@@ -14,7 +14,13 @@ export default function Home() {
   const [expenses, setExpenses] = useState([]);
   const [reports, setReports] = useState([]);
   const [msg, setMsg] = useState(null);
-  const load = useCallback(() => Promise.all([api.get('/expenses').then(d => setExpenses(d.expenses)), api.get('/reports').then(d => setReports(d.reports))]).catch(() => {}), []);
+  const load = useCallback(() => Promise.all([
+    api.get('/expenses').then(d => setExpenses(d.expenses)),
+    api.get('/reports').then(d => setReports(d.reports)),
+  ]).then(() => setMsg(m => (m && m.tone === 'error' ? null : m)))
+    // Swallowing this rendered an empty home page, which reads as "you have no
+    // expenses" rather than "the list could not be loaded".
+    .catch(e => setMsg({ tone: 'error', text: `Could not load your expenses: ${e.message}` })), []);
   useEffect(() => { load(); }, [load]);
   useVisiblePolling(load, () => (expenses.some(e => e.status === 'reading') ? 2500 : 20000));
 
@@ -26,7 +32,15 @@ export default function Home() {
   const base = user?.baseCurrency || 'SGD';
   async function fileInto(expenseId, reportId) {
     if (!reportId) return;
-    try { await api.post(`/reports/${reportId}/expenses`, { expenseIds: [expenseId] }); await load(); } catch (e) { setMsg({ tone: 'error', text: e.message }); }
+    try {
+      // The server answers 200 with a `skipped` list for anything it refused
+      // (not reviewed, already in another report). Ignoring it made a refusal
+      // look like a success and left the expense where it was.
+      const r = await api.post(`/reports/${reportId}/expenses`, { expenseIds: [expenseId] });
+      await load();
+      const why = (r.skipped || []).find(s => s.id === expenseId);
+      setMsg(why ? { tone: 'warning', text: `Not filed: ${why.why}.` } : { tone: 'success', text: 'Filed into the report.' });
+    } catch (e) { setMsg({ tone: 'error', text: e.message }); }
   }
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';

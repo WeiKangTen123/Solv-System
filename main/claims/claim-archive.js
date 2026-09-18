@@ -18,6 +18,10 @@ const IMAGE_EXT = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', pdf
 // a vision call, so an unbounded archive is an unbounded bill.
 const MAX_ENTRIES = 100;
 const MAX_ENTRY_BYTES = 15 * 1024 * 1024;   // before compression to ≤3MB
+// A per-file cap is not a budget: 100 files of 15MB is 1.5GB held in memory at
+// once, and a zip that compresses that well is a few megabytes to upload. The
+// route caps what arrives; this caps what it can become.
+const MAX_TOTAL_BYTES = 150 * 1024 * 1024;
 
 function mimeFor(name) {
   const ext = String(name).split('.').pop().toLowerCase();
@@ -48,6 +52,7 @@ function readArchive(buffer) {
 
       const entries = [];
       const skipped = [];
+      let unpacked = 0;
 
       zip.on('entry', entry => {
         const name = entry.fileName;
@@ -58,6 +63,8 @@ function readArchive(buffer) {
         const mime = mimeFor(name);
         if (!mime) { skipped.push({ name, reason: 'not a receipt file type' }); return zip.readEntry(); }
         if (entry.uncompressedSize > MAX_ENTRY_BYTES) { skipped.push({ name, reason: 'file too large' }); return zip.readEntry(); }
+        if (unpacked + entry.uncompressedSize > MAX_TOTAL_BYTES) { skipped.push({ name, reason: 'the archive unpacks to more than the limit' }); return zip.readEntry(); }
+        unpacked += entry.uncompressedSize;
 
         zip.openReadStream(entry, (streamErr, stream) => {
           if (streamErr || !stream) { skipped.push({ name, reason: 'could not be read' }); return zip.readEntry(); }
@@ -78,4 +85,4 @@ function readArchive(buffer) {
   });
 }
 
-module.exports = { readArchive, mimeFor, isJunk, MAX_ENTRIES, MAX_ENTRY_BYTES };
+module.exports = { readArchive, mimeFor, isJunk, MAX_ENTRIES, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES };

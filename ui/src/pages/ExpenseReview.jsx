@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useViewMode } from '../context/ViewModeContext';
@@ -40,12 +40,20 @@ export default function ExpenseReview() {
   const [msg, setMsg] = useState(null);
   const [confirm, setConfirm] = useState(null);
 
-  const load = useCallback(async () => {
+  // Set as soon as the user touches a field, cleared by a save or a reload
+  // they asked for. The poll below runs every 2.5s while the reader works, and
+  // without this it overwrote whatever was being typed at the time.
+  const dirty = useRef(false);
+
+  const load = useCallback(async ({ preserveEdits } = {}) => {
     const d = await api.get(`/expenses/${id}`);
     setExp(d.expense);
     setLocked(!!d.locked);
-    setForm({ ...pick(d.expense), reportId: d.expense.reportId || '' });
-    setLines(d.expense.lines.map(l => ({ category: l.category || '', description: l.description || '', amount: l.amount, onBehalfOf: l.onBehalfOf || '' })));
+    if (!(preserveEdits && dirty.current)) {
+      setForm({ ...pick(d.expense), reportId: d.expense.reportId || '' });
+      setLines(d.expense.lines.map(l => ({ category: l.category || '', description: l.description || '', amount: l.amount, onBehalfOf: l.onBehalfOf || '' })));
+      dirty.current = false;
+    }
     setImageUrl(d.expense.receipt && d.imageToken ? `/api/receipts/${d.expense.receipt.id}/image?token=${encodeURIComponent(d.imageToken)}` : null);
     api.get(`/expenses/${id}/group`).then(setGroup).catch(() => setGroup(null));
   }, [id]);
@@ -54,15 +62,16 @@ export default function ExpenseReview() {
   useEffect(() => { api.get('/company').then(d => setCategories(d.categories)).catch(() => {}); api.get('/reports').then(d => setDrafts(d.reports.filter(r => ['draft', 'rejected'].includes(r.status)))).catch(() => {}); }, []);
   useEffect(() => {
     // The image token lives five minutes; refresh it, and keep polling while the reader works.
-    const t = setInterval(() => load().catch(() => {}), exp?.status === 'reading' ? 2500 : 4 * 60 * 1000);
+    const t = setInterval(() => load({ preserveEdits: true }).catch(() => {}), exp?.status === 'reading' ? 2500 : 4 * 60 * 1000);
     return () => clearInterval(t);
   }, [exp?.status, load]);
 
   const totalCents = cents(form.total);
   const linesCents = lines.reduce((s, l) => s + cents(l.amount), 0);
   const reconciled = lines.length > 0 && totalCents === linesCents;
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const setLine = (i, k, v) => setLines(ls => ls.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
+  const set = (k, v) => { dirty.current = true; setForm(f => ({ ...f, [k]: v })); };
+  const setLine = (i, k, v) => { dirty.current = true; setLines(ls => ls.map((l, j) => (j === i ? { ...l, [k]: v } : l))); };
+  const editLines = fn => { dirty.current = true; setLines(fn); };
 
   async function save({ quiet } = {}) {
     setBusy('save');
@@ -72,6 +81,7 @@ export default function ExpenseReview() {
       if (lines.length && (lines.length !== 1 || cents(lines[0].amount) !== cents(r.expense.total) || lines[0].category !== (r.expense.lines[0]?.category || '') || (lines[0].onBehalfOf || '') !== (r.expense.lines[0]?.onBehalfOf || '') || (lines[0].description || '') !== (r.expense.lines[0]?.description || ''))) {
         await api.put(`/expenses/${id}/lines`, { lines: lines.map(l => ({ ...l, amount: Number(l.amount), onBehalfOf: l.onBehalfOf.trim() || null })) });
       }
+      dirty.current = false;
       await load();
       if (!quiet) setMsg({ tone: 'success', text: 'Saved.' });
       return true;
@@ -133,7 +143,7 @@ export default function ExpenseReview() {
         <div style={{ display: 'flex', gap: 8 }}>
           {prev && <button className="btn btn-outline btn-sm" onClick={() => navigate(`/expenses/${prev.id}`)}>← Prev</button>}
           {next && <button className="btn btn-outline btn-sm" onClick={() => navigate(`/expenses/${next.id}`)}>Next →</button>}
-          <button className="btn btn-outline btn-sm" onClick={() => setConfirm('delete')}>Delete</button>
+          <button className="btn btn-outline btn-sm" disabled={locked} title={locked ? 'The report it is in has been submitted' : ''} onClick={() => setConfirm('delete')}>Delete</button>
         </div>
       </div>
 
@@ -152,7 +162,7 @@ export default function ExpenseReview() {
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               {!isPdf && <button className="btn btn-outline btn-sm" onClick={() => setRot(r => (r + 90) % 360)}>Rotate</button>}
-              <button className="btn btn-outline btn-sm" disabled={busy === 'reread' || !exp.receipt} onClick={reread}>{busy === 'reread' ? 'Reading…' : 'Re-read'}</button>
+              <button className="btn btn-outline btn-sm" disabled={busy === 'reread' || !exp.receipt || locked} onClick={reread}>{busy === 'reread' ? 'Reading…' : 'Re-read'}</button>
               {imageUrl && <a className="btn btn-outline btn-sm" href={imageUrl} target="_blank" rel="noopener noreferrer">Open original</a>}
             </div>
           </div>
@@ -170,7 +180,7 @@ export default function ExpenseReview() {
               {FIELDS.map(([k, label, type]) => (
                 <div className="form-group" key={k} style={{ gridColumn: k === 'merchant' || k === 'purpose' ? '1 / -1' : 'auto' }}>
                   <label className="form-label" htmlFor={`f-${k}`}>{label}</label>
-                  <input id={`f-${k}`} className="form-input" type={type} step={type === 'number' ? '0.01' : undefined} value={form[k] ?? ''} onChange={e => set(k, e.target.value)}
+                  <input id={`f-${k}`} className="form-input" type={type} step={type === 'number' ? '0.01' : undefined} value={form[k] ?? ''} disabled={locked} onChange={e => set(k, e.target.value)}
                          placeholder={k === 'purpose' ? 'Client site visit, Chakan plant' : k === 'currency' ? 'INR' : ''} />
                 </div>
               ))}
@@ -204,8 +214,8 @@ export default function ExpenseReview() {
                   <div className="alert alert-warning" style={{ marginBottom: 0 }}>No rate yet for {exp.currency} on {exp.receiptDate || 'this date'}. Refresh, or enter one.</div>
                 )}
                 <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                  <button className="btn btn-outline btn-sm" disabled={!!busy} onClick={refreshFx}>{busy === 'fx' ? 'Working…' : 'Refresh rate'}</button>
-                  <button className="btn btn-outline btn-sm" disabled={!!busy} onClick={() => setRateEdit({ rate: fx?.fxRate || '', reason: '' })}>Change rate…</button>
+                  <button className="btn btn-outline btn-sm" disabled={!!busy || locked} onClick={refreshFx}>{busy === 'fx' ? 'Working…' : 'Refresh rate'}</button>
+                  <button className="btn btn-outline btn-sm" disabled={!!busy || locked} onClick={() => setRateEdit({ rate: fx?.fxRate || '', reason: '' })}>Change rate…</button>
                 </div>
                 {rateEdit && (
                   <form onSubmit={submitRate} style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -224,23 +234,23 @@ export default function ExpenseReview() {
             <div className="card-subtitle">One line per category on the report. They must add up to the total{form.currency ? ` in ${form.currency}` : ''}.</div>
             {lines.map((l, i) => (
               <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.4fr 0.9fr auto', gap: 6, marginBottom: 6, alignItems: 'center' }}>
-                <select className="form-input" value={l.category} onChange={e => setLine(i, 'category', e.target.value)} aria-label="Category">
+                <select className="form-input" value={l.category} disabled={locked} onChange={e => setLine(i, 'category', e.target.value)} aria-label="Category">
                   <option value="">Category…</option>
                   {categories.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
-                <input className="form-input" value={l.description} placeholder="Rooms, 3 nights" onChange={e => setLine(i, 'description', e.target.value)} aria-label="Description" />
-                <input className="form-input" type="number" step="0.01" value={l.amount} onChange={e => setLine(i, 'amount', e.target.value)} style={{ textAlign: 'right' }} aria-label="Amount" />
-                <button className="btn btn-ghost btn-sm" onClick={() => setLines(ls => ls.filter((_, j) => j !== i))} aria-label="Remove line" title="Remove line">✕</button>
+                <input className="form-input" value={l.description} placeholder="Rooms, 3 nights" disabled={locked} onChange={e => setLine(i, 'description', e.target.value)} aria-label="Description" />
+                <input className="form-input" type="number" step="0.01" value={l.amount} disabled={locked} onChange={e => setLine(i, 'amount', e.target.value)} style={{ textAlign: 'right' }} aria-label="Amount" />
+                <button className="btn btn-ghost btn-sm" disabled={locked} onClick={() => editLines(ls => ls.filter((_, j) => j !== i))} aria-label="Remove line" title="Remove line">✕</button>
                 <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <input type="checkbox" checked={!!l.onBehalfOf} onChange={e => setLine(i, 'onBehalfOf', e.target.checked ? (l.onBehalfOf || ' ') : '')} /> paid on behalf of
+                    <input type="checkbox" checked={!!l.onBehalfOf} disabled={locked} onChange={e => setLine(i, 'onBehalfOf', e.target.checked ? (l.onBehalfOf || ' ') : '')} /> paid on behalf of
                   </label>
-                  {!!l.onBehalfOf && <input className="form-input" style={{ padding: '4px 8px', fontSize: 12, maxWidth: 220 }} value={l.onBehalfOf.trim()} placeholder="Colleague's name" onChange={e => setLine(i, 'onBehalfOf', e.target.value || ' ')} />}
+                  {!!l.onBehalfOf && <input className="form-input" style={{ padding: '4px 8px', fontSize: 12, maxWidth: 220 }} value={l.onBehalfOf.trim()} disabled={locked} placeholder="Colleague's name" onChange={e => setLine(i, 'onBehalfOf', e.target.value || ' ')} />}
                 </div>
               </div>
             ))}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, fontSize: 12.5 }}>
-              <button className="btn btn-outline btn-sm" onClick={() => setLines(ls => [...ls, { category: '', description: '', amount: Math.max(0, (totalCents - linesCents) / 100).toFixed(2), onBehalfOf: '' }])}>+ Line</button>
+              <button className="btn btn-outline btn-sm" disabled={locked} onClick={() => editLines(ls => [...ls, { category: '', description: '', amount: Math.max(0, (totalCents - linesCents) / 100).toFixed(2), onBehalfOf: '' }])}>+ Line</button>
               <span style={{ color: reconciled ? 'var(--success)' : 'var(--danger)', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>
                 lines {fmtMoney(linesCents / 100, form.currency)} {reconciled ? '✓' : `≠ total ${fmtMoney(totalCents / 100, form.currency)}`}
               </span>

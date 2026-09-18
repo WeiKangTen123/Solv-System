@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import ConfirmDialog from '../components/ConfirmDialog';
+import Modal from '../components/Modal';
 
 const POLICIES = [['receipt_date', 'Rate on the receipt date'], ['submission_date', 'Rate on the submission date'], ['monthly_fixed', 'Monthly fixed table (finance enters rates)']];
 const ROLES = ['employee', 'manager', 'finance', 'admin'];
@@ -22,6 +23,7 @@ export default function Settings() {
   const [newKey, setNewKey] = useState({ apiKey: '', label: '' });
   const [msg, setMsg] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [pwFor, setPwFor] = useState(null);
   const isAdmin = user?.role === 'admin';
 
   async function loadAll() {
@@ -111,7 +113,10 @@ export default function Settings() {
                 <td>{u.email}</td><td>{u.department || '—'}</td>
                 <td>{isAdmin ? <select className="form-input" style={{ padding: '4px 8px' }} value={u.role} onChange={e => patchUser(u.id, { role: e.target.value })}>{ROLES.map(r => <option key={r}>{r}</option>)}</select> : u.role}</td>
                 <td>{isAdmin ? <select className="form-input" style={{ padding: '4px 8px' }} value={u.managerId || ''} onChange={e => patchUser(u.id, { managerId: e.target.value || null })}><option value="">—</option>{managers.filter(m => m.id !== u.id).map(m => <option key={m.id} value={m.id}>{m.name || m.email}</option>)}</select> : (managers.find(m => m.id === u.managerId)?.name || '—')}</td>
-                <td>{isAdmin && u.id !== user.id && <button className="btn btn-ghost btn-sm" onClick={() => setConfirm(u)}>Remove</button>}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  {(isAdmin || u.id === user.id) && <button className="btn btn-ghost btn-sm" onClick={() => setPwFor(u)}>Password</button>}
+                  {isAdmin && u.id !== user.id && <button className="btn btn-ghost btn-sm" onClick={() => setConfirm(u)}>Remove</button>}
+                </td>
               </tr>))}</tbody>
           </table>
         </div>
@@ -195,7 +200,55 @@ export default function Settings() {
       </div>
 
       {confirm && <ConfirmDialog title={`Remove ${confirm.name || confirm.email}?`} message="Their expenses stay; they can no longer sign in." confirmLabel="Remove" danger
-                                 onConfirm={() => api.delete(`/users/${confirm.id}`).then(() => { setConfirm(null); return loadAll(); }).catch(fail)} onCancel={() => setConfirm(null)} />}
+                                 onConfirm={() => api.delete(`/users/${confirm.id}`).then(loadAll).catch(fail).finally(() => setConfirm(null))} onCancel={() => setConfirm(null)} />}
+
+      {pwFor && <PasswordDialog target={pwFor} self={pwFor.id === user.id} onDone={m => { setPwFor(null); setMsg(m); }} onCancel={() => setPwFor(null)} />}
     </div>
+  );
+}
+
+// Setting a password. The route has always been there; nothing in the app
+// called it, so a password could be set once when the account was created and
+// never changed. Changing your own asks for the current one, which is what
+// stops a borrowed session from becoming a permanent one.
+function PasswordDialog({ target, self, onDone, onCancel }) {
+  const [currentPassword, setCurrent] = useState('');
+  const [password, setNext] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true); setErr(null);
+    try {
+      await api.post(`/users/${target.id}/password`, self ? { password, currentPassword } : { password });
+      onDone({ tone: 'success', text: self ? 'Your password has been changed.' : `Password set for ${target.name || target.email}.` });
+    } catch (e2) { setErr(e2.message); setBusy(false); }
+  }
+
+  return (
+    <Modal onClose={onCancel} busy={busy} maxWidth={400} label={self ? 'Change your password' : 'Set a password'}>
+      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{self ? 'Change your password' : `Set a password for ${target.name || target.email}`}</div>
+      <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 14 }}>
+        {self ? 'You will stay signed in on this device.' : 'Tell them the new password yourself; it is not emailed.'}
+      </div>
+      <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {err && <div className="alert alert-error" style={{ marginBottom: 0 }}>{err}</div>}
+        {self && (
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="form-label" htmlFor="pw-current">Current password</label>
+            <input id="pw-current" className="form-input" type="password" required value={currentPassword} onChange={e => setCurrent(e.target.value)} autoComplete="current-password" />
+          </div>
+        )}
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label className="form-label" htmlFor="pw-new">New password</label>
+          <input id="pw-new" className="form-input" type="password" required minLength={8} value={password} onChange={e => setNext(e.target.value)} placeholder="At least 8 characters" autoComplete="new-password" />
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn btn-ghost" type="button" onClick={onCancel}>Cancel</button>
+          <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save password'}</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
