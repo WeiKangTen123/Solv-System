@@ -54,7 +54,7 @@ function buildLines(r, fallbackCategory) {
 
 // Writes a read onto an expense. undefined leaves a field alone, so a value
 // the reader could not make out never erases one already typed.
-function applyRead(expenseId, r, extra = {}) {
+async function applyRead(expenseId, r, extra = {}) {
   const patch = {
     merchant: r.merchant ?? undefined, receiptDate: r.date ?? undefined, receiptTime: r.time ?? undefined,
     invoiceNo: r.invoiceNumber ?? undefined, currency: r.currency ?? undefined,
@@ -66,6 +66,10 @@ function applyRead(expenseId, r, extra = {}) {
   if (!updated) return null;
   const lines = buildLines({ ...r, total: updated.total }, updated.category);
   if (lines.length) store.replaceLines(expenseId, lines.map(l => ({ ...l, currency: updated.currency })));
+  // The rate is applied here, once the lines exist, so a read never leaves a
+  // foreign expense without its base figure (or an honest 'rate pending').
+  try { await require('../fx/apply').applyFx(expenseId); }
+  catch (err) { logger.warn('Exchange rate not applied after read', { expenseId, error: err.message }); }
   return store.getExpense(expenseId);
 }
 
@@ -103,7 +107,7 @@ async function readReceipt({ companyId, userId, receiptId, expenseId, buffer, mi
           store.updateExpense(expenseId, { errorMsg: 'This PDF could not be read automatically. Type the fields from the receipt.' });
         } else if (rendered.pages.length <= MAX_PAGES_ONE_DOC) {
           parsed = await parser.parseReceiptPages(userId, rendered.pages.map(p => ({ buffer: p.buffer, mime: 'image/jpeg' })));
-          if (parsed) { applyRead(expenseId, parsed.receipts[0]); flagIfSuspected(expenseId); }
+          if (parsed) { await applyRead(expenseId, parsed.receipts[0]); flagIfSuspected(expenseId); }
         } else {
           // A thick scan: one receipt per page, each read on its own.
           store.updateExpense(expenseId, { page: 1 });
@@ -111,14 +115,14 @@ async function readReceipt({ companyId, userId, receiptId, expenseId, buffer, mi
             const id = p.page === 1 ? expenseId : _sibling({ companyId, userId, receiptId, source, page: p.page }).id;
             if (p.page !== 1) touched.push(id);
             const one = await parser.parseReceiptImage(userId, p.buffer, 'image/jpeg');
-            if (one) { applyRead(id, one.receipts[0]); flagIfSuspected(id); }
+            if (one) { await applyRead(id, one.receipts[0]); flagIfSuspected(id); }
           }
         }
       } else {
         const decision = pdfPages.splittablePages(extracted);
         if (!decision.split) {
           parsed = await parser.parseReceiptText(userId, extracted.pages.join('\n\n'));
-          if (parsed) { applyRead(expenseId, parsed.receipts[0]); flagIfSuspected(expenseId); }
+          if (parsed) { await applyRead(expenseId, parsed.receipts[0]); flagIfSuspected(expenseId); }
         } else {
           const [first, ...rest] = decision.pageNumbers;
           store.updateExpense(expenseId, { page: first });
@@ -126,21 +130,21 @@ async function readReceipt({ companyId, userId, receiptId, expenseId, buffer, mi
           for (const page of rest) { const sib = _sibling({ companyId, userId, receiptId, source, page }); touched.push(sib.id); targets.push([sib.id, page]); }
           for (const [id, page] of targets) {
             const one = await parser.parseReceiptText(userId, extracted.pages[page - 1]);
-            if (one) { applyRead(id, one.receipts[0]); flagIfSuspected(id); }
+            if (one) { await applyRead(id, one.receipts[0]); flagIfSuspected(id); }
           }
         }
       }
     } else {
       parsed = await parser.parseReceiptImage(userId, buffer, mime);
       if (parsed && !parsed.split) {
-        applyRead(expenseId, parsed.receipts[0]); flagIfSuspected(expenseId);
+        await applyRead(expenseId, parsed.receipts[0]); flagIfSuspected(expenseId);
       } else if (parsed) {
         const [first, ...rest] = parsed.receipts;
-        applyRead(expenseId, first, { box: first.box || null }); flagIfSuspected(expenseId);
+        await applyRead(expenseId, first, { box: first.box || null }); flagIfSuspected(expenseId);
         for (const r of rest) {
           const sib = _sibling({ companyId, userId, receiptId, source, box: r.box || null });
           touched.push(sib.id);
-          applyRead(sib.id, r); flagIfSuspected(sib.id);
+          await applyRead(sib.id, r); flagIfSuspected(sib.id);
         }
       }
     }

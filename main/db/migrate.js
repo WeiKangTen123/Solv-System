@@ -18,7 +18,9 @@ function _step(n, name, fn) {
 
 function run() {
   db.exec(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
-  // Later phases add their columns here, e.g. _ensureColumn('expense_lines', 'x', 'x TEXT');
+  // Phase 2: which day the provider actually priced (a weekend asks for Friday), and who typed a manual rate.
+  _ensureColumn('fx_rates', 'provider_date', 'provider_date TEXT');
+  _ensureColumn('fx_rates', 'entered_by', 'entered_by TEXT');
 }
 
 module.exports = { run, _ensureColumn, _step };

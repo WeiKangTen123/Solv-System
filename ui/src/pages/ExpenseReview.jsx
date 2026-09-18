@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useViewMode } from '../context/ViewModeContext';
+import { useAuth } from '../context/AuthContext';
+import { formatDateTime } from '../utils/formatDate';
 import CroppedImage from '../components/receipts/CroppedImage';
 import ConfirmDialog from '../components/ConfirmDialog';
 import StatusBadge from '../components/StatusBadge';
@@ -14,6 +16,7 @@ const FIELDS = [
   ['merchant', 'Merchant', 'text'], ['receiptDate', 'Receipt date', 'date'], ['receiptTime', 'Time', 'text'], ['invoiceNo', 'Invoice no.', 'text'],
   ['currency', 'Currency', 'text'], ['total', 'Total', 'number'], ['tax', 'Tax included', 'number'], ['purpose', 'Business purpose', 'text'],
 ];
+const SOURCE_LABEL = { frankfurter: 'European Central Bank reference rate', 'open.er-api': 'ExchangeRate-API daily rate', base: 'Base currency', same: 'Same currency' };
 const pick = e => Object.fromEntries(FIELDS.map(([k]) => [k, e[k] ?? '']));
 const cents = v => Math.round(Number(v || 0) * 100);
 
@@ -21,7 +24,10 @@ export default function ExpenseReview() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { isMobile } = useViewMode();
+  const { user } = useAuth();
+  const baseCurrency = user?.baseCurrency || 'SGD';
   const [exp, setExp] = useState(null);
+  const [rateEdit, setRateEdit] = useState(null);
   const [imageUrl, setImageUrl] = useState(null);
   const [form, setForm] = useState({});
   const [lines, setLines] = useState([]);
@@ -88,6 +94,21 @@ export default function ExpenseReview() {
     } catch (e) { setMsg({ tone: 'error', text: e.message }); }
     finally { setBusy(''); }
   }
+  async function refreshFx() {
+    if (!(await save({ quiet: true }))) return;
+    setBusy('fx');
+    try { const out = await api.post(`/expenses/${id}/fx`, {}); await load(); setMsg(out.pending ? { tone: 'warning', text: `No rate found for ${exp.currency} on that date.` } : { tone: 'success', text: 'Rate refreshed.' }); }
+    catch (e) { setMsg({ tone: 'error', text: e.message }); }
+    finally { setBusy(''); }
+  }
+  async function submitRate(ev) {
+    ev.preventDefault();
+    if (!(await save({ quiet: true }))) return;
+    setBusy('fx');
+    try { await api.patch(`/expenses/${id}/fx`, { rate: Number(rateEdit.rate), reason: rateEdit.reason }); setRateEdit(null); await load(); setMsg({ tone: 'success', text: 'Rate changed.' }); }
+    catch (e) { setMsg({ tone: 'error', text: e.message }); }
+    finally { setBusy(''); }
+  }
   async function remove() {
     setConfirm(null);
     try { await api.delete(`/expenses/${id}`); navigate('/expenses'); } catch (e) { setMsg({ tone: 'error', text: e.message }); }
@@ -152,6 +173,40 @@ export default function ExpenseReview() {
             </div>
             {exp.description && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Reader's note: {exp.description}</div>}
           </div>
+
+          {exp.currency && exp.currency !== baseCurrency && (() => {
+            const fx = exp.lines[0] && exp.lines[0].fxRate ? exp.lines[0] : null;
+            return (
+              <div className="card">
+                <div className="card-title">Exchange rate</div>
+                {fx ? (
+                  <>
+                    <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{exp.currency} → {baseCurrency} {fx.fxRate}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
+                      {fx.fxSource === 'manual'
+                        ? `Entered by ${fx.fxOverrideBy || 'finance'}${fx.fxOverrideReason ? `: ${fx.fxOverrideReason}` : ''}`
+                        : `${SOURCE_LABEL[fx.fxSource] || fx.fxSource} for ${fx.fxRateDate}${fx.fxFetchedAt ? ` · fetched ${formatDateTime(fx.fxFetchedAt, user?.timezone)}` : ''}`}
+                    </div>
+                    <div style={{ fontSize: 13, marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>= {fmtMoney(exp.baseTotal, baseCurrency)}</div>
+                  </>
+                ) : (
+                  <div className="alert alert-warning" style={{ marginBottom: 0 }}>No rate yet for {exp.currency} on {exp.receiptDate || 'this date'}. Refresh, or enter one.</div>
+                )}
+                <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                  <button className="btn btn-outline btn-sm" disabled={!!busy} onClick={refreshFx}>{busy === 'fx' ? 'Working…' : 'Refresh rate'}</button>
+                  <button className="btn btn-outline btn-sm" disabled={!!busy} onClick={() => setRateEdit({ rate: fx?.fxRate || '', reason: '' })}>Change rate…</button>
+                </div>
+                {rateEdit && (
+                  <form onSubmit={submitRate} style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <input id="fx-rate" className="form-input" type="number" step="0.000001" min="0" style={{ maxWidth: 150 }} value={rateEdit.rate} onChange={e => setRateEdit({ ...rateEdit, rate: e.target.value })} aria-label="Rate" required />
+                    <input id="fx-reason" className="form-input" style={{ flex: 1, minWidth: 180 }} placeholder="Why (e.g. card statement rate)" value={rateEdit.reason} onChange={e => setRateEdit({ ...rateEdit, reason: e.target.value })} aria-label="Reason" required />
+                    <button className="btn btn-primary btn-sm" type="submit" disabled={!!busy}>Use this rate</button>
+                    <button className="btn btn-ghost btn-sm" type="button" onClick={() => setRateEdit(null)}>Cancel</button>
+                  </form>
+                )}
+              </div>
+            );
+          })()}
 
           <div className="card">
             <div className="card-title">Lines</div>

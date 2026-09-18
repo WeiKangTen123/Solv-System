@@ -7,6 +7,7 @@ const store   = require('../store/expenses');
 const receiptStore = require('../utils/receipt-store');
 const { issueImageToken } = require('./receipts');
 const { readOne, applyRead, flagIfSuspected } = require('../receipts/read-receipt');
+const { applyFx, overrideFx } = require('../fx/apply');
 const { canonicalCategory } = require('../claims/categories');
 const logger  = require('../utils/logger');
 
@@ -37,7 +38,7 @@ router.get('/', requireAuth, (req, res) => {
 
 router.get('/:id', requireAuth, (req, res) => { const e = _load(req, res); if (e) res.json(_out(e)); });
 
-router.patch('/:id', requireAuth, (req, res) => {
+router.patch('/:id', requireAuth, async (req, res) => {
   const e = _load(req, res); if (!e) return;
   if (e.status === 'duplicate') return res.status(400).json({ error: 'A duplicate cannot be edited; delete it or restore it first' });
   const b = req.body || {}, patch = {};
@@ -54,10 +55,12 @@ router.patch('/:id', requireAuth, (req, res) => {
   } else if (patch.currency && updated.lines.length) {
     store.replaceLines(e.id, updated.lines.map(l => ({ ...l, currency: updated.currency })), { force: true });
   }
+  // A new currency, date or amount changes what the base figure is.
+  if (patch.currency !== undefined || patch.receiptDate !== undefined || patch.total !== undefined) await applyFx(e.id);
   res.json(_out(store.getExpense(e.id)));
 });
 
-router.put('/:id/lines', requireAuth, (req, res) => {
+router.put('/:id/lines', requireAuth, async (req, res) => {
   const e = _load(req, res); if (!e) return;
   const lines = Array.isArray((req.body || {}).lines) ? req.body.lines : null;
   if (!lines || !lines.length) return res.status(400).json({ error: 'Send at least one line' });
@@ -68,7 +71,24 @@ router.put('/:id/lines', requireAuth, (req, res) => {
   try {
     store.replaceLines(e.id, lines.map(l => ({ category: canonicalCategory(l.category) || e.category || 'Other', description: l.description || null, amount: Number(l.amount), onBehalfOf: l.onBehalfOf || null, currency: e.currency })));
   } catch (err) { return res.status(400).json({ error: err.message }); }
+  await applyFx(e.id);
   res.json(_out(store.getExpense(e.id)));
+});
+
+// Refresh from the provider, dropping any typed rate.
+router.post('/:id/fx', requireAuth, async (req, res) => {
+  const e = _load(req, res); if (!e) return;
+  const out = await applyFx(e.id, { force: true });
+  res.json({ ...out, ...(_out(store.getExpense(e.id))) });
+});
+
+// The claimant or finance types a rate, with a reason.
+router.patch('/:id/fx', requireAuth, async (req, res) => {
+  const e = _load(req, res); if (!e) return;
+  try {
+    const updated = await overrideFx(e.id, { rate: (req.body || {}).rate, reason: (req.body || {}).reason, actor: req.user });
+    res.json(_out(updated));
+  } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
 router.patch('/:id/status', requireAuth, (req, res) => {
@@ -95,7 +115,7 @@ router.post('/:id/reread', requireAuth, async (req, res) => {
   try {
     const r = await readOne(e.userId, buffer, e.receipt.mime, { page: e.page, box: e.box });
     if (!r) return res.json({ ok: false, reason: 'unreadable', expense: e });
-    applyRead(e.id, r); flagIfSuspected(e.id);
+    await applyRead(e.id, r); flagIfSuspected(e.id);
     res.json({ ok: true, ...(_out(store.getExpense(e.id))), confidence: r.confidence });
   } catch (err) {
     logger.warn('Re-read failed', { id: e.id, error: err.message });
