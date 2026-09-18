@@ -95,10 +95,30 @@ const _currency = _intake.currencyCode;
 const TRANSFER_RE = /([A-Z][A-Za-z.'\- ]{2,60}?)\s*#\d+\s*=>/;
 function _onBehalf(li) {
   const printed = typeof li.description === 'string' ? TRANSFER_RE.exec(li.description) : null;
-  if (printed) return printed[1].trim().slice(0, 80);
+  if (printed) return _titleCase(printed[1].trim().slice(0, 80));
   if (typeof li.onBehalfOf !== 'string' || !li.onBehalfOf.trim()) return null;
   const cleaned = li.onBehalfOf.split(/=>|#|\(/)[0].trim();
-  return cleaned ? cleaned.slice(0, 80) : null;
+  return cleaned ? _titleCase(cleaned.slice(0, 80)) : null;
+}
+
+// A folio ends with the payment that settled it ("Manual MasterCard / Euro
+// Card 88,188.77"). That is not a charge: kept, it doubles the sum of the
+// lines. Payment lines go, and so does any line that merely restates the
+// total when other lines exist.
+const PAYMENT_RE = /\b(mastercard|master card|visa|amex|american express|euro ?card|credit card|debit card|paynow|nets|grabpay|apple pay|google pay|cash tendered|change due|payment received|settlement|paid by|card payment)\b/i;
+function _dropPayments(lineItems, total) {
+  const kept = lineItems.filter(li => !PAYMENT_RE.test(li.description || ''));
+  if (kept.length > 1 && total !== null) {
+    const totalCents = Math.round(total * 100);
+    return kept.filter(li => Math.round(li.unitAmount * 100) !== totalCents);
+  }
+  return kept;
+}
+
+// Names are printed in whatever case the hotel's system uses; one colleague
+// must group as one line whichever folio the charge came from.
+function _titleCase(name) {
+  return name.toLowerCase().replace(/(^|[\s'-])([a-z])/g, (m, p, c) => p + c.toUpperCase());
 }
 
 // Indian and other tax lines are printed per charge. When the document's own
@@ -134,7 +154,7 @@ function normalise(parsed) {
   // One normaliser for every reader (intake/document.js): the stored amount is
   // the LINE total and a quantity rides in the text. Receipts carry no tax
   // percent per line, and the store's shape has none.
-  const lineItems = (Array.isArray(parsed.lineItems) ? parsed.lineItems : [])
+  const rawItems = (Array.isArray(parsed.lineItems) ? parsed.lineItems : [])
     .map(li => {
       const n = _intake.normaliseLineItem(li);
       if (!n) return null;
@@ -147,6 +167,7 @@ function normalise(parsed) {
       };
     })
     .filter(Boolean);
+  const lineItems = _dropPayments(rawItems, usableTotal);
 
   // Only a listed category survives; a reworded one is mapped back, an
   // invented one is dropped and never prefixed onto the description.
