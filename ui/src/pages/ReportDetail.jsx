@@ -25,6 +25,7 @@ export default function ReportDetail() {
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [preview, setPreview] = useState(null);
 
   const load = useCallback(async () => {
     const d = await api.get(`/reports/${id}`);
@@ -41,7 +42,7 @@ export default function ReportDetail() {
   }
 
   if (!view) return <div style={{ color: 'var(--text-muted)' }}>{msg?.text || 'Loading…'}</div>;
-  const { report: r, editable, isOwner, canDecide } = view;
+  const { report: r, editable, isOwner, canDecide, xero } = view;
   const canEdit = editable && (isOwner || user?.role === 'admin');
   const rates = [...new Map(r.expenses.flatMap(e => e.lines).filter(l => l.fxRate && l.fxSource !== 'base').map(l => [`${l.currency}|${l.fxRate}|${l.fxRateDate}|${l.fxSource}`, l])).values()];
   const cats = Object.entries(r.totals.byCategory);
@@ -64,6 +65,7 @@ export default function ReportDetail() {
 
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
       {r.status === 'rejected' && <div className="alert alert-warning"><span className="alert-icon">!</span><span>Sent back: {r.rejectedReason}. Fix what was asked, then submit again.</span></div>}
+      {r.xeroError && <div className="alert alert-warning"><span className="alert-icon">!</span><span>Xero: {r.xeroError}</span></div>}
       {r.status === 'submitted' && isOwner && <div className="alert alert-info">Submitted {formatDateTime(r.submittedAt, user?.timezone)}. Waiting for approval; nothing can be changed until it is decided.</div>}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 18, alignItems: 'start' }}>
@@ -133,9 +135,31 @@ export default function ReportDetail() {
               {canDecide && r.status === 'submitted' && <button className="btn btn-primary" disabled={!!busy} onClick={() => act('approve', () => api.post(`/reports/${id}/approve`, {}))}>Approve</button>}
               {canDecide && (r.status === 'submitted' || (r.status === 'approved' && isFinance)) && <button className="btn btn-outline" disabled={!!busy} onClick={() => setRejecting({ reason: '' })}>Send back…</button>}
               {isFinance && r.status === 'approved' && <button className="btn btn-primary" disabled={!!busy} onClick={() => act('paid', () => api.post(`/reports/${id}/paid`, {}))}>Mark paid</button>}
+              {isFinance && ['approved', 'paid'].includes(r.status) && !r.xeroInvoiceId && (
+                xero?.connected ? (
+                  <>
+                    <button className="btn btn-outline" disabled={!!busy} onClick={() => act('preview', async () => { setPreview(await api.post(`/reports/${id}/post?dryRun=1`, {})); })}>Preview Xero bill</button>
+                    <button className="btn btn-primary" disabled={!!busy} onClick={() => setConfirm('post')}>Post to Xero</button>
+                  </>
+                ) : <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Connect Xero in Settings to post this report as a bill.</div>
+              )}
+              {r.xeroInvoiceId && <div style={{ fontSize: 12.5, color: 'var(--success)' }}>In Xero as draft bill {r.xeroInvoiceId}{xero?.tenantName ? ` (${xero.tenantName})` : ''}.</div>}
               {!isOwner && !canDecide && !(isFinance && r.status === 'approved') && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Nothing for you to do on this report right now.</div>}
               {isOwner && !editable && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{r.status === 'submitted' ? 'Waiting for your manager.' : r.status === 'approved' ? 'Approved; finance will pay it.' : r.status === 'paid' ? `Paid ${formatDateTime(r.paidAt, user?.timezone)}.` : ''}</div>}
             </div>
+            {preview && (
+              <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10, fontSize: 12 }}>
+                <div style={{ fontWeight: 600, marginBottom: 6 }}>Bill to {preview.bill.contact.name} · {preview.bill.invoice.currencyCode} {fmtMoney(preview.bill.total)} · {preview.tenantName || 'no org'}</div>
+                {preview.bill.invoice.lineItems.map((l, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '3px 0', borderTop: '1px solid var(--border)' }}>
+                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.description}</span>
+                    <span style={{ whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>{l.accountCode || '—'} · {l.taxType}</span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{fmtMoney(l.unitAmount)}</span>
+                  </div>))}
+                <div style={{ color: 'var(--text-muted)', marginTop: 6 }}>Attachments: {preview.bill.attachments.join(', ') || 'none'}</div>
+                <button className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setPreview(null)}>Close preview</button>
+              </div>
+            )}
             {rejecting && (
               <form onSubmit={e => { e.preventDefault(); act('reject', () => api.post(`/reports/${id}/reject`, { reason: rejecting.reason })).then(() => setRejecting(null)); }} style={{ marginTop: 10 }}>
                 <input id="reject-reason" className="form-input" placeholder="Tell the claimant what to fix" required value={rejecting.reason} onChange={e => setRejecting({ reason: e.target.value })} />
@@ -161,6 +185,8 @@ export default function ReportDetail() {
         </div>
       </div>
 
+      {confirm === 'post' && <ConfirmDialog title={`Post ${r.number} to Xero?`} message={`A draft bill payable to ${r.ownerName || 'the claimant'} for ${fmtMoney(r.totals.totalBase, base)} will be created in ${xero?.tenantName || 'Xero'}, with the receipts attached. Finance approves it in Xero as usual.`} confirmLabel="Post to Xero"
+                                   onConfirm={() => { setConfirm(null); act('post', () => api.post(`/reports/${id}/post`, {})); }} onCancel={() => setConfirm(null)} />}
       {confirm === 'delete' && <ConfirmDialog title="Delete this report?" message="The expenses stay in My expenses; only the report goes." confirmLabel="Delete" danger onConfirm={() => api.delete(`/reports/${id}`).then(() => navigate('/reports')).catch(e => { setConfirm(null); setMsg({ tone: 'error', text: e.message }); })} onCancel={() => setConfirm(null)} />}
     </div>
   );
