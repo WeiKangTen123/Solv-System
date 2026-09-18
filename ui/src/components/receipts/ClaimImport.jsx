@@ -92,6 +92,8 @@ export default function ClaimImport({ onClose, onImported, initialJobId = null }
     } finally { setStart(false); }
   }
 
+  // 'cancelled' used to fall through every branch below, leaving an empty box
+  // with no way back to the file picker.
   const done   = job?.stage === 'done';
   const failed = job?.stage === 'failed';
   const active = job && !done && !failed && job.stage !== 'cancelled';
@@ -208,7 +210,9 @@ export default function ClaimImport({ onClose, onImported, initialJobId = null }
               This keeps running if you close it — the expenses appear in My expenses when it finishes.
             </div>
             <button className="btn btn-outline btn-sm" style={{ marginTop: 12 }}
-                    onClick={() => api.delete(`/claims/import/${job.id}`).catch(() => {})}>
+                    onClick={() => api.delete(`/claims/import/${job.id}`)
+                      .then(() => { setJob(null); setFiles([]); setError('Import stopped. Anything already read is in My expenses.'); })
+                      .catch(err => setError(err.message || 'Could not stop the import'))}>
               Stop
             </button>
           </div>

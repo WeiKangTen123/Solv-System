@@ -1,20 +1,34 @@
 import { NavLink } from 'react-router-dom';
 import { useTheme } from '../../context/ThemeContext';
+import { useAuth } from '../../context/AuthContext';
 
-const NAV_ITEMS = [
-  { to: '/',         label: 'Home',     icon: '▦', end: true },
-  { to: '/expenses', label: 'Expenses', icon: '◧' },
-  { to: '/reports',  label: 'Reports',  icon: '▤' },
-  { to: '/settings', label: 'Settings', icon: '◈' },
-];
+// Four tabs, chosen for the role. Settings used to be here for everyone, and
+// the route behind it is admin and finance only, so two roles out of four
+// tapped it and were bounced back to Home with no explanation. Approvals was
+// missing entirely, which left a manager on a phone with no way to reach the
+// queue except the drawer.
+const ALL = {
+  home:      { to: '/',          label: 'Home',      icon: '▦', end: true },
+  expenses:  { to: '/expenses',  label: 'Expenses',  icon: '◧' },
+  reports:   { to: '/reports',   label: 'Reports',   icon: '▤' },
+  approvals: { to: '/approvals', label: 'Approvals', icon: '✓' },
+  settings:  { to: '/settings',  label: 'Settings',  icon: '◈' },
+};
+function itemsFor(role) {
+  if (role === 'admin' || role === 'finance') return [ALL.home, ALL.expenses, ALL.approvals, ALL.settings];
+  if (role === 'manager') return [ALL.home, ALL.expenses, ALL.reports, ALL.approvals];
+  return [ALL.home, ALL.expenses, ALL.reports];
+}
 
 export default function BottomNav() {
   const { theme } = useTheme();
+  const { user } = useAuth();
   const isDark = theme === 'dark';
+  const NAV_ITEMS = itemsFor(user?.role);
   return (
     <nav style={{
       position: 'fixed', bottom: 0, left: 0, right: 0, height: 'var(--bottom-nav-total)',
-      background: isDark ? 'rgba(12, 18, 17, 0.95)' : 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+      background: 'var(--bg-glass)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
       borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-around', zIndex: 90,
       padding: '0 8px var(--safe-bottom)', boxShadow: '0 -2px 10px rgba(0,0,0,0.06)',
     }}>

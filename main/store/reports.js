@@ -59,8 +59,15 @@ function _totals(list) {
 }
 
 function getReport(id) {
-  const r = _row(db.prepare('SELECT * FROM expense_reports WHERE id = ?').get(id));
+  // The owner's name comes back here as well as from listReports: the Xero
+  // confirmation asks finance to approve a bill "payable to <name>", and with
+  // only listReports carrying it that read "payable to the claimant".
+  const row = db.prepare(`SELECT r.*, u.name AS owner_name, u.email AS owner_email
+                          FROM expense_reports r LEFT JOIN users u ON u.id = r.user_id WHERE r.id = ?`).get(id);
+  const r = _row(row);
   if (!r) return null;
+  r.ownerName = row.owner_name;
+  r.ownerEmail = row.owner_email;
   const list = expenses.listExpenses({ reportId: id }).sort((a, b) => String(a.receiptDate || '').localeCompare(String(b.receiptDate || '')) || String(a.createdAt).localeCompare(String(b.createdAt)));
   const totals = _totals(list);
   totals.reimbursement = Math.round((totals.totalBase - r.advances) * 100) / 100;
@@ -92,6 +99,23 @@ function updateReport(id, patch) {
   return getReport(id);
 }
 
+// Claiming a report for posting, atomically. postReport reads the row, checks
+// it has no bill yet, and only writes back several seconds later once Xero has
+// answered — so a second click inside that window passed the same check and
+// made a second draft bill for the same report number. One UPDATE with the
+// condition in its WHERE decides it: exactly one caller gets `true`.
+const POSTING = 'posting';
+function claimForPost(id) {
+  const info = db.prepare(`UPDATE expense_reports SET xero_error = ?, updated_at = ?
+                           WHERE id = ? AND xero_invoice_id IS NULL AND COALESCE(xero_error, '') != ?`)
+    .run(POSTING, now(), id, POSTING);
+  return info.changes === 1;
+}
+function releasePost(id, error = null) {
+  db.prepare(`UPDATE expense_reports SET xero_error = ?, updated_at = ? WHERE id = ? AND xero_error = ?`)
+    .run(error, now(), id, POSTING);
+}
+
 function setState(id, patch) {
   const sets = [], args = [];
   for (const [k, col] of Object.entries(STATE)) { if (patch[k] === undefined) continue; sets.push(`${col} = ?`); args.push(patch[k]); }
@@ -116,4 +140,5 @@ function listEvents(reportId) {
     .map(x => ({ id: x.id, action: x.action, note: x.note, at: x.at, actorId: x.actor_id, actorName: x.actor_name || x.actor_email || null }));
 }
 
-module.exports = { createReport, getReport, listReports, updateReport, setState, addExpense, removeExpense, deleteReport, addEvent, listEvents, nextNumber };
+module.exports = {
+  claimForPost, releasePost, createReport, getReport, listReports, updateReport, setState, addExpense, removeExpense, deleteReport, addEvent, listEvents, nextNumber };

@@ -8,13 +8,24 @@ const receiptStore = require('../receipts/receipt-store');
 const { issueImageToken } = require('./receipts');
 const { readOne, applyRead, flagIfSuspected } = require('../receipts/read-receipt');
 const { applyFx, overrideFx } = require('../fx/apply');
-const { isLocked } = require('../reports/workflow');
+const wf      = require('../reports/workflow');
+const { isLocked } = wf;
+const reports = require('../store/reports');
+const asyncHandler = require('../middleware/async-handler');
 const { canonicalCategory } = require('../intake/categories');
 const logger  = require('../utils/logger');
 
 // An expense is one claimable receipt after reading. Employees work on their
 // own; a manager sees direct reports; finance and admin see the company.
-const EDITABLE = ['merchant', 'receiptDate', 'receiptTime', 'invoiceNo', 'currency', 'total', 'tax', 'subTotal', 'purpose', 'description', 'category', 'reportId'];
+// reportId is deliberately NOT here. It used to be, and it was passed straight
+// to the store, so filing an expense obeyed none of the rules the report route
+// enforces: an employee could attach an unreviewed expense to an already
+// approved report — or to a colleague's report — and change a total finance
+// had signed off. Filing now goes through _file() below, which asks the same
+// questions POST /api/reports/:id/expenses asks. An unknown id also used to
+// reach SQLite as a foreign-key violation inside an unwrapped async handler,
+// which took the whole server down with it.
+const EDITABLE = ['merchant', 'receiptDate', 'receiptTime', 'invoiceNo', 'currency', 'total', 'tax', 'subTotal', 'purpose', 'description', 'category'];
 
 function _load(req, res) {
   const e = store.getExpense(req.params.id);
@@ -27,6 +38,28 @@ function _loadEditable(req, res) {
   if (e && isLocked(e)) { res.status(409).json({ error: LOCKED }); return null; }
   return e;
 }
+// Moving an expense into or out of a report. Both ends have to be open: you
+// cannot take an expense out of a report that has been submitted, and you
+// cannot put one into a report that is not the owner's own draft.
+function _file(e, reportId, actor) {
+  const fail = (status, error) => { const err = new Error(error); err.status = status; throw err; };
+  const leaving = () => {
+    if (!e.reportId) return;
+    const cur = reports.getReport(e.reportId);
+    if (cur && !wf.isEditable(cur)) fail(409, `A ${cur.status} report cannot be changed`);
+    reports.removeExpense(e.reportId, e.id);
+  };
+  if (!reportId) { leaving(); return; }
+  if (reportId === e.reportId) return;
+  const r = reports.getReport(reportId);
+  if (!r || r.companyId !== e.companyId) fail(404, 'Report not found');
+  if (r.userId !== e.userId) fail(403, 'That report belongs to someone else');
+  if (r.userId !== actor.id && actor.role !== 'admin') fail(403, 'Only the report owner can file expenses');
+  if (!wf.isEditable(r)) fail(409, `A ${r.status} report cannot take more expenses`);
+  leaving();
+  reports.addExpense(r.id, e.id);
+}
+
 function _out(e) { return { expense: e, locked: isLocked(e), imageToken: e.receipt ? issueImageToken(e.receipt.userId, e.receipt.id) : null }; }
 
 router.get('/', requireAuth, (req, res) => {
@@ -45,7 +78,7 @@ router.get('/', requireAuth, (req, res) => {
 
 router.get('/:id', requireAuth, (req, res) => { const e = _load(req, res); if (e) res.json(_out(e)); });
 
-router.patch('/:id', requireAuth, async (req, res) => {
+router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
   const e = _loadEditable(req, res); if (!e) return;
   if (e.status === 'duplicate') return res.status(400).json({ error: 'A duplicate cannot be edited; delete it or restore it first' });
   const b = req.body || {}, patch = {};
@@ -55,6 +88,10 @@ router.patch('/:id', requireAuth, async (req, res) => {
   for (const k of ['total', 'tax', 'subTotal']) if (patch[k] !== undefined && patch[k] !== null && !(Number(patch[k]) >= 0)) return res.status(400).json({ error: `${k} must be a number` });
   if (patch.category !== undefined && patch.category !== null && !canonicalCategory(patch.category)) return res.status(400).json({ error: 'Unknown category' });
   if (patch.category) patch.category = canonicalCategory(patch.category);
+  if (b.reportId !== undefined) {
+    try { _file(e, b.reportId || null, req.user); }
+    catch (err) { return res.status(err.status || 400).json({ error: err.message }); }
+  }
   const updated = store.updateExpense(e.id, patch);
   // A single line follows the total; a split is the claimant's to redo.
   if (patch.total !== undefined && updated.lines.length === 1) {
@@ -65,9 +102,9 @@ router.patch('/:id', requireAuth, async (req, res) => {
   // A new currency, date or amount changes what the base figure is.
   if (patch.currency !== undefined || patch.receiptDate !== undefined || patch.total !== undefined) await applyFx(e.id);
   res.json(_out(store.getExpense(e.id)));
-});
+}));
 
-router.put('/:id/lines', requireAuth, async (req, res) => {
+router.put('/:id/lines', requireAuth, asyncHandler(async (req, res) => {
   const e = _loadEditable(req, res); if (!e) return;
   const lines = Array.isArray((req.body || {}).lines) ? req.body.lines : null;
   if (!lines || !lines.length) return res.status(400).json({ error: 'Send at least one line' });
@@ -80,23 +117,23 @@ router.put('/:id/lines', requireAuth, async (req, res) => {
   } catch (err) { return res.status(400).json({ error: err.message }); }
   await applyFx(e.id);
   res.json(_out(store.getExpense(e.id)));
-});
+}));
 
 // Refresh from the provider, dropping any typed rate.
-router.post('/:id/fx', requireAuth, async (req, res) => {
+router.post('/:id/fx', requireAuth, asyncHandler(async (req, res) => {
   const e = _loadEditable(req, res); if (!e) return;
   const out = await applyFx(e.id, { force: true });
   res.json({ ...out, ...(_out(store.getExpense(e.id))) });
-});
+}));
 
 // The claimant or finance types a rate, with a reason.
-router.patch('/:id/fx', requireAuth, async (req, res) => {
+router.patch('/:id/fx', requireAuth, asyncHandler(async (req, res) => {
   const e = _loadEditable(req, res); if (!e) return;
   try {
     const updated = await overrideFx(e.id, { rate: (req.body || {}).rate, reason: (req.body || {}).reason, actor: req.user });
     res.json(_out(updated));
   } catch (err) { res.status(400).json({ error: err.message }); }
-});
+}));
 
 router.patch('/:id/status', requireAuth, (req, res) => {
   const e = _loadEditable(req, res); if (!e) return;
@@ -114,7 +151,7 @@ router.patch('/:id/status', requireAuth, (req, res) => {
   res.json(_out(store.updateExpense(e.id, { status })));
 });
 
-router.post('/:id/reread', requireAuth, async (req, res) => {
+router.post('/:id/reread', requireAuth, asyncHandler(async (req, res) => {
   const e = _loadEditable(req, res); if (!e) return;
   if (!e.receipt) return res.status(400).json({ error: 'This expense has no receipt file to read' });
   const buffer = receiptStore.forUser(e.receipt.userId).read(e.receipt.file);
@@ -128,7 +165,7 @@ router.post('/:id/reread', requireAuth, async (req, res) => {
     logger.warn('Re-read failed', { id: e.id, error: err.message });
     res.json({ ok: false, reason: 'unavailable', expense: e });
   }
-});
+}));
 
 router.get('/:id/group', requireAuth, (req, res) => {
   const e = _load(req, res); if (!e) return;

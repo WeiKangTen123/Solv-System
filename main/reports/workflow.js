@@ -69,6 +69,10 @@ function reject(reportId, actor, reason) {
 function markPaid(reportId, actor) {
   const r = _get(reportId);
   if (!(actor.role === 'finance' || actor.role === 'admin')) throw new Error('Only finance can mark a report paid');
+  // Submit, approve and reject all refuse to let someone act on their own
+  // report; paying was the one step that did not, so a finance user could see
+  // their own claim all the way to paid on one other person's approval.
+  if (r.userId === actor.id) throw new Error('Someone else has to mark your own report paid');
   if (!['approved', 'posted'].includes(r.status)) throw new Error('A report must be approved before it is paid');
   reports.setState(reportId, { status: 'paid', paidAt: new Date().toISOString() });
   reports.addEvent(reportId, actor.id, 'paid', null);

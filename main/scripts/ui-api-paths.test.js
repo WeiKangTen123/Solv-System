@@ -29,6 +29,31 @@ describe('UI API paths', () => {
     expect(client).toMatch(/const BASE\s*=\s*'\/api'/);
   });
 
+  // Every verb the UI calls has to exist on the client. api.put did not, and
+  // because the test below only checked that the PATH matched a server route,
+  // the suite was green while saving an expense's lines threw "api.put is not
+  // a function" — taking Mark reviewed, Refresh rate and Change rate with it,
+  // since all three save first.
+  test('every api.<verb>() the UI calls is implemented by the client', () => {
+    const client = fs.readFileSync(path.join(UI_SRC, 'api/client.js'), 'utf8');
+    const exported = new Set([...client.matchAll(/^\s{2}(\w+):\s*\(/gm)].map(m => m[1]));
+    expect(exported.size).toBeGreaterThan(3);
+
+    const used = new Map();
+    for (const file of files) {
+      if (file.endsWith(path.join('api', 'client.js'))) continue;
+      const src = fs.readFileSync(file, 'utf8');
+      for (const m of src.matchAll(/\bapi\.(\w+)\s*\(/g)) {
+        if (!used.has(m[1])) used.set(m[1], path.relative(UI_SRC, file));
+      }
+    }
+    expect(used.size).toBeGreaterThan(2);
+
+    const missing = [...used].filter(([verb]) => !exported.has(verb))
+      .map(([verb, where]) => `api.${verb}() called in ${where} but not exported by api/client.js`);
+    expect(missing).toEqual([]);
+  });
+
   test('no api.* call passes a path that repeats the /api prefix', () => {
     // Matches api.get('/api/...'), api.post(`/api/...`), etc.
     const offender = /\bapi\.(get|post|patch|delete|put)\(\s*['"`]\/api\//;

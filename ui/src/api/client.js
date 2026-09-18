@@ -39,6 +39,12 @@ async function request(path, options = {}) {
 export const api = {
   get:    (path)       => request(path),
   post:   (path, body) => request(path, { method: 'POST',   body: JSON.stringify(body) }),
+  // PUT is only used to replace an expense's lines, but leaving it out broke
+  // that one call with "api.put is not a function" — and because Mark reviewed,
+  // Refresh rate and Change rate all save first, the whole review step died
+  // with it. The route check in main/scripts/ui-api-paths.test.js confirmed the
+  // path existed on the server and never noticed the verb was missing here.
+  put:    (path, body) => request(path, { method: 'PUT',    body: JSON.stringify(body) }),
   patch:  (path, body) => request(path, { method: 'PATCH',  body: JSON.stringify(body) }),
   delete: (path)       => request(path, { method: 'DELETE' }),
 };

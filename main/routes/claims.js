@@ -12,6 +12,7 @@ const { readOne }  = require('../receipts/read-receipt');
 const { suggestCategories } = require('../claims/claim-categories');
 const { createClaimRecord } = require('../claims/claim-record');
 const logger       = require('../utils/logger');
+const wf           = require('../reports/workflow');
 
 // A batch claim: a zip of receipts plus the claim-form spreadsheet, as they
 // arrive by email. Runs as a background job; the client polls.
@@ -105,15 +106,24 @@ router.delete('/group/:groupId', requireAuth, (req, res) => {
   const members = store.listExpenses({ groupId: req.params.groupId, userId: req.user.id });
   if (!members.length) return res.status(404).json({ error: 'Nothing found for that import' });
   let files = 0;
+  // Undo only reaches what is still the claimant's to undo. This route used to
+  // delete every member outright, which pulled expenses out of reports that had
+  // already been approved — and posted to Xero — leaving the report's total
+  // quietly smaller than the bill and nothing in the audit trail to say why.
+  const kept = members.filter(e => wf.isLocked(e));
   for (const e of members) {
+    if (wf.isLocked(e)) continue;
     store.deleteExpense(e.id);
     if (e.receipt && store.countExpensesForReceipt(e.receipt.id) === 0) {
       if (store.countExpensesForFile(e.receipt.userId, e.receipt.file) === 0 && receiptStore.forUser(e.receipt.userId).remove(e.receipt.file)) files++;
       store.deleteReceipt(e.receipt.id);
     }
   }
-  logger.info('Claim import undone', { userId: req.user.id, groupId: req.params.groupId, removed: members.length, files });
-  res.json({ removed: members.length });
+  logger.info('Claim import undone', { userId: req.user.id, groupId: req.params.groupId, removed: members.length - kept.length, kept: kept.length, files });
+  res.json({
+    removed: members.length - kept.length,
+    kept: kept.map(e => ({ id: e.id, merchant: e.merchant, why: 'it is in a report that has been submitted' })),
+  });
 });
 
 module.exports = router;
