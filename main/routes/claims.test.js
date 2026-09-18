@@ -14,6 +14,7 @@ jest.mock('../utils/receipt-parser', () => ({
   parseReceiptPages: jest.fn().mockResolvedValue(null),
 }));
 jest.mock('../utils/pdf-render', () => ({ renderPdfPages: jest.fn().mockResolvedValue(null) }));
+jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 1, rateDate: '2026-09-01', providerDate: '2026-09-01', source: 'frankfurter', fetchedAt: 'x' }) }));
 jest.mock('../claims/claim-categories', () => ({ suggestCategories: jest.fn().mockResolvedValue([]) }));
 
 // A minimal store-only zip.

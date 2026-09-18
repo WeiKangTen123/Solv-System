@@ -52,7 +52,7 @@ async function createClaimRecord({ userId, groupId, row, receipt, match, categor
   const currency = row.currency || (receipt && receipt.currency) || users.getUserDefaults(userId).currency;
   const description = row.description || (receipt && receipt.description) || (receipt && receipt.merchant) || null;
 
-  return store.createExpense({
+  const rec = store.createExpense({
     companyId, userId, receiptId, source: 'import',
     merchant: (receipt && receipt.merchant) || null, receiptDate: row.date || (receipt && receipt.date) || null, receiptTime: (receipt && receipt.time) || null,
     invoiceNo: (receipt && receipt.invoiceNumber) || null, currency, total, tax: receipt && receipt.tax != null ? receipt.tax : null,
@@ -61,6 +61,8 @@ async function createClaimRecord({ userId, groupId, row, receipt, match, categor
     aiReadAt: receipt && receipt.readable !== false ? new Date().toISOString() : null, aiConfidence: (receipt && receipt.confidence) || null,
     lines: total > 0 ? [{ category: cat || 'Other', description, amount: total, currency }] : [],
   });
+  try { await require('../fx/apply').applyFx(rec.id); } catch (err) { logger.warn('Exchange rate not applied on import', { id: rec.id, error: err.message }); }
+  return store.getExpense(rec.id);
 }
 
 module.exports = { createClaimRecord };
