@@ -151,6 +151,8 @@ CREATE TABLE IF NOT EXISTS expense_lines (
   fx_policy          TEXT,
   fx_override_by     TEXT,
   fx_override_reason TEXT,
+  fx_asked_date      TEXT,   -- the date the policy asked for, which is not always the date the provider priced
+  fx_check           TEXT,   -- a sentence when the rate could not be trusted as it came
   base_cents         INTEGER,
   on_behalf_of       TEXT,
   account_code       TEXT
@@ -164,6 +166,8 @@ CREATE TABLE IF NOT EXISTS fx_rates (
   rate       REAL NOT NULL,
   source     TEXT NOT NULL,
   fetched_at TEXT NOT NULL,
+  divergence REAL,           -- how far the second provider was from this one, as a fraction
+  moved      REAL,           -- how far this rate moved from the last one known for the pair
   PRIMARY KEY (base, quote, rate_date, source)
 );
 

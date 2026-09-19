@@ -210,7 +210,8 @@ export default function ExpenseReview() {
           </div>
 
           {exp.currency && exp.currency !== baseCurrency && (() => {
-            const fx = exp.lines[0] && exp.lines[0].fxRate ? exp.lines[0] : null;
+            const l0 = exp.lines[0] || null;
+            const fx = l0 && l0.fxRate ? l0 : null;
             return (
               <div className="card">
                 <div className="card-title">Exchange rate</div>
@@ -223,9 +224,21 @@ export default function ExpenseReview() {
                         : `${SOURCE_LABEL[fx.fxSource] || fx.fxSource} for ${fx.fxRateDate}${fx.fxFetchedAt ? ` · fetched ${formatDateTime(fx.fxFetchedAt, user?.timezone)}` : ''}`}
                     </div>
                     <div style={{ fontSize: 13, marginTop: 8, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>= {fmtMoney(exp.baseTotal, baseCurrency)}</div>
+                    {fx.fxNotOnTheDay && (
+                      <div className="alert alert-warning" style={{ marginTop: 10, marginBottom: 0 }}>
+                        This rate is from {fx.fxRateDate}, not {fx.fxAskedDate}. No rate is published for {exp.currency} on the receipt's date, so the day's rate was used. Enter the rate from your card statement if you have it.
+                      </div>
+                    )}
+                    {fx.fxCheck && (
+                      <div className="alert alert-warning" style={{ marginTop: 10, marginBottom: 0 }}>{fx.fxCheck}</div>
+                    )}
                   </>
                 ) : (
-                  <div className="alert alert-warning" style={{ marginBottom: 0 }}>No rate yet for {exp.currency} on {exp.receiptDate || 'this date'}. Refresh, or enter one.</div>
+                  <div className="alert alert-warning" style={{ marginBottom: 0 }}>
+                    {l0 && l0.fxCheck
+                      ? `${l0.fxCheck} Until then this expense has no converted amount.`
+                      : `No rate yet for ${exp.currency} on ${exp.receiptDate || 'this date'}. Refresh, or enter one.`}
+                  </div>
                 )}
                 <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
                   <button className="btn btn-outline btn-sm" disabled={!!busy || locked} onClick={refreshFx}>{busy === 'fx' ? 'Working…' : 'Refresh rate'}</button>

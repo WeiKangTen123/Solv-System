@@ -83,6 +83,13 @@ function buildModel(payload) {
   if (rateNotes.length) notes.push(`Policy: ${POLICY_LABEL[company.fxPolicy] || POLICY_LABEL.receipt_date}. Each line is converted and rounded to the cent; the total is the sum of the lines.`);
   const behalf = [...new Set(lines.map(l => l.onBehalfOf).filter(Boolean))];
   if (behalf.length) notes.push(`‡ Paid on behalf of ${behalf.join(', ')}; the charge was transferred to the claimant's bill.`);
+  // A rate priced after the receipt is not the receipt's rate. It happens for
+  // the currencies no central bank publishes daily history for, and a reader of
+  // the report should not have to work it out from two dates in a footnote.
+  const notOnTheDay = [...new Set(lines.filter(l => l.fxNotOnTheDay).map(l => l.currency))];
+  if (notOnTheDay.length) {
+    notes.push(`${notOnTheDay.join(' and ')} ${notOnTheDay.length === 1 ? 'has' : 'have'} no published rate for the receipt date; those lines use the rate on the day the report was priced, shown above.`);
+  }
   if (lines.some(l => l.currency !== base && l.tax > 0)) notes.push(`Foreign tax (GST/VAT) is included in the amounts and is not ${base === 'SGD' ? 'Singapore' : 'local'} input tax.`);
   return { base, columns, rows, categoryTotals, total, advances, reimbursement, rateNotes, notes };
 }

@@ -21,6 +21,14 @@ function run() {
   // Phase 2: which day the provider actually priced (a weekend asks for Friday), and who typed a manual rate.
   _ensureColumn('fx_rates', 'provider_date', 'provider_date TEXT');
   _ensureColumn('fx_rates', 'entered_by', 'entered_by TEXT');
+  // What a rate is checked against: the other provider, and the last rate known
+  // for the pair.
+  _ensureColumn('fx_rates', 'divergence', 'divergence REAL');
+  _ensureColumn('fx_rates', 'moved', 'moved REAL');
+  // The date the policy asked for (a weekend, or a day the currency has no
+  // published rate for), kept beside the date the provider actually priced.
+  _ensureColumn('expense_lines', 'fx_asked_date', 'fx_asked_date TEXT');
+  _ensureColumn('expense_lines', 'fx_check', 'fx_check TEXT');
 
   // Rates cached before the providers were asked the other way round carry only
   // the digits the provider printed in that direction — 0.000072 for a rupiah,

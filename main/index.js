@@ -97,6 +97,10 @@ app.listen(PORT, HOST, () => {
   // unhandledRejection, which exits the process — a crash loop at boot.
   require('./claims/claim-worker').recoverPendingJobs()
     .catch(err => logger.warn('Could not recover pending import jobs', { error: err.message }));
+
+  // Re-prices anything left without an exchange rate because a provider was
+  // unreachable when the receipt was read. Quarter-hourly, small batches.
+  require('./fx/sweeper').start();
 });
 
 module.exports = app;
