@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { fmtRate } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
@@ -21,13 +22,14 @@ export default function Settings() {
   const [newRate, setNewRate] = useState({ from: '', date: new Date().toISOString().slice(0, 10), rate: '' });
   const [newUser, setNewUser] = useState({ email: '', password: '', name: '', role: 'employee', department: '', employeeId: '', managerId: '' });
   const [newKey, setNewKey] = useState({ apiKey: '', label: '' });
+  const [currencies, setCurrencies] = useState([]);
   const [msg, setMsg] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [pwFor, setPwFor] = useState(null);
   const isAdmin = user?.role === 'admin';
 
   async function loadAll() {
-    const c = await api.get('/company'); setCompany(c.company); setColumns(c.company.reportColumns.join(', '));
+    const c = await api.get('/company'); setCompany(c.company); setColumns(c.company.reportColumns.join(', ')); setCurrencies(c.currencies || []);
     setUsers((await api.get('/users')).users);
     setKeys((await api.get('/company/llm-keys')).keys);
     setRates((await api.get('/fx/rates')).rates.slice(0, 30));
@@ -160,6 +162,14 @@ export default function Settings() {
       <div className="card">
         <div className="card-title">Exchange rates</div>
         <div className="card-subtitle">Rates used so far, newest first. A rate entered here beats the provider's for that day; use it for a monthly fixed table or a correction.</div>
+        <datalist id="currency-options">
+          {currencies.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+        </datalist>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.5 }}>
+          Any currency a receipt is printed in works: {currencies.slice(0, 8).map(c => c.code).join(', ')} and {Math.max(0, currencies.length - 8)} more are offered by name,
+          and any other three-letter code can be typed. Rates come from the European Central Bank where it publishes the currency, and from ExchangeRate-API otherwise,
+          which is what covers the dong, the new Taiwan dollar and the dirham. Only the ECB has history, so a currency it does not publish is priced at the day's rate and says so.
+        </div>
         <div style={{ overflowX: 'auto' }}>
           <table className="data-table">
             <thead><tr><th>Date</th><th>Pair</th><th style={{ textAlign: 'right' }}>Rate</th><th>Source</th><th></th></tr></thead>
@@ -167,7 +177,7 @@ export default function Settings() {
               <tr key={`${r.from}-${r.to}-${r.rateDate}-${r.source}`}>
                 <td>{r.rateDate}{r.providerDate && r.providerDate !== r.rateDate ? <span style={{ color: 'var(--text-muted)' }}> (priced {r.providerDate})</span> : null}</td>
                 <td>{r.from} → {r.to}</td>
-                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{r.rate}</td>
+                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }} title={String(r.rate)}>{fmtRate(r.rate)}</td>
                 <td>{r.source}{r.enteredBy ? <span style={{ color: 'var(--text-muted)' }}> · {r.enteredBy}</span> : null}</td>
                 <td>{r.source === 'manual' && <button className="btn btn-ghost btn-sm" onClick={() => api.delete(`/fx/rates?from=${r.from}&to=${r.to}&date=${r.rateDate}`).then(loadAll).catch(fail)}>Remove</button>}</td>
               </tr>))}</tbody>
@@ -175,7 +185,8 @@ export default function Settings() {
           {!rates.length && <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '10px 0' }}>No rates fetched yet.</div>}
         </div>
         <form onSubmit={addRate} style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input id="rate-from" className="form-input" style={{ maxWidth: 90 }} placeholder="INR" maxLength={3} required value={newRate.from} onChange={e => setNewRate({ ...newRate, from: e.target.value })} aria-label="From currency" />
+          <input id="rate-from" className="form-input" style={{ maxWidth: 110 }} placeholder="IDR" maxLength={3} required list="currency-options"
+                 value={newRate.from} onChange={e => setNewRate({ ...newRate, from: e.target.value.toUpperCase().slice(0, 3) })} aria-label="From currency" />
           <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>→ {company.baseCurrency} on</span>
           <input id="rate-date" className="form-input" type="date" style={{ maxWidth: 170 }} required value={newRate.date} onChange={e => setNewRate({ ...newRate, date: e.target.value })} aria-label="Date" />
           <input id="rate-value" className="form-input" type="number" step="0.000001" min="0" style={{ maxWidth: 150 }} placeholder="0.01341" required value={newRate.rate} onChange={e => setNewRate({ ...newRate, rate: e.target.value })} aria-label="Rate" />

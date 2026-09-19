@@ -4,13 +4,14 @@ const users   = require('../store/users');
 const { requireAuth } = require('../middleware/auth-middleware');
 const { requireRole } = require('../middleware/roles');
 const { CATEGORY_NAMES } = require('../intake/categories');
+const { CURRENCIES } = require('../intake/currencies');
 
 // Company settings: name, base currency, exchange-rate policy, the report's
 // column set, reader keys. Readable by everyone (the UI needs the columns);
 // writable by admin and finance.
 router.get('/', requireAuth, (req, res) => {
   const me = users.findById(req.user.id);
-  res.json({ company: users.getCompany(me.companyId), categories: CATEGORY_NAMES });
+  res.json({ company: users.getCompany(me.companyId), categories: CATEGORY_NAMES, currencies: CURRENCIES });
 });
 
 router.patch('/', requireAuth, requireRole('admin', 'finance'), (req, res) => {

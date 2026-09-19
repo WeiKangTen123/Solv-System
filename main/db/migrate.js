@@ -21,6 +21,17 @@ function run() {
   // Phase 2: which day the provider actually priced (a weekend asks for Friday), and who typed a manual rate.
   _ensureColumn('fx_rates', 'provider_date', 'provider_date TEXT');
   _ensureColumn('fx_rates', 'entered_by', 'entered_by TEXT');
+
+  // Rates cached before the providers were asked the other way round carry only
+  // the digits the provider printed in that direction — 0.000072 for a rupiah,
+  // two significant figures, which puts a ten-million-rupiah bill SGD 2.69 out.
+  // Dropping the provider rows makes them refetch at full precision the next
+  // time one is needed. Manual rates are somebody's decision and are left
+  // alone, and every rate already frozen on an expense line stays frozen, so
+  // no report that has been submitted moves.
+  _step(1, 'refetch cached provider rates at full precision', () => {
+    db.prepare("DELETE FROM fx_rates WHERE source != 'manual'").run();
+  });
 }
 
 module.exports = { run, _ensureColumn, _step };

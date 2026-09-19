@@ -7,7 +7,7 @@ import { formatDateTime } from '../utils/formatDate';
 import CroppedImage from '../components/receipts/CroppedImage';
 import ConfirmDialog from '../components/ConfirmDialog';
 import StatusBadge from '../components/StatusBadge';
-import { fmtMoney } from '../utils/format';
+import { fmtMoney, fmtRate } from '../utils/format';
 
 // Image on the left, fields on the right, so a figure is checked against the
 // receipt without switching context. Below the fields, the split into report
@@ -34,6 +34,7 @@ export default function ExpenseReview() {
   const [form, setForm] = useState({});
   const [lines, setLines] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [currencies, setCurrencies] = useState([]);
   const [group, setGroup] = useState(null);
   const [rot, setRot] = useState(0);
   const [busy, setBusy] = useState('');
@@ -59,7 +60,7 @@ export default function ExpenseReview() {
   }, [id]);
 
   useEffect(() => { setMsg(null); load().catch(e => setMsg({ tone: 'error', text: e.message })); }, [load]);
-  useEffect(() => { api.get('/company').then(d => setCategories(d.categories)).catch(() => {}); api.get('/reports').then(d => setDrafts(d.reports.filter(r => ['draft', 'rejected'].includes(r.status)))).catch(() => {}); }, []);
+  useEffect(() => { api.get('/company').then(d => { setCategories(d.categories); setCurrencies(d.currencies || []); }).catch(() => {}); api.get('/reports').then(d => setDrafts(d.reports.filter(r => ['draft', 'rejected'].includes(r.status)))).catch(() => {}); }, []);
   useEffect(() => {
     // The image token lives five minutes; refresh it, and keep polling while the reader works.
     const t = setInterval(() => load({ preserveEdits: true }).catch(() => {}), exp?.status === 'reading' ? 2500 : 4 * 60 * 1000);
@@ -147,6 +148,12 @@ export default function ExpenseReview() {
         </div>
       </div>
 
+      {/* Offered, not enforced: any three-letter code still works, because the
+          rate providers cover far more currencies than anyone would list. */}
+      <datalist id="currency-options">
+        {currencies.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+      </datalist>
+
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
       {locked && <div className="alert alert-info">This expense is in a report that has been submitted. It can be changed again if the report is sent back.</div>}
       {exp.errorMsg && <div className="alert alert-warning"><span className="alert-icon">!</span><span>{exp.errorMsg}{exp.duplicateOf && <> · <Link to={`/expenses/${exp.duplicateOf}`}>see the other one</Link></>}</span></div>}
@@ -180,8 +187,15 @@ export default function ExpenseReview() {
               {FIELDS.map(([k, label, type]) => (
                 <div className="form-group" key={k} style={{ gridColumn: k === 'merchant' || k === 'purpose' ? '1 / -1' : 'auto' }}>
                   <label className="form-label" htmlFor={`f-${k}`}>{label}</label>
-                  <input id={`f-${k}`} className="form-input" type={type} step={type === 'number' ? '0.01' : undefined} value={form[k] ?? ''} disabled={locked} onChange={e => set(k, e.target.value)}
-                         placeholder={k === 'purpose' ? 'Client site visit, Chakan plant' : k === 'currency' ? 'INR' : ''} />
+                  <input id={`f-${k}`} className="form-input" type={type} step={type === 'number' ? '0.01' : undefined} value={form[k] ?? ''} disabled={locked}
+                         list={k === 'currency' ? 'currency-options' : undefined}
+                         onChange={e => set(k, k === 'currency' ? e.target.value.toUpperCase().slice(0, 3) : e.target.value)}
+                         placeholder={k === 'purpose' ? 'Client site visit, Chakan plant' : k === 'currency' ? 'IDR' : ''} />
+                  {k === 'currency' && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                      {currencies.find(c => c.code === form.currency)?.name || 'Pick one, or type any three-letter code'}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -202,7 +216,7 @@ export default function ExpenseReview() {
                 <div className="card-title">Exchange rate</div>
                 {fx ? (
                   <>
-                    <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{exp.currency} → {baseCurrency} {fx.fxRate}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{exp.currency} → {baseCurrency} {fmtRate(fx.fxRate)}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
                       {fx.fxSource === 'manual'
                         ? `Entered by ${fx.fxOverrideBy || 'finance'}${fx.fxOverrideReason ? `: ${fx.fxOverrideReason}` : ''}`

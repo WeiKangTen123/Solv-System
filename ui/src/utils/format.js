@@ -27,3 +27,14 @@ export function fmtCell(n) {
   const abs = Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return v < 0 ? `(${abs})` : abs;
 }
+
+// An exchange rate printed to six significant figures. The stored rate keeps
+// every digit the provider gave — one rupiah is 0.0000717308657915501 Singapore
+// dollars, and the conversion needs all of it — but showing that implies a
+// precision nobody has, and it will not fit in a table cell either.
+export function fmtRate(r) {
+  const n = Number(r);
+  if (!Number.isFinite(n) || n === 0) return String(r ?? '');
+  const fixed = n.toPrecision(6);
+  return fixed.includes('e') ? String(n) : fixed.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+}

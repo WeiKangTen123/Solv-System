@@ -13,7 +13,11 @@
 // A Document is what an extractor returns. It is not yet a row: it carries no
 // id, status, or source, and no user. record.js turns it into one.
 
-const CURRENCY_CODES = ['USD', 'SGD', 'AUD', 'GBP', 'EUR', 'MYR', 'NZD', 'CAD', 'JPY', 'CNY', 'HKD', 'INR'];
+// The codes detectCurrency() will recognise printed on a document, from the one
+// list in currencies.js. The AI reader is not held to them — whatever
+// three-letter code it reads is accepted, and the rate providers cover about
+// 160 currencies — but a text document has to be matched against something.
+const { CURRENCY_CODES } = require('./currencies');
 
 // ── Numbers ─────────────────────────────────────────────────────────────────
 
@@ -108,13 +112,23 @@ function detectCurrency(text) {
   const nearAmount = text.match(new RegExp(`\\b(${CURRENCY_CODES.join('|')})\\b\\s*\\$?\\s*[\\d,]+\\.?\\d*`));
   if (nearAmount) return nearAmount[1].toUpperCase();
   // Symbols that name a currency. A bare "$" does not — it is used by USD, SGD,
-  // AUD, CAD, HKD and NZD — so it is deliberately not handled.
-  if (/S\$/.test(text))     return 'SGD';
-  if (/A\$/.test(text))     return 'AUD';
-  if (/£/.test(text))       return 'GBP';
-  if (/€/.test(text))       return 'EUR';
-  if (/¥/.test(text))       return 'JPY';
-  if (/RM\s?\d/.test(text)) return 'MYR';
+  // AUD, CAD, HKD and NZD — so it is deliberately not handled. Nor is a bare
+  // "¥", which China and Japan both print.
+  if (/S\$/.test(text))        return 'SGD';
+  if (/A\$/.test(text))        return 'AUD';
+  if (/NT\$/.test(text))       return 'TWD';
+  if (/HK\$/.test(text))       return 'HKD';
+  if (/£/.test(text))          return 'GBP';
+  if (/€/.test(text))          return 'EUR';
+  if (/₹/.test(text))          return 'INR';
+  if (/₫|VND\b/.test(text))    return 'VND';
+  if (/฿/.test(text))          return 'THB';
+  if (/₱/.test(text))          return 'PHP';
+  if (/₩/.test(text))          return 'KRW';
+  if (/د\.إ/.test(text))       return 'AED';
+  if (/\bRp\s?[\d.]/.test(text)) return 'IDR';
+  if (/RM\s?\d/.test(text))    return 'MYR';
+  if (/¥/.test(text))          return 'JPY';
   return null;
 }
 
