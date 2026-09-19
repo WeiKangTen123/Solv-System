@@ -122,6 +122,12 @@ body {
   flex-direction: column;
   overflow: hidden;
   margin-left: var(--sidebar-width);
+  /* A flex item defaults to min-width: auto, which means it refuses to be
+     narrower than its widest child. One grid asking for three 180px columns
+     was therefore enough to hold the whole app open at 568px inside a 420px
+     phone: the tiles ran off the screen, the bottom nav lost its last tab, and
+     the page scrolled sideways. Nothing below this line may widen the app. */
+  min-width: 0;
 }
 
 .page-body {
@@ -129,6 +135,7 @@ body {
   overflow-y: auto;
   padding: 28px 32px;
   animation: fadeUp 0.3s var(--transition-slow);
+  min-width: 0;
 }
 
 /* ── Cards ───────────────────────────────────────── */
