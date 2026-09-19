@@ -55,22 +55,27 @@ export default function Home() {
         <ReceiptUpload onUploaded={load} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 24 }}>
+      {/* The classes, not an inline grid: .mobile-mode collapses these to one
+          column, and a style attribute is out of that rule's reach. */}
+      <div className="grid-3" style={{ marginBottom: 24 }}>
         <div className="stat-card"><div className="stat-label">Needs review</div><div className="stat-value">{needing.length}</div><div className="stat-sub">read by AI, waiting for you</div></div>
         <div className="stat-card"><div className="stat-label">Reviewed</div><div className="stat-value">{reviewed.length}</div><div className="stat-sub">ready for a report</div></div>
         <div className="stat-card"><div className="stat-label">All expenses</div><div className="stat-value">{expenses.length}</div><div className="stat-sub">{user?.baseCurrency || 'SGD'} base currency</div></div>
       </div>
 
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16, marginBottom: 20 }}>
+      <div className="grid-2" style={{ marginBottom: 20 }}>
         <div className="card">
           <div className="card-title">Reviewed, not yet in a report ({unfiled.length})</div>
           <div className="card-subtitle">Pick a report to file each one into, or <Link to="/reports">create a report</Link>.</div>
+          {/* The row wraps rather than clips: the fixed-width select and the
+              merchant name together need more than a phone has, and the select
+              was the half that fell off the edge. */}
           {!unfiled.length ? <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Nothing waiting to be filed.</div> : unfiled.map(e => (
-            <div key={e.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 0', borderTop: '1px solid var(--border)', fontSize: 13 }}>
-              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.receiptDate || '—'} · {e.merchant || 'Untitled'}</span>
+            <div key={e.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 0', borderTop: '1px solid var(--border)', fontSize: 13, flexWrap: 'wrap' }}>
+              <span style={{ flex: '1 1 140px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.receiptDate || '—'} · {e.merchant || 'Untitled'}</span>
               <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{e.baseTotal != null ? fmtMoney(e.baseTotal, base) : fmtMoney(e.total, e.currency)}</span>
-              <select className="form-input" style={{ width: 170, padding: '4px 8px', fontSize: 12 }} defaultValue="" onChange={ev => fileInto(e.id, ev.target.value)} aria-label="File into report">
+              <select className="form-input" style={{ flex: '1 1 150px', maxWidth: 200, padding: '4px 8px', fontSize: 12 }} defaultValue="" onChange={ev => fileInto(e.id, ev.target.value)} aria-label="File into report">
                 <option value="">File into…</option>
                 {drafts.map(r => <option key={r.id} value={r.id}>{r.number} {r.title || ''}</option>)}
               </select>

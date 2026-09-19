@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useViewMode } from '../context/ViewModeContext';
 import StatusBadge from '../components/StatusBadge';
 import ConfirmDialog from '../components/ConfirmDialog';
-import { fmtMoney } from '../utils/format';
+import { fmtMoney, fmtRate } from '../utils/format';
 import { formatDateTime } from '../utils/formatDate';
 
 // The cover, the expenses under it, the totals, and the one action the
@@ -16,6 +17,7 @@ export default function ReportDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { isMobile } = useViewMode();
   const base = user?.baseCurrency || 'SGD';
   const [view, setView] = useState(null);
   const [cover, setCover] = useState({});
@@ -85,7 +87,7 @@ export default function ReportDetail() {
       {r.xeroError && <div className="alert alert-warning"><span className="alert-icon">!</span><span>Xero: {r.xeroError}</span></div>}
       {r.status === 'submitted' && isOwner && <div className="alert alert-info">Submitted {formatDateTime(r.submittedAt, user?.timezone)}. Waiting for approval; nothing can be changed until it is decided.</div>}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 18, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 320px', gap: 18, alignItems: 'start' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
           <div className="card">
             <div className="card-title">Cover</div>
@@ -197,7 +199,7 @@ export default function ReportDetail() {
           {rates.length > 0 && (
             <div className="card">
               <div className="card-title">Rates used</div>
-              {rates.map(l => <div key={`${l.currency}${l.fxRate}${l.fxRateDate}`} style={{ fontSize: 12, padding: '3px 0' }}>{l.currency} → {base} <strong>{l.fxRate}</strong> <span style={{ color: 'var(--text-muted)' }}>· {SOURCE[l.fxSource] || l.fxSource} {l.fxRateDate}{l.fxOverrideBy ? ` by ${l.fxOverrideBy}` : ''}</span></div>)}
+              {rates.map(l => <div key={`${l.currency}${l.fxRate}${l.fxRateDate}`} style={{ fontSize: 12, padding: '3px 0' }}>{l.currency} → {base} <strong>{fmtRate(l.fxRate)}</strong> <span style={{ color: 'var(--text-muted)' }}>· {SOURCE[l.fxSource] || l.fxSource} {l.fxRateDate}{l.fxOverrideBy ? ` by ${l.fxOverrideBy}` : ''}</span></div>)}
             </div>
           )}
 
