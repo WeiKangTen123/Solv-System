@@ -51,6 +51,11 @@ function _line(row) {
     amount: toDollars(row.amount_cents), currency: row.currency,
     fxRate: row.fx_rate, fxRateDate: row.fx_rate_date, fxSource: row.fx_source, fxFetchedAt: row.fx_fetched_at, fxPolicy: row.fx_policy,
     fxOverrideBy: row.fx_override_by, fxOverrideReason: row.fx_override_reason, baseAmount: toDollars(row.base_cents),
+    fxAskedDate: row.fx_asked_date, fxCheck: row.fx_check,
+    // A rate priced after the receipt is not the receipt's rate. It happens for
+    // the ~130 currencies the ECB does not publish, where the only provider
+    // left knows today and nothing else.
+    fxNotOnTheDay: !!(row.fx_rate_date && row.fx_asked_date && row.fx_rate_date > row.fx_asked_date),
     onBehalfOf: row.on_behalf_of, accountCode: row.account_code,
   };
 }
@@ -86,7 +91,8 @@ function replaceLines(expenseId, lines, { force = false } = {}) {
 }
 const LINE_COLS = { category: 'category', description: 'description', onBehalfOf: 'on_behalf_of', accountCode: 'account_code',
   fxRate: 'fx_rate', fxRateDate: 'fx_rate_date', fxSource: 'fx_source', fxFetchedAt: 'fx_fetched_at', fxPolicy: 'fx_policy',
-  fxOverrideBy: 'fx_override_by', fxOverrideReason: 'fx_override_reason' };
+  fxOverrideBy: 'fx_override_by', fxOverrideReason: 'fx_override_reason',
+  fxAskedDate: 'fx_asked_date', fxCheck: 'fx_check' };
 function updateLine(lineId, patch) {
   const sets = [], args = [];
   for (const [k, col] of Object.entries(LINE_COLS)) { if (patch[k] === undefined) continue; sets.push(`${col} = ?`); args.push(patch[k]); }

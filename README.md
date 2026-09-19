@@ -94,6 +94,8 @@ Thirty-two currencies are offered by name in the claim screen and the rates page
 
 Below a rate of 0.1 the provider is asked the other way round and the answer inverted. Both providers round to decimal places rather than significant figures, so one Indonesian rupiah comes back as 0.000072 Singapore dollars, which is two figures and puts a ten-million-rupiah hotel bill SGD 2.69 out. Asked as "how many rupiah to the dollar" the same provider gives 13,941.2, and inverting that keeps the precision. Rates are printed to six significant figures and stored with every digit.
 
+Four checks stand between a provider's number and a figure somebody is paid. The two providers are fetched together when both can answer for the day, and a disagreement over 1% is recorded on the rate and shown. A rate more than 10% from the last one known for that pair is refused rather than frozen onto a line: the line says why and finance settles it by entering the rate, which is never blocked. A rate priced after the receipt date, which happens for the currencies with no published history, marks the expense and the report footnote rather than passing quietly. And a sweeper re-prices every quarter of an hour anything left without a rate because a provider was unreachable, skipping locked expenses and anything somebody typed a rate onto.
+
 The rate, its date, its source and the moment it was fetched are stored on every line and printed on the report. Each line is converted and rounded to the cent; the report total is the sum of the lines. A rate finance or the claimant types in is kept with the person and the reason until someone asks for a refresh.
 
 ## Not yet

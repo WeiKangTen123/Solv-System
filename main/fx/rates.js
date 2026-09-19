@@ -12,9 +12,49 @@ const PRIORITY = { manual: 0, frankfurter: 1, 'open.er-api': 2 };
 const TODAY_TTL_MS = 60 * 60 * 1000;
 const today = () => new Date().toISOString().slice(0, 10);
 
+// Two checks on every rate the providers hand over, because nothing else looks
+// at them and a wrong rate is frozen onto a line and paid.
+//
+//   divergence  the two providers priced the same day differently. They
+//               normally sit within a few tenths of a percent of each other, so
+//               a whole percent means one of them is wrong or stale. Noted on
+//               the rate and shown, but not blocking: we take the ECB's.
+//   moved       this rate is a long way from the last one we knew for the pair.
+//               A currency can genuinely move, but not usually by a tenth in a
+//               day, so this one does block: the line is left without a rate
+//               and says why, and finance types the rate in to settle it.
+const DIVERGENCE_FLAG = 0.01;
+const MAX_MOVE = 0.10;
+const MOVE_WINDOW_DAYS = 45;
+
 function _row(r) {
   if (!r) return null;
-  return { from: r.base, to: r.quote, rateDate: r.rate_date, rate: r.rate, source: r.source, fetchedAt: r.fetched_at, providerDate: r.provider_date || r.rate_date, enteredBy: r.entered_by || null };
+  const row = { from: r.base, to: r.quote, rateDate: r.rate_date, rate: r.rate, source: r.source, fetchedAt: r.fetched_at,
+    providerDate: r.provider_date || r.rate_date, enteredBy: r.entered_by || null,
+    divergence: r.divergence ?? null, moved: r.moved ?? null };
+  row.notes = [];
+  if (row.source !== 'manual') {
+    if (row.divergence !== null && Math.abs(row.divergence) > DIVERGENCE_FLAG) {
+      row.notes.push(`the two rate providers disagree by ${(Math.abs(row.divergence) * 100).toFixed(2)}% on this day`);
+    }
+    if (row.moved !== null && Math.abs(row.moved) > MAX_MOVE) {
+      row.blocked = `${row.from} moved ${(row.moved * 100).toFixed(1)}% against ${row.to} since the last rate we had. Check it, then enter the rate to use.`;
+      row.notes.push(row.blocked);
+    }
+  }
+  return row;
+}
+
+// How far this rate is from the last one known for the pair. Null when there is
+// nothing recent to compare against, which is the normal case for a currency
+// seen for the first time.
+function _movement(from, to, date, rate) {
+  const prev = db.prepare(`SELECT rate, rate_date FROM fx_rates WHERE base = ? AND quote = ? AND rate_date < ? AND rate > 0
+                           ORDER BY rate_date DESC LIMIT 1`).get(from, to, date);
+  if (!prev) return null;
+  const days = (Date.parse(date) - Date.parse(prev.rate_date)) / 86400000;
+  if (!(days >= 0) || days > MOVE_WINDOW_DAYS) return null;
+  return (rate - prev.rate) / prev.rate;
 }
 
 function _cached(from, to, date) {
@@ -23,21 +63,37 @@ function _cached(from, to, date) {
   return rows[0] || null;
 }
 
-function _save({ from, to, date, rate, source, providerDate, by = null }) {
-  db.prepare(`INSERT INTO fx_rates (base, quote, rate_date, rate, source, fetched_at, provider_date, entered_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-              ON CONFLICT(base, quote, rate_date, source) DO UPDATE SET rate = excluded.rate, fetched_at = excluded.fetched_at, provider_date = excluded.provider_date, entered_by = excluded.entered_by`)
-    .run(from, to, date, rate, source, new Date().toISOString(), providerDate || date, by);
+function _save({ from, to, date, rate, source, providerDate, by = null, divergence = null, moved = null }) {
+  db.prepare(`INSERT INTO fx_rates (base, quote, rate_date, rate, source, fetched_at, provider_date, entered_by, divergence, moved)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(base, quote, rate_date, source) DO UPDATE SET rate = excluded.rate, fetched_at = excluded.fetched_at,
+                provider_date = excluded.provider_date, entered_by = excluded.entered_by, divergence = excluded.divergence, moved = excluded.moved`)
+    .run(from, to, date, rate, source, new Date().toISOString(), providerDate || date, by, divergence, moved);
   return _cached(from, to, date);
 }
 
 async function _fetch(from, to, date) {
   const historical = date < today() ? date : null;      // today or later: latest
   const f = await providers.frankfurter(from, to, historical);
-  if (f) return _save({ from, to, date, rate: f.rate, source: f.source, providerDate: f.providerDate });
-  const e = await providers.erapi(from, to);
-  if (e) return _save({ from, to, date, rate: e.rate, source: e.source, providerDate: e.providerDate });
-  logger.warn('No exchange rate from any provider', { from, to, date });
-  return null;
+  // The second provider is asked as a check when it can answer for the same
+  // day, and as the fallback when the first cannot answer at all. It only ever
+  // knows today, so comparing it against a historical rate would be comparing
+  // two different days.
+  const alt = (!f || !historical) ? await providers.erapi(from, to) : null;
+  const chosen = f || alt;
+  if (!chosen) {
+    logger.warn('No exchange rate from any provider', { from, to, date });
+    return null;
+  }
+  const divergence = f && alt ? (f.rate - alt.rate) / alt.rate : null;
+  const moved = _movement(from, to, date, chosen.rate);
+  if (divergence !== null && Math.abs(divergence) > DIVERGENCE_FLAG) {
+    logger.warn('Rate providers disagree', { from, to, date, frankfurter: f.rate, erapi: alt.rate, divergence });
+  }
+  if (moved !== null && Math.abs(moved) > MAX_MOVE) {
+    logger.warn('Rate moved further than expected', { from, to, date, rate: chosen.rate, moved });
+  }
+  return _save({ from, to, date, rate: chosen.rate, source: chosen.source, providerDate: chosen.providerDate, divergence, moved });
 }
 
 async function getRate({ from, to, date }) {
@@ -72,4 +128,4 @@ function listRates({ to, from, since } = {}) {
   return db.prepare(`SELECT * FROM fx_rates ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY rate_date DESC, base, source LIMIT 500`).all(...args).map(_row);
 }
 
-module.exports = { getRate, setManualRate, deleteManualRate, listRates, TODAY_TTL_MS, PRIORITY };
+module.exports = { getRate, setManualRate, deleteManualRate, listRates, TODAY_TTL_MS, PRIORITY, DIVERGENCE_FLAG, MAX_MOVE, MOVE_WINDOW_DAYS };

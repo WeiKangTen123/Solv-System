@@ -47,7 +47,12 @@ const step = (n, msg) => console.log(`${String(n).padStart(2)}. ${msg}`);
   for (let i = 0; i < 40; i++) { exp = (await call('GET', `/api/expenses/${up.expense.id}`, { token: E })).expense; if (exp.status !== 'reading') break; await sleep(3000); }
   if (exp.status === 'reading') throw new Error('the read did not finish in two minutes');
   step(5, `read: ${exp.merchant} · ${exp.currency} ${exp.total} · tax ${exp.tax} · ${exp.lines.length} lines · base ${exp.baseTotal} SGD (${exp.lines[0] && exp.lines[0].fxSource} ${exp.lines[0] && exp.lines[0].fxRate})`);
-  if (exp.merchant !== 'JW Marriott Mumbai Sahar' || exp.total !== 44309) throw new Error('unexpected read result');
+  // The figures have to be exact; the merchant's wording is the model's, and it
+  // has said both "JW Marriott Mumbai Sahar" and "JW Marriott Hotel Mumbai
+  // Sahar" for the same folio. Pinning the whole string failed a good run.
+  if (!/JW Marriott.*Mumbai/i.test(exp.merchant || '')) throw new Error(`unexpected merchant: ${exp.merchant}`);
+  if (exp.total !== 44309 || exp.currency !== 'INR') throw new Error(`unexpected read: ${exp.currency} ${exp.total}`);
+  if (!(exp.baseTotal > 0)) throw new Error('the expense was not priced');
 
   await call('PATCH', `/api/expenses/${exp.id}`, { token: E, body: { purpose: 'Client meetings, Mumbai office' } });
   const reviewed = await call('PATCH', `/api/expenses/${exp.id}/status`, { token: E, body: { status: 'reviewed' } });

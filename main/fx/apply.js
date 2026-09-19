@@ -32,7 +32,7 @@ async function applyFx(expenseId, { force = false } = {}) {
   if (!e.currency || e.currency === base) {
     for (const l of e.lines) {
       if (keepOverride(l)) continue;
-      store.updateLine(l.id, { fxRate: 1, fxRateDate: e.receiptDate || today(), fxSource: 'base', fxFetchedAt: new Date().toISOString(), fxPolicy: company.fxPolicy, fxOverrideBy: null, fxOverrideReason: null, baseAmount: l.amount });
+      store.updateLine(l.id, { fxRate: 1, fxRateDate: e.receiptDate || today(), fxSource: 'base', fxFetchedAt: new Date().toISOString(), fxPolicy: company.fxPolicy, fxOverrideBy: null, fxOverrideReason: null, baseAmount: l.amount, fxAskedDate: e.receiptDate || today(), fxCheck: null });
       applied++;
     }
     return { pending, applied };
@@ -42,18 +42,29 @@ async function applyFx(expenseId, { force = false } = {}) {
   let r = await rates.getRate({ from: e.currency, to: base, date });
   // A fixed monthly table is a promise finance made; a provider's number is not it.
   if (r && company.fxPolicy === 'monthly_fixed' && r.source !== 'manual') r = null;
+  // A rate that moved further than a currency moves is not put on a line: the
+  // line stays without one and says why, so nobody is paid a figure that came
+  // from a provider having a bad morning. Finance settles it by entering the
+  // rate, which is never blocked.
+  const blocked = r && r.blocked ? r.blocked : null;
+  const note = r && r.notes && r.notes.length ? r.notes.join('; ') : null;
 
   for (const l of e.lines) {
     if (keepOverride(l)) continue;
-    if (!r) { store.updateLine(l.id, { fxRate: null, fxRateDate: date, fxSource: null, fxFetchedAt: null, fxPolicy: company.fxPolicy, fxOverrideBy: null, fxOverrideReason: null, baseAmount: null }); pending++; continue; }
+    if (!r || blocked) {
+      store.updateLine(l.id, { fxRate: null, fxRateDate: date, fxSource: null, fxFetchedAt: null, fxPolicy: company.fxPolicy,
+        fxOverrideBy: null, fxOverrideReason: null, baseAmount: null, fxAskedDate: date, fxCheck: blocked });
+      pending++; continue;
+    }
     store.updateLine(l.id, {
       fxRate: r.rate, fxRateDate: r.providerDate || r.rateDate, fxSource: r.source, fxFetchedAt: r.fetchedAt, fxPolicy: company.fxPolicy,
       fxOverrideBy: null, fxOverrideReason: null, baseAmount: toBase(l.amount, r.rate),
+      fxAskedDate: date, fxCheck: note,
     });
     applied++;
   }
-  if (pending) logger.info('Exchange rate pending', { expenseId, currency: e.currency, date });
-  return { pending, applied };
+  if (pending) logger.info('Exchange rate pending', { expenseId, currency: e.currency, date, blocked: blocked || undefined });
+  return { pending, applied, blocked, note };
 }
 
 // The claimant or finance types a rate. It is written to every line with the
@@ -68,6 +79,7 @@ async function overrideFx(expenseId, { rate, reason, actor }) {
     store.updateLine(l.id, {
       fxRate: n, fxRateDate: e.receiptDate || today(), fxSource: 'manual', fxFetchedAt: new Date().toISOString(),
       fxOverrideBy: (actor && (actor.email || actor.id)) || 'unknown', fxOverrideReason: String(reason).trim().slice(0, 200), baseAmount: toBase(l.amount, n),
+      fxCheck: null,
     });
   }
   logger.info('Exchange rate overridden', { expenseId, rate: n, by: actor && actor.email, reason });

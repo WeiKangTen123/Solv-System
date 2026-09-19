@@ -64,6 +64,7 @@ async function reportPayload(reportId, { withReceipts = true } = {}) {
       const rate = Number(l.fxRate) > 0 ? Number(l.fxRate) : null;
       lines.push({ ref, date: e.receiptDate, merchant: e.merchant, purpose: e.purpose, description: l.description, category: l.category, currency: l.currency || e.currency, amount: l.amount,
         fxRate: l.fxRate, fxRateDate: l.fxRateDate, fxSource: l.fxSource, fxFetchedAt: l.fxFetchedAt, fxOverrideBy: l.fxOverrideBy, fxOverrideReason: l.fxOverrideReason,
+        fxAskedDate: l.fxAskedDate, fxNotOnTheDay: l.fxNotOnTheDay,
         baseAmount: l.baseAmount, onBehalfOf: l.onBehalfOf,
         tax: Math.round(share) / 100,
         baseTax: rate ? Math.round(share * rate) / 100 : Math.round(share) / 100 });
