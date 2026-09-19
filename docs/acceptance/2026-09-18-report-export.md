@@ -2,6 +2,9 @@
 
 **Date:** 18 Sep 2026 · **Script:** `node main/scripts/demo-report.js` (throwaway data directory; expenses from the saved reader output; live ECB rates; real receipt files appended).
 
+> **Figures updated, 19 Sep 2026.** The exports in `exports/` were rebuilt with corrected exchange rates: the total is now SGD 1,776.61 rather than 1,776.78. Everything else about the run stands. See [2026-09-19-currencies.md](2026-09-19-currencies.md).
+
+
 **Journey exercised:** Elaine (employee, Sales, S0042, reports to Henry) has both folios as reviewed expenses → files them into report **EXP-2026-0001 "India trip, Sep 2026"** (31 Aug – 4 Sep 2026, Mumbai and Pune, 4 nights) → submits → Henry (manager) approves → the report is exported.
 
 | Output | Result |

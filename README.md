@@ -88,7 +88,13 @@ Inter Tight carries the interface and IBM Plex Mono every figure, so amounts lin
 
 ## Exchange rates, stated
 
-A rate is SGD per one unit of the foreign currency, fetched for the receipt date (company policy; submission-date and monthly-fixed are the alternatives) from the European Central Bank reference rates via Frankfurter, then open.er-api for currencies the ECB does not publish, then whatever finance types in. The rate, its date, its source and the moment it was fetched are stored on every line and printed on the report. Each line is converted and rounded to the cent; the report total is the sum of the lines. A rate finance or the claimant types in is kept with the person and the reason until someone asks for a refresh.
+A rate is how much of the base currency one unit of the foreign currency is worth, fetched for the receipt date (company policy; submission-date and monthly-fixed are the alternatives). The European Central Bank's reference rates come first, through Frankfurter, which publishes about thirty currencies with history by date. ExchangeRate-API covers the rest, around 160 in total, but only for today, so a currency the ECB does not publish is priced at the day's rate and the report says so. After both, whatever finance types in.
+
+Thirty-two currencies are offered by name in the claim screen and the rates page, from [main/intake/currencies.js](main/intake/currencies.js). That is a convenience, not a limit: any three-letter code can be typed, and the reader accepts whatever it reads off the receipt.
+
+Below a rate of 0.1 the provider is asked the other way round and the answer inverted. Both providers round to decimal places rather than significant figures, so one Indonesian rupiah comes back as 0.000072 Singapore dollars, which is two figures and puts a ten-million-rupiah hotel bill SGD 2.69 out. Asked as "how many rupiah to the dollar" the same provider gives 13,941.2, and inverting that keeps the precision. Rates are printed to six significant figures and stored with every digit.
+
+The rate, its date, its source and the moment it was fetched are stored on every line and printed on the report. Each line is converted and rounded to the cent; the report total is the sum of the lines. A rate finance or the claimant types in is kept with the person and the reason until someone asks for a refresh.
 
 ## Not yet
 

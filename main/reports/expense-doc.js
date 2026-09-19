@@ -8,6 +8,17 @@ const VIA = { frankfurter: 'Frankfurter', 'open.er-api': 'open.er-api.com' };
 const POLICY_LABEL = { receipt_date: 'rate on the receipt date', submission_date: 'rate on the submission date', monthly_fixed: 'monthly fixed rate table' };
 
 const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// A rate printed to six significant figures. The stored number keeps every
+// digit the provider gave — a rupiah rate is 0.0000717308657915501, and the
+// conversion needs all of it — but printing that on a report implies a
+// precision nobody has. Six is what the provider actually knows.
+function fmtRate(r) {
+  const n = Number(r);
+  if (!Number.isFinite(n) || n === 0) return String(r ?? '');
+  const fixed = n.toPrecision(6);
+  return fixed.includes('e') ? String(n) : fixed.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+}
 const cents = n => Math.round(Number(n || 0) * 100);
 // Month names by hand: ICU writes "Sept" for en-GB, and a report should not
 // change its spelling with the Node version it was printed on.
@@ -50,7 +61,7 @@ function buildModel(payload) {
     let desc = parts.filter(Boolean).join(' · ');
     if (l.purpose) desc += ` — ${l.purpose}`;
     if (l.onBehalfOf) desc += ' ‡';
-    return { n: i + 1, ref: l.ref, date: l.date, description: desc, currency: l.currency, amount: l.amount, rate: l.fxRate, base: l.baseAmount, column: col, cells: { [col]: l.baseAmount }, onBehalfOf: l.onBehalfOf || null, foreign: l.currency !== base };
+    return { n: i + 1, ref: l.ref, date: l.date, description: desc, currency: l.currency, amount: l.amount, rate: fmtRate(l.fxRate), base: l.baseAmount, column: col, cells: { [col]: l.baseAmount }, onBehalfOf: l.onBehalfOf || null, foreign: l.currency !== base };
   });
   const categoryCents = {};
   for (const r of rows) categoryCents[r.column] = (categoryCents[r.column] || 0) + cents(r.base);
@@ -65,8 +76,8 @@ function buildModel(payload) {
     const key = `${l.currency}|${l.fxRate}|${l.fxRateDate}|${l.fxSource}|${l.fxOverrideBy || ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    if (l.fxSource === 'manual') rateNotes.push(`${l.currency}→${base} ${l.fxRate} entered by ${l.fxOverrideBy || 'finance'} on ${fmtDate(l.fxRateDate)}${l.fxOverrideReason ? `: ${l.fxOverrideReason}` : ''}.`);
-    else rateNotes.push(`${l.currency}→${base} ${l.fxRate}, ${SOURCE_LABEL[l.fxSource] || l.fxSource} for ${fmtDate(l.fxRateDate)}, via ${VIA[l.fxSource] || l.fxSource}, fetched ${fmtStamp(l.fxFetchedAt, company.timezone)}.`);
+    if (l.fxSource === 'manual') rateNotes.push(`${l.currency}→${base} ${fmtRate(l.fxRate)} entered by ${l.fxOverrideBy || 'finance'} on ${fmtDate(l.fxRateDate)}${l.fxOverrideReason ? `: ${l.fxOverrideReason}` : ''}.`);
+    else rateNotes.push(`${l.currency}→${base} ${fmtRate(l.fxRate)}, ${SOURCE_LABEL[l.fxSource] || l.fxSource} for ${fmtDate(l.fxRateDate)}, via ${VIA[l.fxSource] || l.fxSource}, fetched ${fmtStamp(l.fxFetchedAt, company.timezone)}.`);
   }
   const notes = [];
   if (rateNotes.length) notes.push(`Policy: ${POLICY_LABEL[company.fxPolicy] || POLICY_LABEL.receipt_date}. Each line is converted and rounded to the cent; the total is the sum of the lines.`);
@@ -162,7 +173,7 @@ function expenseReportCsv(payload) {
   const out = [['Report', 'Line', 'Date', 'Merchant', 'Description', 'Purpose', 'On behalf of', 'Category', 'Currency', 'Amount', 'Rate', 'Rate date', 'Rate source', m.base, 'Receipt'].join(',')];
   lines.forEach((l, i) => out.push([
     report.number, i + 1, l.date, l.merchant, l.description, l.purpose, l.onBehalfOf, l.category, l.currency, Number(l.amount).toFixed(2),
-    l.fxRate ?? '', l.fxRateDate ?? '', l.fxSource ?? '', l.baseAmount === null || l.baseAmount === undefined ? '' : Number(l.baseAmount).toFixed(2), l.ref,
+    l.fxRate === null || l.fxRate === undefined ? '' : fmtRate(l.fxRate), l.fxRateDate ?? '', l.fxSource ?? '', l.baseAmount === null || l.baseAmount === undefined ? '' : Number(l.baseAmount).toFixed(2), l.ref,
   ].map(esc).join(',')));
   return out.join('\n');
 }
@@ -187,4 +198,5 @@ function exportFilename(payload) {
   return `${payload.report.number}_${who}`;
 }
 
-module.exports = { buildModel, expenseReportDoc, expenseReportCsv, workbookModel, exportFilename, _money: money, _fmtDate: fmtDate, _latin1: latin1 };
+module.exports = {
+  fmtRate, buildModel, expenseReportDoc, expenseReportCsv, workbookModel, exportFilename, _money: money, _fmtDate: fmtDate, _latin1: latin1 };
