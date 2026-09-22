@@ -16,6 +16,16 @@ Open http://localhost:5173. The first account registered becomes the administrat
 
 Production: `npm run build:ui` then `NODE_ENV=production npm start` (serves the built UI). pm2 config in `ecosystem.config.js`; the Xero app's runbook (`docs/RUNBOOK.md` there) describes the VM, nginx, backups and deploy script, which apply unchanged.
 
+## Cases
+
+A case is a bundle of receipts that belong together: a trip, a job, a month of fuel. It is the same object as a report, so everything downstream is unchanged, and it prints as one.
+
+There are two ways to start one. Drop a zip of receipts and the import creates a case named after the file, reads every receipt in it and files them all in. Or create one by hand and add receipts to it as they happen, by dropping files on the case, by importing a zip into it, or by scanning its QR code and photographing them on a phone, in which case every photograph taken while that session is open lands in that case.
+
+Unlike the bulk filing route, a receipt uploaded into a case joins it before anyone has checked it, which is the point of working case-first. Submitting still refuses until every receipt in the case has been checked and priced.
+
+Checking happens in one table at `/reports/:id/check`: a row per receipt, the fields editable in place, the receipt beside the row you are on, and one button to check them all. Anything that cannot be checked says why.
+
 ## Roles and flow
 
 | Role | Does |
