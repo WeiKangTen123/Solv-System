@@ -576,9 +576,21 @@ function expectStatus(r, want, what) {
 
   await check('a stranger cannot open the report', async () => {
     const other = await call('POST', '/api/users', { token: S.A, body: { email: 'nosy@solv.sg', password: 'password123', name: 'Nosy' } });
-    const N = (await call('POST', '/api/auth/login', { body: { email: 'nosy@solv.sg', password: 'password123' } })).json.token;
-    expectStatus(await call('GET', `/api/reports/${S.report.id}`, { token: N }), [403, 404], 'stranger reading a report');
+    S.N = (await call('POST', '/api/auth/login', { body: { email: 'nosy@solv.sg', password: 'password123' } })).json.token;
+    expectStatus(await call('GET', `/api/reports/${S.report.id}`, { token: S.N }), [403, 404], 'stranger reading a report');
     S.nosyId = other.json.user.id;
+  });
+
+  await check('POST /api/reports/:id/review-all checks what it can and says why for the rest', async () => {
+    const r = await call('POST', `/api/reports/${S.report.id}/review-all`, { token: S.E });
+    expectStatus(r, 200, 'review-all');
+    expect(typeof r.json.reviewed === 'number', 'no count of what was checked');
+    expect(Array.isArray(r.json.skipped), 'no list of what could not be');
+    return `${r.json.reviewed} checked, ${r.json.skipped.length} skipped`;
+  });
+
+  await check('a stranger cannot bulk-check someone else\'s case', async () => {
+    expectStatus(await call('POST', `/api/reports/${S.report.id}/review-all`, { token: S.N }), [403, 404], 'stranger bulk-checking');
   });
 
   await check('POST /api/reports/:id/submit hands it over', async () => {
@@ -655,8 +667,7 @@ function expectStatus(r, want, what) {
   });
 
   await check('a stranger cannot mint an export link', async () => {
-    const N = (await call('POST', '/api/auth/login', { body: { email: 'nosy@solv.sg', password: 'password123' } })).json.token;
-    expectStatus(await call('GET', `/api/reports/${S.report.id}/export-url?format=pdf`, { token: N }), [403, 404], 'stranger export-url');
+    expectStatus(await call('GET', `/api/reports/${S.report.id}/export-url?format=pdf`, { token: S.N }), [403, 404], 'stranger export-url');
   });
 
   await check('a draft report can be deleted, a paid one cannot', async () => {

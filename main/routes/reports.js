@@ -144,6 +144,35 @@ router.post('/:id/post', requireAuth, asyncHandler(async (req, res) => {
   }
 }));
 
+// Marking a whole case checked in one call. The rule is exactly the one the
+// single-expense route applies, asked of each in turn, and anything it cannot
+// pass comes back saying why rather than failing the lot. Checking thirty
+// receipts one page at a time is the slowest part of a claim.
+router.post('/:id/review-all', requireAuth, (req, res) => {
+  const r = _load(req, res); if (!r) return;
+  if (r.userId !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Only the claimant can check their own receipts' });
+  if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} case cannot be changed` });
+
+  const store = require('../store/expenses');
+  const reviewed = [], skipped = [];
+  for (const e of r.expenses) {
+    if (e.status === 'reviewed') continue;
+    if (e.status === 'duplicate') { skipped.push({ id: e.id, merchant: e.merchant, why: 'it is a duplicate' }); continue; }
+    if (e.status === 'reading')   { skipped.push({ id: e.id, merchant: e.merchant, why: 'it is still being read' }); continue; }
+    const missing = [];
+    if (!e.merchant) missing.push('merchant');
+    if (!e.receiptDate) missing.push('date');
+    if (!e.currency) missing.push('currency');
+    if (!(e.total > 0)) missing.push('total');
+    if (missing.length) { skipped.push({ id: e.id, merchant: e.merchant, why: `no ${missing.join(', ')}` }); continue; }
+    if (!store.linesReconcile(e.lines, store.toCents(e.total))) { skipped.push({ id: e.id, merchant: e.merchant, why: 'the lines do not add up to the total' }); continue; }
+    store.updateExpense(e.id, { status: 'reviewed' });
+    reviewed.push(e.id);
+  }
+  logger.info('Case checked in bulk', { id: r.id, number: r.number, reviewed: reviewed.length, skipped: skipped.length, by: req.user.email });
+  res.json({ ..._view(reports.getReport(r.id), req), reviewed: reviewed.length, skipped });
+});
+
 router.get('/:id/events', requireAuth, (req, res) => { const r = _load(req, res); if (r) res.json({ events: r.events }); });
 
 // ── Exports ─────────────────────────────────────────────────────────────────

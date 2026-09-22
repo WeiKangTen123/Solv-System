@@ -78,7 +78,12 @@ export default function ReportDetail() {
       <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><Link to="/reports" style={{ color: 'inherit' }}>← Reports</Link></div>
-          <h1 style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>{r.number} · {r.title || 'Untitled'} <StatusBadge status={r.status} /></h1>
+          <h1 style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)',
+                           border: '1px solid var(--border)', borderRadius: 100, padding: '2px 9px' }}>
+              {r.kind === 'case' ? 'Case' : r.kind === 'period' ? 'Period' : 'Trip'}
+            </span>
+            {r.number} · {r.title || 'Untitled'} <StatusBadge status={r.status} /></h1>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn-outline btn-sm" onClick={() => exportAs('pdf')}>Export PDF</button>
@@ -103,6 +108,22 @@ export default function ReportDetail() {
               <div className="card-title">Add receipts to this case</div>
               <div className="card-subtitle">Drop the photos in, or scan the code and shoot them on your phone. Each one is read for you.</div>
               <ReceiptUpload reportId={id} onUploaded={load} />
+            </div>
+          )}
+
+          {r.expenses.length > 0 && (
+            <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>
+                  {r.totals.unreviewed
+                    ? `${r.totals.unreviewed} of ${r.expenses.length} receipts still need checking`
+                    : `All ${r.expenses.length} receipts checked`}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Check them in one table instead of one page each.</div>
+              </div>
+              <Link className={`btn btn-sm ${r.totals.unreviewed ? 'btn-primary' : 'btn-outline'}`} to={`/reports/${id}/check`}>
+                {r.totals.unreviewed ? `Check ${r.totals.unreviewed}` : 'Open the table'}
+              </Link>
             </div>
           )}
 
