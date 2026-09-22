@@ -12,7 +12,10 @@ import ClaimImport from './ClaimImport';
 //
 // Nothing here talks to Xero. An uploaded receipt becomes a local record for the
 // user to review.
-export default function ReceiptUpload({ onUploaded }) {
+// `reportId` points every upload at one case, which is what makes the case
+// screen work: the receipts go in where you are standing, instead of into the
+// loose pile to be filed again later.
+export default function ReceiptUpload({ onUploaded, reportId = null }) {
   // An import survives closing the panel, and GET /claims/active is how you
   // find it again: without this the progress view, the reconciliation summary
   // and the Undo button were gone for good the moment the dialog was closed.
@@ -45,7 +48,7 @@ export default function ReceiptUpload({ onUploaded }) {
       try {
         const { blob, mime, originalBytes, bytes } = await prepareReceipt(file);
         const data = await blobToBase64(blob);
-        await api.post('/receipts', { mime, data, filename: file.name, source: 'upload' });
+        await api.post('/receipts', { mime, data, filename: file.name, source: 'upload', ...(reportId ? { reportId } : {}) });
         ok++;
         // Worth saying out loud: a 9MB photo becoming 700KB is the difference
         // between Xero accepting the attachment and rejecting it.
@@ -126,7 +129,7 @@ export default function ReceiptUpload({ onUploaded }) {
       )}
 
       {pairing && (
-        <PhonePairingModal onClose={() => setPairing(false)} onArrived={onUploaded} />
+        <PhonePairingModal onClose={() => setPairing(false)} onArrived={onUploaded} reportId={reportId} />
       )}
 
       {importing && (

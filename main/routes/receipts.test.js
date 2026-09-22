@@ -83,3 +83,99 @@ describe('routes/receipts', () => {
     await request(serverFor(app)).get(`/api/receipts/capture/${pair.body.token}`).expect(401);
   });
 });
+
+// Working case-first: the case exists, and receipts are shot straight into it
+// rather than landing in a pile to be filed later.
+describe('routes/receipts — uploading into a case', () => {
+  let app, users, store, reports, wf, routes, parser, owner, other, ownerTok, otherTok;
+  let _n = 0;
+  const jpeg = () => Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x11, ++_n]).toString('base64');
+
+  beforeEach(async () => {
+    jest.resetModules();
+    require('../db/migrate').run();
+    users = require('../store/users'); store = require('../store/expenses');
+    reports = require('../store/reports'); wf = require('../reports/workflow');
+    require('../receipts/pairing')._reset();
+    parser = require('../receipts/receipt-parser');
+    parser.parseReceiptImage.mockReset(); parser.parseReceiptImage.mockResolvedValue(null);
+    routes = require('./receipts');
+    // the first user of a company is its admin, and an admin may file into
+    // anyone's case — so the people in this test are deliberately employees
+    const boss = await users.createUser({ email: 'boss@solv.sg', password: 'password123' });
+    owner = await users.createUser({ email: 'owner@solv.sg', password: 'password123', companyId: boss.companyId });
+    other = await users.createUser({ email: 'other@solv.sg', password: 'password123', companyId: boss.companyId });
+    const secret = require('../middleware/auth-middleware').jwtSecret();
+    ownerTok = jwt.sign({ id: owner.id, email: owner.email, role: owner.role }, secret);
+    otherTok = jwt.sign({ id: other.id, email: other.email, role: other.role }, secret);
+    app = express(); app.use(express.json({ limit: '25mb' })); app.use('/api/receipts', routes);
+  });
+
+  const as = t => ({ Authorization: `Bearer ${t}` });
+  const newCase = (user = owner, extra = {}) =>
+    reports.createReport({ companyId: user.companyId, userId: user.id, kind: 'case', title: 'Chakan job', ...extra });
+
+  test('a receipt uploaded into a case is in it straight away, before anyone checks it', async () => {
+    const c = newCase();
+    const up = await request(serverFor(app)).post('/api/receipts').set(as(ownerTok))
+      .send({ mime: 'image/jpeg', data: jpeg(), reportId: c.id }).expect(201);
+    await routes._drain();
+
+    const e = store.getExpense(up.body.expense.id);
+    expect(e.reportId).toBe(c.id);
+    expect(e.status).not.toBe('reviewed');                 // in the case, not yet checked
+    const after = reports.getReport(c.id);
+    expect(after.expenses).toHaveLength(1);
+    expect(after.totals.unreviewed).toBe(1);
+  });
+
+  test('and the case still cannot be submitted until it has been checked', async () => {
+    const c = newCase();
+    await request(serverFor(app)).post('/api/receipts').set(as(ownerTok))
+      .send({ mime: 'image/jpeg', data: jpeg(), reportId: c.id }).expect(201);
+    await routes._drain();
+    expect(() => wf.submit(c.id, owner)).toThrow(/not marked reviewed/);
+  });
+
+  test('a case belonging to someone else, or already submitted, or absent, refuses the receipt', async () => {
+    const theirs = newCase(other);
+    await request(serverFor(app)).post('/api/receipts').set(as(ownerTok))
+      .send({ mime: 'image/jpeg', data: jpeg(), reportId: theirs.id }).expect(403);
+
+    const mine = newCase();
+    const e = store.createExpense({ companyId: owner.companyId, userId: owner.id, status: 'reviewed', currency: 'SGD', total: 10,
+      lines: [{ category: 'Other', amount: 10, baseAmount: 10, fxRate: 1, fxSource: 'base', fxRateDate: '2026-09-01' }] });
+    reports.addExpense(mine.id, e.id);
+    wf.submit(mine.id, owner);
+    await request(serverFor(app)).post('/api/receipts').set(as(ownerTok))
+      .send({ mime: 'image/jpeg', data: jpeg(), reportId: mine.id }).expect(409);
+
+    await request(serverFor(app)).post('/api/receipts').set(as(ownerTok))
+      .send({ mime: 'image/jpeg', data: jpeg(), reportId: 'no-such-case' }).expect(404);
+  });
+
+  test('a phone pairing opened for a case sends its photographs there', async () => {
+    const c = newCase();
+    const pair = await request(serverFor(app)).post('/api/receipts/pair').set(as(ownerTok)).send({ reportId: c.id }).expect(201);
+    const seen = await request(serverFor(app)).get(`/api/receipts/capture/${pair.body.token}`).expect(200);
+    expect(seen.body.reportId).toBe(c.id);                 // the phone knows which case it is filling
+
+    parser.parseReceiptImage.mockResolvedValue({ split: false, receipts: [{ merchant: 'Grab', total: 18.4, currency: 'SGD', category: 'Air & Transport', confidence: 'high', lineItems: [] }] });
+    await request(serverFor(app)).post(`/api/receipts/capture/${pair.body.token}`).send({ mime: 'image/jpeg', data: jpeg() }).expect(201);
+    await routes._drain();
+
+    const after = reports.getReport(c.id);
+    expect(after.expenses).toHaveLength(1);
+    expect(after.expenses[0].merchant).toBe('Grab');
+    expect(after.expenses[0].source).toBe('phone');
+  });
+
+  test('a pairing opened for nothing in particular still goes to the loose pile', async () => {
+    const pair = await request(serverFor(app)).post('/api/receipts/pair').set(as(ownerTok)).expect(201);
+    await request(serverFor(app)).post(`/api/receipts/capture/${pair.body.token}`).send({ mime: 'image/jpeg', data: jpeg() }).expect(201);
+    await routes._drain();
+    const loose = store.listExpenses({ userId: owner.id, unfiled: true });
+    expect(loose).toHaveLength(1);
+    expect(loose[0].reportId).toBeFalsy();
+  });
+});

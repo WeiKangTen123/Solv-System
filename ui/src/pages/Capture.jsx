@@ -12,6 +12,9 @@ export default function Capture() {
   const { token } = useParams();
   const fileRef = useRef(null);
   const [state, setState]   = useState('checking'); // checking | ready | expired
+  // Which case these photographs are going into, when the session was opened
+  // from one. Shown at the top so nobody shoots ten receipts into the wrong one.
+  const [openCase, setOpenCase] = useState(null);
   const [busy, setBusy]     = useState(false);
   const [sent, setSent]     = useState([]);   // { id, name, preview, vendorName, totalAmount, currency, parsed }
   const [error, setError]   = useState('');
@@ -28,6 +31,7 @@ export default function Capture() {
         if (!ok || !b.ok) { setState('expired'); setError(b.error || 'This link is no longer valid.'); return; }
         setState('ready');
         setUses(b.usesLeft);
+        setOpenCase(b.case || null);
       })
       .catch(() => { if (!cancelled) { setState('expired'); setError('Could not reach the server.'); } });
     return () => { cancelled = true; };
@@ -128,9 +132,17 @@ export default function Capture() {
 
   return (
     <div style={wrap}>
-      <h2 style={{ fontSize: 19, margin: 0 }}>Add an expense</h2>
+      <h2 style={{ fontSize: 19, margin: 0 }}>{openCase ? 'Add to this case' : 'Add an expense'}</h2>
+      {openCase && (
+        <div style={{ background: 'var(--accent-subtle)', border: '1px solid var(--border)', borderRadius: 10, padding: '8px 14px', maxWidth: 320 }}>
+          <div style={{ fontSize: 13, fontWeight: 700 }}>{openCase.title || 'Untitled case'}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{openCase.number}</div>
+        </div>
+      )}
       <p style={{ color: 'var(--text-muted)', fontSize: 13, maxWidth: 320, lineHeight: 1.6, margin: 0 }}>
-        Photograph the receipt. It appears on your computer straight away.
+        {openCase
+          ? 'Photograph each receipt. They go straight into the case and are read for you.'
+          : 'Photograph the receipt. It appears on your computer straight away.'}
       </p>
 
       <input

@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useViewMode } from '../context/ViewModeContext';
 import StatusBadge from '../components/StatusBadge';
+import ReceiptUpload from '../components/receipts/ReceiptUpload';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { fmtMoney, fmtRate } from '../utils/format';
 import { formatDateTime } from '../utils/formatDate';
@@ -11,6 +12,11 @@ import { formatDateTime } from '../utils/formatDate';
 // The cover, the expenses under it, the totals, and the one action the
 // current person can take on it right now.
 const COVER = [['title', 'Title', 'text'], ['purpose', 'Purpose', 'text'], ['periodFrom', 'From', 'date'], ['periodTo', 'To', 'date'], ['destination', 'Destination', 'text'], ['nights', 'Nights', 'number'], ['advances', 'Advances received', 'number'], ['notes', 'Notes', 'text']];
+// A case is a bundle of receipts that belong together. It has no destination
+// and nobody stayed any nights, so asking for them is noise on the form and an
+// empty row on the printed cover.
+const NOT_ON_A_CASE = new Set(['destination', 'nights']);
+const coverFor = kind => (kind === 'case' ? COVER.filter(([k]) => !NOT_ON_A_CASE.has(k)) : COVER);
 const SOURCE = { frankfurter: 'ECB reference rate', 'open.er-api': 'ExchangeRate-API', manual: 'entered', base: 'base currency' };
 
 export default function ReportDetail() {
@@ -89,10 +95,21 @@ export default function ReportDetail() {
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 320px', gap: 18, alignItems: 'start' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
+          {/* Receipts go in where you are standing. Anything added here is in
+              this case from the moment it lands, before anyone checks it, which
+              is the difference between working case-first and filing later. */}
+          {canEdit && (
+            <div className="card">
+              <div className="card-title">Add receipts to this case</div>
+              <div className="card-subtitle">Drop the photos in, or scan the code and shoot them on your phone. Each one is read for you.</div>
+              <ReceiptUpload reportId={id} onUploaded={load} />
+            </div>
+          )}
+
           <div className="card">
             <div className="card-title">Cover</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0 12px' }}>
-              {COVER.map(([k, label, type]) => (
+              {coverFor(r.kind).map(([k, label, type]) => (
                 <div className="form-group" key={k} style={{ gridColumn: k === 'title' || k === 'purpose' || k === 'notes' ? '1 / -1' : 'auto' }}>
                   <label className="form-label" htmlFor={`c-${k}`}>{label}</label>
                   <input id={`c-${k}`} className="form-input" type={type} step={type === 'number' ? '0.01' : undefined} disabled={!canEdit} value={cover[k] ?? ''} onChange={e => setCover({ ...cover, [k]: e.target.value })} />

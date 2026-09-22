@@ -28,12 +28,15 @@ function _sweepExpired() {
   }
 }
 
-function create(userId) {
+// `reportId` points the session at one case: everything photographed while it
+// is open lands there instead of in the loose pile. Open the case, scan once,
+// and every receipt at the airport is in the right place before you land.
+function create(userId, { reportId = null } = {}) {
   _sweepExpired();
   // 32 bytes: this is a bearer credential, not a nonce, so it is sized to resist
   // guessing rather than just collision.
   const token = crypto.randomBytes(32).toString('base64url');
-  _pairings.set(token, { userId: String(userId), expiresAt: Date.now() + TTL_MS, uses: 0, lastUploadAt: null, receiptIds: [] });
+  _pairings.set(token, { userId: String(userId), reportId: reportId || null, expiresAt: Date.now() + TTL_MS, uses: 0, lastUploadAt: null, receiptIds: [] });
   return token;
 }
 
@@ -48,6 +51,7 @@ function verify(token) {
   if (entry.expiresAt <= Date.now()) { _pairings.delete(token); return null; }
   if (entry.uses >= MAX_USES) return null;
   return {
+    reportId: entry.reportId || null,
     userId: entry.userId,
     usesLeft: MAX_USES - entry.uses,
     expiresInMs: entry.expiresAt - Date.now(),
@@ -86,6 +90,7 @@ function status(token) {
   if (!entry) return null;
   const alive = entry.expiresAt > Date.now() && entry.uses < MAX_USES;
   return {
+    reportId: entry.reportId || null,
     alive,
     spent: entry.uses >= MAX_USES,
     uses: entry.uses,

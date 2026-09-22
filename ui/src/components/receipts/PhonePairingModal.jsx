@@ -12,7 +12,7 @@ import { fmtMoney } from '../../utils/format';
 //
 // Blocking the page costs nothing here — while pairing you are holding a phone,
 // not using the desktop.
-export default function PhonePairingModal({ onClose, onArrived }) {
+export default function PhonePairingModal({ onClose, onArrived, reportId = null }) {
   const [pair, setPair]       = useState(null);
   const [receipts, setRcpts]  = useState([]);
   const [secsLeft, setSecs]   = useState(0);
@@ -22,7 +22,7 @@ export default function PhonePairingModal({ onClose, onArrived }) {
   // Mint the pairing once, on open.
   useEffect(() => {
     let active = true;
-    api.post('/receipts/pair', {})
+    api.post('/receipts/pair', reportId ? { reportId } : {})
       .then(res => { if (active) { setPair(res); setSecs(Math.round(res.expiresInMs / 1000)); } })
       .catch(err => { if (active) setError(err.message || 'Could not create a pairing code'); });
     return () => { active = false; };
