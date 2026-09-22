@@ -30,6 +30,14 @@ export default function Home() {
   const open = reports.filter(r => ['draft', 'rejected', 'submitted'].includes(r.status));
   const drafts = reports.filter(r => ['draft', 'rejected'].includes(r.status));
   const base = user?.baseCurrency || 'SGD';
+
+  // The two figures worth leading with. Three counts of things — needs review,
+  // reviewed, all expenses — told nobody anything they would act on; what a
+  // person opening an expenses app wants to know is what they can claim and
+  // what they are owed.
+  const sum = ns => Math.round(ns.reduce((s, n) => s + (Number(n) || 0), 0) * 100) / 100;
+  const toClaim = sum([...unfiled.map(e => e.baseTotal), ...drafts.map(r => r.totalBase)]);
+  const owed = sum(reports.filter(r => ['submitted', 'approved'].includes(r.status)).map(r => r.totalBase));
   async function fileInto(expenseId, reportId) {
     if (!reportId) return;
     try {
@@ -58,9 +66,21 @@ export default function Home() {
       {/* The classes, not an inline grid: .mobile-mode collapses these to one
           column, and a style attribute is out of that rule's reach. */}
       <div className="grid-3" style={{ marginBottom: 24 }}>
-        <div className="stat-card"><div className="stat-label">Needs review</div><div className="stat-value">{needing.length}</div><div className="stat-sub">read by AI, waiting for you</div></div>
-        <div className="stat-card"><div className="stat-label">Reviewed</div><div className="stat-value">{reviewed.length}</div><div className="stat-sub">ready for a report</div></div>
-        <div className="stat-card"><div className="stat-label">All expenses</div><div className="stat-value">{expenses.length}</div><div className="stat-sub">{user?.baseCurrency || 'SGD'} base currency</div></div>
+        <div className="stat-card">
+          <div className="stat-label">Ready to claim</div>
+          <div className="stat-value">{fmtMoney(toClaim, base)}</div>
+          <div className="stat-sub">{unfiled.length + drafts.length ? 'checked, not sent yet' : 'nothing waiting'}</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Owed to you</div>
+          <div className="stat-value">{fmtMoney(owed, base)}</div>
+          <div className="stat-sub">submitted or approved, not yet paid</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Needs your check</div>
+          <div className="stat-value">{needing.length}</div>
+          <div className="stat-sub">{needing.length ? 'read by AI, waiting for you' : 'nothing to check'}</div>
+        </div>
       </div>
 
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
