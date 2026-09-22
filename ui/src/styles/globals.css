@@ -515,6 +515,12 @@ body {
   background: var(--bg-hover);
 }
 
+/* Seven columns of editable fields do not fit at the table's usual padding, and
+   the column that fell off the end was the one saying whether the receipt had
+   been checked. */
+.check-table th, .check-table td { padding: 6px 6px; }
+.check-table .form-input { padding: 4px 7px; font-size: 12px; }
+
 /* ── Alerts ──────────────────────────────────────── */
 .alert {
   display: flex;

@@ -96,3 +96,72 @@ describe('routes/reports', () => {
     await request(serverFor(app)).get(`/api/reports/${r.id}/export-url?format=doc`).set(as(emp)).expect(400);
   }, 60000);
 });
+
+// Checking a whole case at once, which is the difference between three minutes
+// and twenty on a zip of thirty receipts.
+describe('routes/reports — checking a case in bulk', () => {
+  let app, users, store, reports, wf, admin, emp, tokens;
+
+  beforeEach(async () => {
+    jest.resetModules();
+    require('../db/migrate').run();
+    users = require('../store/users'); store = require('../store/expenses');
+    reports = require('../store/reports'); wf = require('../reports/workflow');
+    admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
+    emp   = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId });
+    const secret = require('../middleware/auth-middleware').jwtSecret();
+    tokens = Object.fromEntries([admin, emp].map(u => [u.email, jwt.sign({ id: u.id, email: u.email, role: u.role }, secret)]));
+    app = express(); app.use(express.json()); app.use('/api/reports', require('./reports'));
+  });
+
+  const as = u => ({ Authorization: `Bearer ${tokens[u.email]}` });
+  const add = (c, extra = {}) => {
+    const total = extra.total ?? 100;
+    const e = store.createExpense({
+      companyId: emp.companyId, userId: emp.id, status: 'review-needed', merchant: 'Grab', currency: 'SGD',
+      total, receiptDate: '2026-09-04',
+      lines: [{ category: 'Other', amount: total, baseAmount: total, fxRate: 1, fxSource: 'base', fxRateDate: '2026-09-04' }],
+      ...extra,
+    });
+    reports.addExpense(c.id, e.id);
+    return e;
+  };
+
+  test('everything that can be checked is, and everything else says why', async () => {
+    const c = reports.createReport({ companyId: emp.companyId, userId: emp.id, kind: 'case', title: 'September receipts' });
+    const good1 = add(c);
+    const good2 = add(c, { merchant: 'Gojek', total: 25 });
+    const noMerchant = add(c, { merchant: null });
+    const stillReading = add(c, { status: 'reading' });
+    const dup = add(c, { status: 'duplicate' });
+
+    const res = await request(serverFor(app)).post(`/api/reports/${c.id}/review-all`).set(as(emp)).expect(200);
+
+    expect(res.body.reviewed).toBe(2);
+    expect(store.getExpense(good1.id).status).toBe('reviewed');
+    expect(store.getExpense(good2.id).status).toBe('reviewed');
+    const why = Object.fromEntries(res.body.skipped.map(s => [s.id, s.why]));
+    expect(why[noMerchant.id]).toMatch(/merchant/);
+    expect(why[stillReading.id]).toMatch(/still being read/);
+    expect(why[dup.id]).toMatch(/duplicate/);
+    expect(store.getExpense(dup.id).status).toBe('duplicate');
+  });
+
+  test('lines that do not add up are left alone', async () => {
+    const c = reports.createReport({ companyId: emp.companyId, userId: emp.id, kind: 'case', title: 'c' });
+    const e = add(c, { total: 100 });
+    store.replaceLines(e.id, [{ category: 'Other', amount: 40, currency: 'SGD' }], { force: true });
+    const res = await request(serverFor(app)).post(`/api/reports/${c.id}/review-all`).set(as(emp)).expect(200);
+    expect(res.body.reviewed).toBe(0);
+    expect(res.body.skipped[0].why).toMatch(/do not add up/);
+  });
+
+  test('somebody else\'s case, and a submitted one, are refused', async () => {
+    const mine = reports.createReport({ companyId: emp.companyId, userId: emp.id, kind: 'case', title: 'mine' });
+    add(mine, { status: 'reviewed' });
+    await request(serverFor(app)).post(`/api/reports/${mine.id}/review-all`).set(as(admin)).expect(200);  // an admin may
+
+    wf.submit(mine.id, emp);
+    await request(serverFor(app)).post(`/api/reports/${mine.id}/review-all`).set(as(emp)).expect(409);
+  });
+});

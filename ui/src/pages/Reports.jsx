@@ -8,7 +8,11 @@ import { fmtMoney } from '../utils/format';
 // A report is a trip or a period: a cover, the expenses filed under it, and a
 // state. The list is the claimant's own; managers can see their team's,
 // finance everyone's.
-const EMPTY = { title: '', purpose: '', kind: 'trip', periodFrom: '', periodTo: '', destination: '' };
+// A case is the default: it is the one that asks nothing beyond a name, and it
+// is what a bundle of receipts is. A trip wants a destination, a period wants
+// its month.
+const EMPTY = { title: '', purpose: '', kind: 'case', periodFrom: '', periodTo: '', destination: '' };
+const KIND_LABEL = { case: 'Case', trip: 'Trip', period: 'Period' };
 
 export default function Reports() {
   const { user } = useAuth();
@@ -47,7 +51,7 @@ export default function Reports() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0 12px' }}>
             <div className="form-group" style={{ gridColumn: '1 / -1' }}><label className="form-label" htmlFor="r-title">Title</label><input id="r-title" className="form-input" required placeholder="India trip, Sep 2026" value={form.title} onChange={e => set('title', e.target.value)} /></div>
             <div className="form-group" style={{ gridColumn: '1 / -1' }}><label className="form-label" htmlFor="r-purpose">Purpose</label><input id="r-purpose" className="form-input" placeholder="Client site visits" value={form.purpose} onChange={e => set('purpose', e.target.value)} /></div>
-            <div className="form-group"><label className="form-label" htmlFor="r-kind">Kind</label><select id="r-kind" className="form-input" value={form.kind} onChange={e => set('kind', e.target.value)}><option value="trip">Trip</option><option value="period">Period</option></select></div>
+            <div className="form-group"><label className="form-label" htmlFor="r-kind">Kind</label><select id="r-kind" className="form-input" value={form.kind} onChange={e => set('kind', e.target.value)}><option value="case">Case</option><option value="trip">Trip</option><option value="period">Period</option></select></div>
             <div className="form-group"><label className="form-label" htmlFor="r-from">From</label><input id="r-from" className="form-input" type="date" value={form.periodFrom} onChange={e => set('periodFrom', e.target.value)} /></div>
             <div className="form-group"><label className="form-label" htmlFor="r-to">To</label><input id="r-to" className="form-input" type="date" value={form.periodTo} onChange={e => set('periodTo', e.target.value)} /></div>
             {form.kind === 'trip' && <div className="form-group"><label className="form-label" htmlFor="r-dest">Destination</label><input id="r-dest" className="form-input" placeholder="Mumbai and Pune, India" value={form.destination} onChange={e => set('destination', e.target.value)} /></div>}
@@ -72,7 +76,7 @@ export default function Reports() {
               <tbody>{reports.map(r => (
                 <tr key={r.id} onClick={() => navigate(`/reports/${r.id}`)} style={{ cursor: 'pointer' }}>
                   <td style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{r.number}</td>
-                  <td><div style={{ fontWeight: 600 }}>{r.title || '—'}</div>{r.purpose && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{r.purpose}</div>}</td>
+                  <td><div style={{ fontWeight: 600 }}>{r.title || '—'} <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-muted)' }}>{KIND_LABEL[r.kind] || ''}</span></div>{r.purpose && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{r.purpose}</div>}</td>
                   {scope !== 'mine' && <td>{r.ownerName || r.ownerEmail}</td>}
                   <td style={{ whiteSpace: 'nowrap' }}>{r.periodFrom || '—'}{r.periodTo ? ` – ${r.periodTo}` : ''}</td>
                   <td style={{ textAlign: 'right' }}>{r.expenseCount}</td>
