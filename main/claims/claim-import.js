@@ -4,6 +4,8 @@ const { readArchive }    = require('./claim-archive');
 const { parseClaimForm } = require('./claim-form');
 const { matchClaims }    = require('./claim-matcher');
 const { suggestCategories } = require('./claim-categories');
+const reports = require('../store/reports');
+const users   = require('../store/users');
 
 // Importing a batch claim: unzip, read the form, read every receipt, match.
 //
@@ -92,6 +94,34 @@ function _stage(job, stage, detail = {}) {
 // database: everything slow or stateful arrives through it.
 // `id` lets the caller name the job — the durable queue passes the id it already
 // wrote to disk so the two halves refer to the same thing.
+// A zip is a bundle of receipts that belong to each other: a trip, a job, a
+// month of fuel. Leaving them in the loose pile and asking the claimant to find
+// them again afterwards is work the import can do itself, so everything that
+// arrived together is filed into one case, named after the file it came in.
+//
+// A case that cannot be created is logged and shrugged off. The receipts are
+// the valuable part of an import, and thirty of them read correctly must not be
+// lost because a title was too long or a number ran out.
+function _asCase(job, expenseIds) {
+  if (!expenseIds.length) return null;
+  try {
+    const owner = users.findById(job.userId);
+    if (!owner) return null;
+    const from = String(job.label || '').trim();
+    const title = from.replace(/\.(zip|xlsx?|csv|pdf)$/i, '').trim() || 'Imported receipts';
+    const c = reports.createReport({
+      companyId: owner.companyId, userId: job.userId, kind: 'case', title,
+      purpose: from ? `Imported from ${from}` : 'Imported receipts',
+    });
+    for (const id of expenseIds) reports.addExpense(c.id, id);
+    logger.info('Import became a case', { jobId: job.id, caseId: c.id, number: c.number, expenses: expenseIds.length });
+    return c.id;
+  } catch (err) {
+    logger.warn('Could not turn the import into a case', { jobId: job.id, error: err.message });
+    return null;
+  }
+}
+
 function startImport({ userId, archives = [], forms = [], label = 'Expense claim', id }, deps) {
   const job = {
     id: id || crypto.randomBytes(9).toString('hex'),
@@ -227,11 +257,16 @@ async function _run(job, { archives, forms }, deps) {
   // createRecord is the only place that knows what the store said.
   const duplicates = [];
   const suspected = [];
+  // Everything except the duplicates, which is what goes into the case: a
+  // duplicate can never be marked reviewed, so one sitting in a case would
+  // block the submit for good.
+  const claimable = [];
   const note = rec => {
     if (!rec) return;
     created.push(rec.id);
-    if (rec.status === 'duplicate') duplicates.push({ id: rec.id, of: rec.duplicateOf, why: rec.errorMsg });
-    else if (rec.errorMsg && /^Possible duplicate/.test(rec.errorMsg)) suspected.push({ id: rec.id, why: rec.errorMsg });
+    if (rec.status === 'duplicate') { duplicates.push({ id: rec.id, of: rec.duplicateOf, why: rec.errorMsg }); return; }
+    claimable.push(rec.id);
+    if (rec.errorMsg && /^Possible duplicate/.test(rec.errorMsg)) suspected.push({ id: rec.id, why: rec.errorMsg });
   };
 
   for (const m of matched.matches) {
@@ -275,10 +310,14 @@ async function _run(job, { archives, forms }, deps) {
     note(rec);
   }
 
+  // ── 7. What arrived together becomes a case ──────────────────────────────
+  const caseId = _asCase(job, claimable);
+
   return _update(job, {
     stage: 'done',
     result: {
       groupId,
+      caseId,
       created,
       summary: {
         ...matched.summary,

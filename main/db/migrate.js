@@ -37,6 +37,27 @@ function run() {
   // time one is needed. Manual rates are somebody's decision and are left
   // alone, and every rate already frozen on an expense line stays frozen, so
   // no report that has been submitted moves.
+  // SQLite cannot alter a CHECK constraint, so allowing a third report kind
+  // means rebuilding the table around the new one. Everything else about it is
+  // unchanged, and the rows are copied straight across.
+  _step(2, 'allow a report kind of case', () => {
+    const has = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'expense_reports'").get();
+    if (!has || /'case'/.test(has.sql)) return;
+    const on = db.pragma('foreign_keys', { simple: true });
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(has.sql.replace("CHECK (kind IN ('trip', 'period'))", "CHECK (kind IN ('trip', 'period', 'case'))")
+                       .replace('expense_reports', 'expense_reports_rebuilt'));
+        db.exec('INSERT INTO expense_reports_rebuilt SELECT * FROM expense_reports');
+        db.exec('DROP TABLE expense_reports');
+        db.exec('ALTER TABLE expense_reports_rebuilt RENAME TO expense_reports');
+      })();
+    } finally {
+      if (on) db.pragma('foreign_keys = ON');
+    }
+  });
+
   _step(1, 'refetch cached provider rates at full precision', () => {
     db.prepare("DELETE FROM fx_rates WHERE source != 'manual'").run();
   });

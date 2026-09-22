@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Modal from '../Modal';
 import { useConfirm } from '../../context/ConfirmContext';
 // api/client prepends BASE = '/api', so paths here start after it.
+import { Link } from 'react-router-dom';
 import { api } from '../../api/client';
 
 // Importing a batch expense claim: a zip of receipts plus the claim form.
@@ -228,6 +229,19 @@ export default function ClaimImport({ onClose, onImported, initialJobId = null }
           const dupCount = (job.result?.duplicates?.length || 0) + (job.result?.suspectedDuplicates?.length || 0);
           return (
             <div>
+              {/* Everything that arrived together is already in one case, so the
+                  first thing offered is the way into it. */}
+              {job.result?.caseId && (
+                <div style={{ background: 'var(--accent-subtle)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', marginBottom: 14,
+                              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{totalClaims} receipt{totalClaims === 1 ? '' : 's'} are in a new case</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Check them there, then submit the case.</div>
+                  </div>
+                  <Link className="btn btn-primary btn-sm" to={`/reports/${job.result.caseId}`} onClick={onClose}>Open the case</Link>
+                </div>
+              )}
+
               {/* "27 imported" is useless. What matters is which ones need a person. */}
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
                 {[

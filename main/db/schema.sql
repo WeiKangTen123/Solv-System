@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS expense_reports (
   company_id      TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   number          TEXT NOT NULL,
-  kind            TEXT NOT NULL DEFAULT 'trip' CHECK (kind IN ('trip', 'period')),
+  kind            TEXT NOT NULL DEFAULT 'trip' CHECK (kind IN ('trip', 'period', 'case')),
   title           TEXT,
   purpose         TEXT,
   period_from     TEXT,
