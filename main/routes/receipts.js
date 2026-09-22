@@ -33,24 +33,27 @@ function verifyImageToken(token, receiptId) {
 // Reads still running, so a test can wait for them.
 const _inflight = new Set();
 
-// Filing a freshly uploaded receipt into a case. Unlike the bulk filing route
-// this accepts an expense that has not been checked yet — that is the whole
-// point of uploading into a case — but the case must still be the claimant's
-// own and still be open. Submit goes on refusing until every receipt in it has
-// been checked, so nothing gets weaker.
-function fileIntoCase(user, expenseId, reportId) {
+// May this person put a receipt in this case? Asked BEFORE anything is stored.
+// It used to be asked after, which meant a refused upload — into a colleague's
+// case, or one that had just been submitted — still wrote the file to disk,
+// created the receipt and the expense, and set the reader going on them. The
+// claimant saw an error and got a stray expense in their pile anyway.
+//
+// Unlike the bulk filing route this accepts an expense nobody has checked yet:
+// that is the whole point of uploading into a case. Submit goes on refusing
+// until every receipt in it has been checked, so nothing gets weaker.
+function checkCase(user, reportId) {
   if (!reportId) return null;
-  const reports = require('../store/reports');
-  const wf = require('../reports/workflow');
-  const r = reports.getReport(reportId);
+  const r = require('../store/reports').getReport(reportId);
   if (!r || r.companyId !== user.companyId) return { error: 'Case not found', status: 404 };
   if (r.userId !== user.id && user.role !== 'admin') return { error: 'That case belongs to someone else', status: 403 };
-  if (!wf.isEditable(r)) return { error: `A ${r.status} case cannot take more receipts`, status: 409 };
-  reports.addExpense(r.id, expenseId);
+  if (!require('../reports/workflow').isEditable(r)) return { error: `A ${r.status} case cannot take more receipts`, status: 409 };
   return null;
 }
 
 function storeReceipt(user, { mime, data, filename, source, reportId }) {
+  const noCase = checkCase(user, reportId);
+  if (noCase) return { status: noCase.status, body: { error: noCase.error } };
   if (!receiptStore.isAcceptedMime(mime)) {
     return { status: 400, body: { error: `Unsupported file type${mime ? ` (${mime})` : ''}. Accepted: ${receiptStore.acceptedMimes().join(', ')}.` } };
   }
@@ -77,10 +80,7 @@ function storeReceipt(user, { mime, data, filename, source, reportId }) {
   const src = source === 'phone' ? 'phone' : 'upload';
   const receipt = store.createReceipt({ id: receiptId, companyId: user.companyId, userId: user.id, file: storedName, mime, sizeBytes: buffer.length, sha256: hash, source: src, originalName: filename || null });
   const expense = store.createExpense({ companyId: user.companyId, userId: user.id, receiptId, source: src, status: 'reading', currency: users.getUserDefaults(user.id).currency });
-  if (reportId) {
-    const bad = fileIntoCase(user, expense.id, reportId);
-    if (bad) return { status: bad.status, body: { error: bad.error } };
-  }
+  if (reportId) require('../store/reports').addExpense(reportId, expense.id);
   logger.info('Receipt stored', { userId: user.id, receiptId, bytes: buffer.length, mime, source: src });
 
   const done = new Promise(resolve => setImmediate(() => {
@@ -212,6 +212,6 @@ router.get('/:id/image', asyncHandler(async (req, res) => {
 
 module.exports = router;
 module.exports.storeReceipt = storeReceipt;
-module.exports.fileIntoCase = fileIntoCase;
+module.exports.checkCase = checkCase;
 module.exports.issueImageToken = issueImageToken;
 module.exports._drain = async function _drain() { while (_inflight.size) await Promise.allSettled([..._inflight]); };

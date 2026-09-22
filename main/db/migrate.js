@@ -30,14 +30,21 @@ function run() {
   _ensureColumn('expense_lines', 'fx_asked_date', 'fx_asked_date TEXT');
   _ensureColumn('expense_lines', 'fx_check', 'fx_check TEXT');
 
-  // Rates cached before the providers were asked the other way round carry only
-  // the digits the provider printed in that direction — 0.000072 for a rupiah,
-  // two significant figures, which puts a ten-million-rupiah bill SGD 2.69 out.
-  // Dropping the provider rows makes them refetch at full precision the next
-  // time one is needed. Manual rates are somebody's decision and are left
-  // alone, and every rate already frozen on an expense line stays frozen, so
-  // no report that has been submitted moves.
-  // SQLite cannot alter a CHECK constraint, so allowing a third report kind
+  // Steps run in ascending order, because each one stamps the database with its
+  // own number and a lower number is then skipped for good.
+
+  // 1. Rates cached before the providers were asked the other way round carry
+  // only the digits the provider printed in that direction — 0.000072 for a
+  // rupiah, two significant figures, which puts a ten-million-rupiah bill SGD
+  // 2.69 out. Dropping the provider rows makes them refetch at full precision
+  // the next time one is needed. Manual rates are somebody's decision and are
+  // left alone, and every rate already frozen on an expense line stays frozen,
+  // so no report that has been submitted moves.
+  _step(1, 'refetch cached provider rates at full precision', () => {
+    db.prepare("DELETE FROM fx_rates WHERE source != 'manual'").run();
+  });
+
+  // 2. SQLite cannot alter a CHECK constraint, so allowing a third report kind
   // means rebuilding the table around the new one. Everything else about it is
   // unchanged, and the rows are copied straight across.
   _step(2, 'allow a report kind of case', () => {
@@ -56,10 +63,6 @@ function run() {
     } finally {
       if (on) db.pragma('foreign_keys = ON');
     }
-  });
-
-  _step(1, 'refetch cached provider rates at full precision', () => {
-    db.prepare("DELETE FROM fx_rates WHERE source != 'manual'").run();
   });
 }
 

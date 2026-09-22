@@ -40,6 +40,18 @@ describe('db/migrate', () => {
     expect(() => require('./migrate').run()).not.toThrow();
   });
 
+  test('a lower-numbered step still runs on a new database', () => {
+    // Each step stamps the database with its own number and refuses to run if
+    // the stamp is already higher, so a step declared after a higher-numbered
+    // one never runs. Step 2 sat above step 1 and step 1 was skipped for good.
+    const src = require('fs').readFileSync(require('path').join(__dirname, 'migrate.js'), 'utf8');
+    const numbers = [...src.matchAll(/_step\((\d+),/g)].map(m => Number(m[1]));
+    expect(numbers.length).toBeGreaterThan(1);
+    expect(numbers).toEqual([...numbers].sort((a, b) => a - b));
+    expect(new Set(numbers).size).toBe(numbers.length);       // and none reused
+    expect(db.pragma('user_version', { simple: true })).toBe(Math.max(...numbers));
+  });
+
   test('expenses reject an unknown status', () => {
     db.prepare("INSERT INTO companies (id, name, created_at) VALUES ('c1', 'Solv', '2026-01-01')").run();
     db.prepare("INSERT INTO users (id, company_id, email, password, role, created_at) VALUES ('u1','c1','a@b.c','x','employee','2026-01-01')").run();

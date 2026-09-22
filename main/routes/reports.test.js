@@ -127,6 +127,17 @@ describe('routes/reports — checking a case in bulk', () => {
     return e;
   };
 
+  // The route validated the kind separately from the store, and was not told
+  // about cases — so every case created through the UI was refused by its own
+  // route while the store, the schema and the printed cover all accepted one.
+  test('a case can be created through the route that creates reports', async () => {
+    const r = await request(serverFor(app)).post('/api/reports').set(as(emp)).send({ kind: 'case', title: 'Chakan job' }).expect(201);
+    expect(r.body.report.kind).toBe('case');
+    await request(serverFor(app)).post('/api/reports').set(as(emp)).send({ kind: 'trip', title: 'India' }).expect(201);
+    await request(serverFor(app)).post('/api/reports').set(as(emp)).send({ kind: 'period', title: 'September' }).expect(201);
+    await request(serverFor(app)).post('/api/reports').set(as(emp)).send({ kind: 'banana', title: 'No' }).expect(400);
+  });
+
   test('everything that can be checked is, and everything else says why', async () => {
     const c = reports.createReport({ companyId: emp.companyId, userId: emp.id, kind: 'case', title: 'September receipts' });
     const good1 = add(c);

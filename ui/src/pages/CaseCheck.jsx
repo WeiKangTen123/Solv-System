@@ -79,13 +79,28 @@ export default function CaseCheck() {
     try {
       const body = {};
       for (const k of FIELDS) if (k !== 'category') body[k] = edit[k] === '' ? null : edit[k];
-      body.currency = String(edit.currency || '').toUpperCase();
+      // An empty currency box means "I have not typed it yet", not "this receipt
+      // has no currency". Sending it cleared the currency and with it the rate.
+      const ccy = String(edit.currency || '').toUpperCase();
+      if (/^[A-Z]{3}$/.test(ccy)) body.currency = ccy; else delete body.currency;
       await api.patch(`/expenses/${e.id}`, body);
-      // The report's column comes from the line, not the expense, so a category
-      // typed here has to reach the line or the printed report ignores it.
-      if (e.lines && e.lines.length === 1 && edit.category !== e.lines[0].category) {
+
+      const lines = e.lines || [];
+      const amount = Number(edit.total);
+      if (!lines.length && amount > 0) {
+        // A receipt the reader could not make out arrives with no lines at all,
+        // and an expense with no lines can never be checked. Typing the total
+        // here gives it one, which is the whole point of rescuing it from this
+        // table rather than opening its own page.
         await api.put(`/expenses/${e.id}/lines`, {
-          lines: [{ ...e.lines[0], category: edit.category || null, amount: Number(edit.total) || e.lines[0].amount }],
+          lines: [{ category: edit.category || null, description: null, amount, currency: ccy || e.currency || null }],
+        });
+      } else if (lines.length === 1 && (edit.category !== lines[0].category || Number(lines[0].amount) !== amount)) {
+        // The report's column comes from the line, not the expense, so a
+        // category typed here has to reach the line or the printed report
+        // ignores it.
+        await api.put(`/expenses/${e.id}/lines`, {
+          lines: [{ ...lines[0], category: edit.category || null, amount: amount > 0 ? amount : lines[0].amount }],
         });
       }
       dirtyRef.delete(e.id);
