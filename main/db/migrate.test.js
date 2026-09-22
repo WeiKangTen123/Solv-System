@@ -14,6 +14,32 @@ describe('db/migrate', () => {
     expect(() => require('./migrate').run()).not.toThrow();
   });
 
+  // The one migration that rebuilds a table rather than adding a column. It has
+  // to carry the rows across untouched, and it has to be safe to meet twice.
+  test('an older database gains the case kind without losing a report', () => {
+    db.prepare("INSERT INTO companies (id, name, created_at) VALUES ('c1', 'Solv', '2026-01-01')").run();
+    db.prepare("INSERT INTO users (id, company_id, email, password, role, created_at) VALUES ('u1','c1','a@b.c','x','employee','2026-01-01')").run();
+
+    // put the table back the way it was before this migration existed
+    const sql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='expense_reports'").get().sql;
+    db.pragma('foreign_keys = OFF');
+    db.exec('DROP TABLE expense_reports');
+    db.exec(sql.replace("CHECK (kind IN ('trip', 'period', 'case'))", "CHECK (kind IN ('trip', 'period'))"));
+    db.pragma('foreign_keys = ON');
+    db.prepare(`INSERT INTO expense_reports (id, company_id, user_id, number, kind, title, status, advances_cents, created_at)
+                VALUES ('r1','c1','u1','EXP-2026-0001','trip','India trip','approved', 5000, '2026-09-01')`).run();
+    expect(() => db.prepare("INSERT INTO expense_reports (id, company_id, user_id, number, kind, status, advances_cents, created_at) VALUES ('r2','c1','u1','EXP-2026-0002','case','draft',0,'2026-09-02')").run()).toThrow();
+    db.pragma('user_version = 1');   // as if this step had never run
+
+    require('./migrate').run();
+
+    const kept = db.prepare("SELECT * FROM expense_reports WHERE id = 'r1'").get();
+    expect(kept).toMatchObject({ number: 'EXP-2026-0001', title: 'India trip', status: 'approved', advances_cents: 5000, kind: 'trip' });
+    expect(() => db.prepare("INSERT INTO expense_reports (id, company_id, user_id, number, kind, status, advances_cents, created_at) VALUES ('r2','c1','u1','EXP-2026-0002','case','draft',0,'2026-09-02')").run()).not.toThrow();
+    expect(() => db.prepare("INSERT INTO expense_reports (id, company_id, user_id, number, kind, status, advances_cents, created_at) VALUES ('r3','c1','u1','EXP-2026-0003','banana','draft',0,'2026-09-02')").run()).toThrow();
+    expect(() => require('./migrate').run()).not.toThrow();
+  });
+
   test('expenses reject an unknown status', () => {
     db.prepare("INSERT INTO companies (id, name, created_at) VALUES ('c1', 'Solv', '2026-01-01')").run();
     db.prepare("INSERT INTO users (id, company_id, email, password, role, created_at) VALUES ('u1','c1','a@b.c','x','employee','2026-01-01')").run();

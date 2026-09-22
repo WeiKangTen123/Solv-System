@@ -28,13 +28,17 @@ const nextNumber = db.transaction(companyId => {
 });
 
 const COVER = { kind: 'kind', title: 'title', purpose: 'purpose', periodFrom: 'period_from', periodTo: 'period_to', destination: 'destination', nights: 'nights', notes: 'notes' };
+// A trip has a destination, a period has a statement month, and a case is a
+// bundle of receipts that arrived together and is neither.
+const KINDS = new Set(['trip', 'period', 'case']);
+
 const STATE = { status: 'status', submittedAt: 'submitted_at', approvedBy: 'approved_by', approvedAt: 'approved_at', rejectedReason: 'rejected_reason', paidAt: 'paid_at', xeroInvoiceId: 'xero_invoice_id', xeroError: 'xero_error' };
 
 function createReport({ id = newId(), companyId, userId, kind = 'trip', title = null, purpose = null, periodFrom = null, periodTo = null, destination = null, nights = null, advances = 0, notes = null }) {
   const number = nextNumber(companyId);
   db.prepare(`INSERT INTO expense_reports (id, company_id, user_id, number, kind, title, purpose, period_from, period_to, destination, nights, status, advances_cents, notes, created_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`)
-    .run(id, companyId, userId, number, kind === 'period' ? 'period' : 'trip', title, purpose, periodFrom, periodTo, destination, nights, toCents(advances) || 0, notes, now());
+    .run(id, companyId, userId, number, KINDS.has(kind) ? kind : 'trip', title, purpose, periodFrom, periodTo, destination, nights, toCents(advances) || 0, notes, now());
   addEvent(id, userId, 'created', null);
   return getReport(id);
 }

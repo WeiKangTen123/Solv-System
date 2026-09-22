@@ -103,12 +103,14 @@ function expenseReportDoc(payload) {
   const { company, report, owner = {}, manager = {}, approver = {}, receipts = [], generatedAt = Date.now() } = payload;
   const m = buildModel(payload);
   const L = latin1;
-  const period = report.kind === 'period' ? 'Period' : 'Trip';
+  const period = report.kind === 'period' ? 'Period' : report.kind === 'case' ? 'Case' : 'Trip';
   const span = `${fmtDate(report.periodFrom)} – ${fmtDate(report.periodTo)}${report.nights ? ` · ${report.nights} night${report.nights === 1 ? '' : 's'}` : ''}`;
   const cover = [
     ['Employee', owner.name || owner.email || '—', 'Purpose', report.purpose || report.title || '—'],
     ['Employee ID', owner.employeeId || '—', period, span],
-    ['Department', owner.department || '—', report.kind === 'period' ? 'Statement' : 'Destination', report.kind === 'period' ? report.number : (report.destination || '—')],
+    ['Department', owner.department || '—',
+      report.kind === 'trip' ? 'Destination' : 'Reference',
+      report.kind === 'trip' ? (report.destination || '—') : report.number],
     ['Manager', manager.name || '—', 'Status', statusLine(report)],
   ];
   const head = ['#', 'Date', 'Description', 'Ccy', 'Amount', 'Rate', ...m.columns, `Total ${m.base}`]

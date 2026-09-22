@@ -297,3 +297,76 @@ describe('pacing', () => {
     expect(claimImport.READ_INTERVAL_MS).toBe(0);
   });
 });
+
+// A zip is a bundle of receipts that belong to each other. These run against a
+// real database, and require claim-import inside beforeEach so the stores it
+// holds are this test's instances rather than a stale module's.
+describe('claims/claim-import — everything that arrives together becomes a case', () => {
+  let ci, users, store, reports, u;
+
+  beforeEach(async () => {
+    jest.resetModules();
+    require('../db/migrate').run();
+    users   = require('../store/users');
+    store   = require('../store/expenses');
+    reports = require('../store/reports');
+    ci = require('./claim-import');
+    ci._reset();
+    u = await users.createUser({ email: 'e@solv.sg', password: 'password123' });
+  });
+
+  const zipOfThree = () => makeZip([
+    { name: 'c/a.png', data: JPEG }, { name: 'c/b.png', data: JPEG }, { name: 'c/c.png', data: JPEG },
+  ]);
+  const reads = [
+    { merchant: 'Grab',  date: '2026-02-23', total: 15.8, currency: 'SGD' },
+    { merchant: 'Gojek', date: '2026-03-10', total: 25,   currency: 'SGD' },
+    { merchant: 'CDG',   date: '2026-04-17', total: 21.8, currency: 'SGD' },
+  ];
+  const realRecords = (mark = () => ({})) => jest.fn(async ({ row }) => {
+    const e = store.createExpense({
+      companyId: u.companyId, userId: u.id, status: 'review-needed',
+      merchant: row.description, currency: row.currency || 'SGD', total: row.amount,
+      lines: [{ category: 'Other', amount: row.amount, currency: row.currency || 'SGD' }],
+    });
+    return { ...e, ...mark(row) };
+  });
+
+  test('a zip of three receipts lands in one case, named after the file', async () => {
+    const d = { waitMs: 0, storeReceipt: jest.fn(async () => 'stored.jpg'), suggest: jest.fn(async () => []),
+                createRecord: realRecords(), parseReceipts: jest.fn(async () => reads) };
+    const job = ci.startImport({ userId: u.id, archives: [{ name: 'September receipts.zip', buffer: zipOfThree() }], forms: [], label: 'September receipts.zip' }, d);
+    await settle(job);
+
+    expect(job.stage).toBe('done');
+    expect(job.result.caseId).toBeTruthy();
+    const c = reports.getReport(job.result.caseId);
+    expect(c.kind).toBe('case');
+    expect(c.title).toBe('September receipts');      // the extension is not part of the name
+    expect(c.status).toBe('draft');
+    expect(c.number).toMatch(/^EXP-\d{4}-\d{4}$/);
+    expect(c.expenses).toHaveLength(3);
+    expect(c.expenses.map(e => e.merchant).sort()).toEqual(['CDG', 'Gojek', 'Grab']);
+    expect(c.totals.unreviewed).toBe(3);             // read, and waiting for a person
+  });
+
+  test('a duplicate stays out of the case, because it could never be marked reviewed', async () => {
+    const d = { waitMs: 0, storeReceipt: jest.fn(async () => 'stored.jpg'), suggest: jest.fn(async () => []),
+                createRecord: realRecords(row => (row.description === 'Gojek' ? { status: 'duplicate' } : {})),
+                parseReceipts: jest.fn(async () => reads) };
+    const job = ci.startImport({ userId: u.id, archives: [{ name: 'c.zip', buffer: zipOfThree() }], forms: [], label: 'c.zip' }, d);
+    await settle(job);
+
+    const c = reports.getReport(job.result.caseId);
+    expect(c.expenses).toHaveLength(2);
+    expect(c.expenses.map(e => e.merchant).sort()).toEqual(['CDG', 'Grab']);
+  });
+
+  test('an import that creates nothing creates no case', async () => {
+    const d = { waitMs: 0, storeReceipt: jest.fn(async () => 'stored.jpg'), suggest: jest.fn(async () => []),
+                createRecord: jest.fn(async () => null), parseReceipts: jest.fn(async () => reads) };
+    const job = ci.startImport({ userId: u.id, archives: [{ name: 'c.zip', buffer: zipOfThree() }], forms: [], label: 'c.zip' }, d);
+    await settle(job);
+    expect(job.result.caseId).toBeNull();
+  });
+});

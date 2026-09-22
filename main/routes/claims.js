@@ -13,6 +13,7 @@ const { suggestCategories } = require('../claims/claim-categories');
 const { createClaimRecord } = require('../claims/claim-record');
 const logger       = require('../utils/logger');
 const wf           = require('../reports/workflow');
+const reports      = require('../store/reports');
 
 // A batch claim: a zip of receipts plus the claim-form spreadsheet, as they
 // arrive by email. Runs as a background job; the client polls.
@@ -111,6 +112,10 @@ router.delete('/group/:groupId', requireAuth, (req, res) => {
   // already been approved — and posted to Xero — leaving the report's total
   // quietly smaller than the bill and nothing in the audit trail to say why.
   const kept = members.filter(e => wf.isLocked(e));
+  // The case the import created is part of the import. If undoing empties it
+  // and nobody has submitted it, it goes too rather than being left behind as
+  // an empty case with a number.
+  const cases = [...new Set(members.map(e => e.reportId).filter(Boolean))];
   for (const e of members) {
     if (wf.isLocked(e)) continue;
     store.deleteExpense(e.id);
@@ -119,7 +124,12 @@ router.delete('/group/:groupId', requireAuth, (req, res) => {
       store.deleteReceipt(e.receipt.id);
     }
   }
-  logger.info('Claim import undone', { userId: req.user.id, groupId: req.params.groupId, removed: members.length - kept.length, kept: kept.length, files });
+  let casesRemoved = 0;
+  for (const id of cases) {
+    const c = reports.getReport(id);
+    if (c && c.kind === 'case' && wf.isEditable(c) && !c.expenses.length) { reports.deleteReport(id); casesRemoved++; }
+  }
+  logger.info('Claim import undone', { userId: req.user.id, groupId: req.params.groupId, removed: members.length - kept.length, kept: kept.length, files, casesRemoved });
   res.json({
     removed: members.length - kept.length,
     kept: kept.map(e => ({ id: e.id, merchant: e.merchant, why: 'it is in a report that has been submitted' })),
