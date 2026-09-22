@@ -55,6 +55,9 @@ describe('db/migrate', () => {
     expect(numbers).toEqual([...numbers].sort((a, b) => a - b));
     expect(new Set(numbers).size).toBe(numbers.length);       // and none reused
     expect(db.pragma('user_version', { simple: true })).toBe(Math.max(...numbers));
+    // preflight reports a box's schema against this without migrating it, so a
+    // step added without moving it would have preflight calling a current box stale.
+    expect(require('./migrate').LATEST).toBe(Math.max(...numbers));
   });
 
   test('expenses reject an unknown status', () => {

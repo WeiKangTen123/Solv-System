@@ -14,7 +14,7 @@ npm run dev                             # server on :4000, UI on :5173
 
 Open http://localhost:5173. The first account registered becomes the administrator and creates the company (Solv, SGD, Asia/Singapore). In **Settings** add a Gemini API key for the reader (or put `Gemini_API_KEY` in `main/.env`), add staff with roles and managers, set the report columns, and connect Xero when ready.
 
-Production: `npm run build:ui` then `NODE_ENV=production npm start` (serves the built UI). pm2 config in `ecosystem.config.js`; the Xero app's runbook (`docs/RUNBOOK.md` there) describes the VM, nginx, backups and deploy script, which apply unchanged.
+Production: `npm run build:ui` then `NODE_ENV=production npm start` (serves the built UI). `npm run preflight` says whether a machine is fit to run it before you find out from a restart loop, and `npm run deploy` ships to your server and refuses to call it deployed until the running process reports the commit you shipped. Set the target once in `main/.deploy.env` (gitignored; template beside it). Everything about the box — nginx, TLS, backups, restore, rollback, crashes, key rotation — is in [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ## Cases
 
@@ -88,13 +88,16 @@ Inter Tight carries the interface and IBM Plex Mono every figure, so amounts lin
 
 | Command | What |
 |---|---|
-| `npm test` | 52 suites, jest + supertest, everything mocked at the network edge |
+| `npm test` | 55 suites, jest + supertest, everything mocked at the network edge |
 | `npm run lint` | eslint over server and UI (errors fail the suite too) |
 | `node main/scripts/read-sample.js <file>` | read one receipt with the live model and print the fields and lines |
 | `node main/scripts/fx-sample.js samples/reads/<folio>.json` | price a saved read with the live providers |
 | `node main/scripts/demo-report.js [--xero-dry-run]` | build the real report from the two sample folios into `docs/acceptance/exports/` |
 | `node main/scripts/smoke-flow.js` | the whole flow through the HTTP API on a fresh production server |
 | `node main/scripts/audit-flow.js` | every route, including who is refused and what a bad input returns (`--no-model` to skip the reader) |
+| `npm run preflight` | is this machine fit to run Solv — versions, native modules, secrets, disk, schema, built UI (`--json` for a machine) |
+| `npm run deploy` | ship to the server and prove it applied (`-- --check` reports drift and changes nothing) |
+| `npm run backup` / `npm run backup:pull` | a verified database backup on the box / the whole backup set copied to your machine |
 
 ## Exchange rates, stated
 
@@ -111,5 +114,5 @@ The rate, its date, its source and the moment it was fetched are stored on every
 ## Not yet
 
 - A live post to the real Xero organisation: the code and a dry run exist; connect the org in Settings and click Post.
-- Deployment to a server (pm2, nginx, backups) — follow the Xero app's runbook.
+- A server: the deploy path, preflight, backups and runbook exist ([docs/RUNBOOK.md](docs/RUNBOOK.md)); no box has been provisioned and nothing is running anywhere yet.
 - Email intake of claims, mileage, per-diem, policy limits, multi-level approval.
