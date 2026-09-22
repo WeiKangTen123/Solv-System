@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useVisiblePolling } from '../utils/useVisiblePolling';
 import { useViewMode } from '../context/ViewModeContext';
 import StatusBadge from '../components/StatusBadge';
 import ReceiptUpload from '../components/receipts/ReceiptUpload';
@@ -35,6 +36,15 @@ export default function ReportDetail() {
   const [confirm, setConfirm] = useState(null);
   const [preview, setPreview] = useState(null);
 
+  // The receipts are read after the upload answers, so the page has to come
+  // back on its own: without this, dropping ten receipts in and pressing Check
+  // them all was answered with "10 could not be, they are still being read",
+  // and the only way to find out when they were ready was to reload.
+  const refresh = useCallback(async () => {
+    const d = await api.get(`/reports/${id}`);
+    setView(d);
+  }, [id]);
+
   const load = useCallback(async () => {
     const d = await api.get(`/reports/${id}`);
     setView(d);
@@ -49,6 +59,10 @@ export default function ReportDetail() {
     } else setUnfiled([]);
   }, [id, user?.role]);
   useEffect(() => { setMsg(null); load().catch(e => setMsg({ tone: 'error', text: e.message })); }, [load]);
+  const reading = !!view?.report?.expenses?.some(e => e.status === 'reading');
+  // Not 0 when nothing is being read: the hook schedules a timeout with whatever
+  // it is given, and 0 would busy-loop against the server.
+  useVisiblePolling(refresh, () => (reading ? 2500 : 30000));
 
   const act = async (label, fn) => { setBusy(label); try { await fn(); await load(); } catch (e) { setMsg({ tone: 'error', text: e.message }); } finally { setBusy(''); } };
   async function exportAs(format) {
@@ -103,9 +117,9 @@ export default function ReportDetail() {
           {/* Receipts go in where you are standing. Anything added here is in
               this case from the moment it lands, before anyone checks it, which
               is the difference between working case-first and filing later. */}
-          {canEdit && (
+          {editable && isOwner && (
             <div className="card">
-              <div className="card-title">Add receipts to this case</div>
+              <div className="card-title">Add receipts to this {r.kind === 'case' ? 'case' : 'report'}</div>
               <div className="card-subtitle">Drop the photos in, or scan the code and shoot them on your phone. Each one is read for you.</div>
               <ReceiptUpload reportId={id} onUploaded={load} />
             </div>

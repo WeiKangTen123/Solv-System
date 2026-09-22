@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useVisiblePolling } from '../utils/useVisiblePolling';
 import StatusBadge from '../components/StatusBadge';
 import { fmtMoney } from '../utils/format';
 
@@ -53,6 +54,8 @@ export default function CaseCheck() {
   const [dirtyRef] = useState(() => new Set());
 
   useEffect(() => { load().catch(e => setMsg({ tone: 'error', text: e.message })); }, [load]);
+  const reading = !!view?.report?.expenses?.some(e => e.status === 'reading');
+  useVisiblePolling(load, () => (reading ? 2500 : 30000));
   useEffect(() => { api.get('/company').then(d => setCategories(d.categories || [])).catch(() => {}); }, []);
 
   // The receipt for the row being looked at. One request per selection, and
@@ -137,6 +140,9 @@ export default function CaseCheck() {
 
   if (!view) return <div style={{ color: 'var(--text-muted)' }}>{msg?.text || 'Loading…'}</div>;
   const r = view.report;
+  // Exactly what POST /reports/:id/review-all allows. Gating on `editable`
+  // alone gave a manager a live table and a button the server then refused.
+  const mayEdit = view.editable && (view.isOwner || user?.role === 'admin');
   const left = r.expenses.filter(e => e.status !== 'reviewed').length;
   const selected = r.expenses.find(e => e.id === sel) || null;
 
@@ -154,8 +160,8 @@ export default function CaseCheck() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-outline" disabled={!!busy} onClick={saveAll}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
-          <button className="btn btn-primary" disabled={!!busy || !view.editable} onClick={markAll}>
+          <button className="btn btn-outline" disabled={!!busy || !mayEdit} onClick={saveAll}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
+          <button className="btn btn-primary" disabled={!!busy || !mayEdit} onClick={markAll}>
             {busy === 'check' ? 'Checking…' : 'Check them all'}
           </button>
         </div>
@@ -163,6 +169,7 @@ export default function CaseCheck() {
 
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
       {!view.editable && <div className="alert alert-info">This case has been {r.status}; nothing can be changed until it is sent back.</div>}
+      {view.editable && !mayEdit && <div className="alert alert-info">This is {view.report.ownerName || 'someone else'}&rsquo;s case. You can read it; only they can check their own receipts.</div>}
 
       <div style={{ display: 'grid', gridTemplateColumns: selected ? 'minmax(0, 1fr) 360px' : '1fr', gap: 16, alignItems: 'start' }}>
         <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
@@ -184,32 +191,32 @@ export default function CaseCheck() {
                   <tr key={e.id} onClick={() => setSel(e.id)}
                       style={{ cursor: 'pointer', background: on ? 'var(--bg-hover)' : undefined }}>
                     <td><input className="form-input" type="date" style={{ minWidth: 118 }}
-                               disabled={!view.editable} value={row.receiptDate || ''} onChange={ev => set(e.id, 'receiptDate', ev.target.value)} /></td>
+                               disabled={!mayEdit} value={row.receiptDate || ''} onChange={ev => set(e.id, 'receiptDate', ev.target.value)} /></td>
                     <td><input className="form-input" style={{ minWidth: 126 }}
-                               disabled={!view.editable} value={row.merchant || ''} placeholder="Merchant"
+                               disabled={!mayEdit} value={row.merchant || ''} placeholder="Merchant"
                                onChange={ev => set(e.id, 'merchant', ev.target.value)} /></td>
                     <td>
                       {many
                         ? <Link to={`/expenses/${e.id}`} style={{ fontSize: 12 }}>{e.lines.length} lines →</Link>
                         : <select className="form-input" style={{ minWidth: 118 }}
-                                  disabled={!view.editable} value={row.category || ''} onChange={ev => set(e.id, 'category', ev.target.value)}>
+                                  disabled={!mayEdit} value={row.category || ''} onChange={ev => set(e.id, 'category', ev.target.value)}>
                             <option value="">Category…</option>
                             {categories.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>}
                     </td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                       <input className="form-input" style={{ width: 50, textTransform: 'uppercase' }}
-                             disabled={!view.editable} value={row.currency || ''} maxLength={3} aria-label="Currency"
+                             disabled={!mayEdit} value={row.currency || ''} maxLength={3} aria-label="Currency"
                              onChange={ev => set(e.id, 'currency', ev.target.value.toUpperCase().slice(0, 3))} />
                       <input className="form-input" type="number" step="0.01" aria-label="Amount"
                              style={{ width: 92, textAlign: 'right', marginLeft: 4, fontFamily: 'var(--font-mono)' }}
-                             disabled={!view.editable} value={row.total ?? ''} onChange={ev => set(e.id, 'total', ev.target.value)} />
+                             disabled={!mayEdit} value={row.total ?? ''} onChange={ev => set(e.id, 'total', ev.target.value)} />
                     </td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
                       {e.baseTotal != null ? fmtMoney(e.baseTotal, '') : <span style={{ color: 'var(--warning)' }}>no rate</span>}
                     </td>
                     <td><input className="form-input" style={{ minWidth: 140 }}
-                               disabled={!view.editable} value={row.purpose || ''} placeholder="What it was for"
+                               disabled={!mayEdit} value={row.purpose || ''} placeholder="What it was for"
                                onChange={ev => set(e.id, 'purpose', ev.target.value)} /></td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <StatusBadge status={e.status} />

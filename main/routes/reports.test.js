@@ -158,6 +158,30 @@ describe('routes/reports — checking a case in bulk', () => {
     expect(store.getExpense(dup.id).status).toBe('duplicate');
   });
 
+  test('an expense belonging to somebody else is never marked reviewed', async () => {
+    const c = reports.createReport({ companyId: emp.companyId, userId: emp.id, kind: 'case', title: 'c' });
+    const mine = add(c);
+    // however it got in there, this loop must not launder it into the claim
+    const theirs = store.createExpense({ companyId: admin.companyId, userId: admin.id, status: 'review-needed', merchant: 'Raffles Hotel',
+      currency: 'SGD', total: 900, receiptDate: '2026-09-04',
+      lines: [{ category: 'Lodging', amount: 900, baseAmount: 900, fxRate: 1, fxSource: 'base', fxRateDate: '2026-09-04' }] });
+    reports.addExpense(c.id, theirs.id);
+
+    const res = await request(serverFor(app)).post(`/api/reports/${c.id}/review-all`).set(as(emp)).expect(200);
+    expect(res.body.reviewed).toBe(1);
+    expect(store.getExpense(mine.id).status).toBe('reviewed');
+    expect(store.getExpense(theirs.id).status).toBe('review-needed');
+    expect(res.body.skipped.find(s => s.id === theirs.id).why).toMatch(/belongs to someone else/);
+  });
+
+  test('checking a case leaves a trace in its history', async () => {
+    const c = reports.createReport({ companyId: emp.companyId, userId: emp.id, kind: 'case', title: 'c' });
+    add(c);
+    await request(serverFor(app)).post(`/api/reports/${c.id}/review-all`).set(as(emp)).expect(200);
+    const kinds = reports.getReport(c.id).events.map(e => e.kind || e.type || e.action);
+    expect(kinds).toContain('checked');
+  });
+
   test('lines that do not add up are left alone', async () => {
     const c = reports.createReport({ companyId: emp.companyId, userId: emp.id, kind: 'case', title: 'c' });
     const e = add(c, { total: 100 });

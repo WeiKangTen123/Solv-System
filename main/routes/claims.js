@@ -127,7 +127,7 @@ router.delete('/group/:groupId', requireAuth, (req, res) => {
   let casesRemoved = 0;
   for (const id of cases) {
     const c = reports.getReport(id);
-    if (c && c.kind === 'case' && wf.isEditable(c) && !c.expenses.length) { reports.deleteReport(id); casesRemoved++; }
+    if (c && c.userId === req.user.id && c.kind === 'case' && wf.isEditable(c) && !c.expenses.length) { reports.deleteReport(id); casesRemoved++; }
   }
   logger.info('Claim import undone', { userId: req.user.id, groupId: req.params.groupId, removed: members.length - kept.length, kept: kept.length, files, casesRemoved });
   res.json({

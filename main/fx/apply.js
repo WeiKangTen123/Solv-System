@@ -39,7 +39,7 @@ async function applyFx(expenseId, { force = false } = {}) {
   }
 
   const date = policyDate(company.fxPolicy, e);
-  let r = await rates.getRate({ from: e.currency, to: base, date });
+  let r = await rates.getRate({ from: e.currency, to: base, date, force });
   // A fixed monthly table is a promise finance made; a provider's number is not it.
   if (r && company.fxPolicy === 'monthly_fixed' && r.source !== 'manual') r = null;
   // A rate that moved further than a currency moves is not put on a line: the

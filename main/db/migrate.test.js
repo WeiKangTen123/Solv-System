@@ -12,6 +12,11 @@ describe('db/migrate', () => {
 
   test('is idempotent', () => {
     expect(() => require('./migrate').run()).not.toThrow();
+
+    // DROP TABLE takes the table's indexes with it, and schema.sql ran before
+    // the step, so nothing put them back until the next boot.
+    const idx = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'expense_reports'").all().map(r => r.name);
+    expect(idx).toContain('idx_reports_user');
   });
 
   // The one migration that rebuilds a table rather than adding a column. It has

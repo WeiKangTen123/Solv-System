@@ -4,6 +4,7 @@ const users   = require('../store/users');
 const { reportPayload } = require('../reports/expense-payload');
 const { getOrCreateContact } = require('./contacts');
 const { accountForCategory, getAccounts, getTaxRates } = require('./category-account');
+const { fmtRate } = require('../reports/expense-doc');
 const attachments = require('./attachments');
 const { withRetry, xeroErrMsg } = require('./xero-utils');
 const { _fmtDate: fmtDate } = require('../reports/expense-doc');
@@ -37,7 +38,7 @@ function buildBill(payload, { accounts = [], defaultAccountCode = null, taxRates
     const description = [
       fmtDate(l.date), l.merchant, l.category, l.purpose,
       l.onBehalfOf ? `on behalf of ${l.onBehalfOf}` : null,
-      foreign ? `${l.currency} ${money(l.amount)} × ${l.fxRate}` : null,
+      foreign ? `${l.currency} ${money(l.amount)} × ${fmtRate(l.fxRate)}` : null,
     ].filter(Boolean).join(' · ').slice(0, 4000);
     // Local GST only where the receipt shows tax in the base currency; foreign tax is never input tax.
     const taxed = !foreign && Number(l.tax) > 0 && gst;

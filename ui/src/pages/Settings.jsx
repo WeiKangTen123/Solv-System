@@ -189,7 +189,7 @@ export default function Settings() {
                  value={newRate.from} onChange={e => setNewRate({ ...newRate, from: e.target.value.toUpperCase().slice(0, 3) })} aria-label="From currency" />
           <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>→ {company.baseCurrency} on</span>
           <input id="rate-date" className="form-input" type="date" style={{ maxWidth: 170 }} required value={newRate.date} onChange={e => setNewRate({ ...newRate, date: e.target.value })} aria-label="Date" />
-          <input id="rate-value" className="form-input" type="number" step="0.000001" min="0" style={{ maxWidth: 150 }} placeholder="0.01341" required value={newRate.rate} onChange={e => setNewRate({ ...newRate, rate: e.target.value })} aria-label="Rate" />
+          <input id="rate-value" className="form-input" type="number" step="any" min="0" style={{ maxWidth: 150 }} placeholder="0.01341" required value={newRate.rate} onChange={e => setNewRate({ ...newRate, rate: e.target.value })} aria-label="Rate" />
           <button className="btn btn-primary" type="submit">Save rate</button>
         </form>
       </div>

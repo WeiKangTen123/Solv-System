@@ -113,7 +113,13 @@ function _asCase(job, expenseIds) {
       companyId: owner.companyId, userId: job.userId, kind: 'case', title,
       purpose: from ? `Imported from ${from}` : 'Imported receipts',
     });
-    for (const id of expenseIds) reports.addExpense(c.id, id);
+    // Filing is per receipt: one that will not go in must not cost the import
+    // the case, which used to be reported as null while existing and holding
+    // half of them.
+    for (const id of expenseIds) {
+      try { reports.addExpense(c.id, id); }
+      catch (err) { logger.warn('A receipt would not go into the case', { jobId: job.id, caseId: c.id, expenseId: id, error: err.message }); }
+    }
     logger.info('Import became a case', { jobId: job.id, caseId: c.id, number: c.number, expenses: expenseIds.length });
     return c.id;
   } catch (err) {
