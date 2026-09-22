@@ -10,3 +10,7 @@ ui/node_modules/
 ui/dist/
 *.bak
 .claude/settings.local.json
+
+# Where your server is. The repository is public; its address is not.
+# The template, main/.deploy.env.example, is committed.
+.deploy.env

@@ -1,6 +1,11 @@
+// A fatal exit under pm2 is one silent restart. Say why — in the log, and in
+// Slack when a webhook is configured — and give the post a moment to leave
+// before exiting; ecosystem.config.js's backoff keeps a crash loop from
+// becoming a storm.
 function fatal(kind, msg) {
   console.error(`${kind}:`, msg);
   try { require('./utils/logger').error(kind, { error: msg }); } catch {}
+  try { require('./utils/notify').notifyError({ context: `${kind} — process exiting`, error: String(msg) }).catch(() => {}); } catch {}
   setTimeout(() => process.exit(1), 1500).unref();
 }
 process.on('uncaughtException', err => {

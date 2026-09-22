@@ -11,7 +11,10 @@
     "build:ui": "npm --prefix ui run build",
     "test": "jest --runInBand --forceExit",
     "lint": "eslint .",
-    "backup": "node main/db/backup.js"
+    "backup": "node main/db/backup.js",
+    "backup:pull": "bash main/scripts/backup-pull.sh",
+    "preflight": "node main/scripts/preflight.js",
+    "deploy": "bash main/scripts/deploy.sh"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.9",

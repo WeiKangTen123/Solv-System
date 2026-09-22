@@ -75,4 +75,9 @@ function run() {
   });
 }
 
-module.exports = { run, _ensureColumn, _step };
+// The version a migrated database ends on. Kept as a constant so preflight can
+// say whether a box is on the current schema without running the migration to
+// find out; migrate.test.js holds it to the highest step declared above.
+const LATEST = 3;
+
+module.exports = { run, LATEST, _ensureColumn, _step };

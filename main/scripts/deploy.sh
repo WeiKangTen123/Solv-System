@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+#
+# Deploy to the server, and refuse to claim success without proving it.
+#
+# The rule this enforces, learned the expensive way on the Xero app next door:
+# a deploy has not happened until the server reports the SAME COMMIT the local
+# repository is on. Health checks and test counts describe whatever is running;
+# only the SHA says whether it is what you meant to ship. Three deploys there
+# silently did not apply — files copied by hand left untracked paths that
+# blocked every git pull — while each one reported "healthy" and a passing test
+# count, both true of the OLD code.
+#
+#   npm run deploy             # deploy HEAD
+#   npm run deploy -- --check  # report drift without changing anything
+#   SKIP_CI=1 npm run deploy   # do not wait for the GitHub Actions run
+#
+# Where it deploys to is yours to set, once, in main/.deploy.env (gitignored;
+# main/.deploy.env.example is the template). Two ways to reach the box:
+#
+#   DEPLOY_SSH=weika@203.0.113.9        any server you can ssh to
+#   DEPLOY_INSTANCE=xero-automation     a Google Cloud VM, reached with gcloud
+#   DEPLOY_ZONE=us-central1-a
+#
+# Beyond the SHA rule, a deploy: waits for CI to be green, installs from the
+# lockfiles (npm ci — npm install rewrote package-lock.json on the box and
+# blocked the next pull), runs the tests there, builds the UI, runs preflight,
+# takes a verified backup before restarting, reloads through
+# ecosystem.config.js so the restart policy is the committed one, checks the
+# RUNNING process reports the shipped commit, installs the daily backup cron,
+# and tags the commit deploy/<timestamp> so a rollback has a name.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+[ -f main/.deploy.env ] && . main/.deploy.env
+
+APP="${DEPLOY_PATH:-/home/weika/solv-system}"
+RUNAS="${DEPLOY_USER:-weika}"
+PM2_APP="${DEPLOY_PM2_APP:-solv-expense}"
+BRANCH="${DEPLOY_BRANCH:-main}"
+HEALTH="${DEPLOY_HEALTH:-}"
+ZONE="${DEPLOY_ZONE:-us-central1-a}"
+
+red()  { printf '\033[31m%s\033[0m\n' "$*"; }
+grn()  { printf '\033[32m%s\033[0m\n' "$*"; }
+ylw()  { printf '\033[33m%s\033[0m\n' "$*"; }
+info() { printf '  %s\n' "$*"; }
+die()  { red "✗ $*"; exit 1; }
+
+# ── 0. Where does this go? ──────────────────────────────────────────────────
+# Named rather than defaulted. A deploy script with a plausible-looking default
+# target is one run away from restarting somebody else's application.
+if [ -n "${DEPLOY_SSH:-}" ]; then
+  MODE=ssh
+  remote() { ssh -o BatchMode=yes "$DEPLOY_SSH" "cd $APP && $1" 2>/dev/null; }
+  pull_file() { scp -q "$DEPLOY_SSH:$1" "$2"; }
+  TARGET="$DEPLOY_SSH:$APP"
+elif [ -n "${DEPLOY_INSTANCE:-}" ]; then
+  MODE=gcloud
+  command -v gcloud >/dev/null 2>&1 || die "DEPLOY_INSTANCE is set but gcloud is not installed."
+  remote() { gcloud compute ssh "$DEPLOY_INSTANCE" --zone="$ZONE" --command="sudo -u $RUNAS -H bash -lc \"cd $APP && $1\"" 2>/dev/null; }
+  pull_file() { gcloud compute scp "$DEPLOY_INSTANCE:$1" "$2" --zone="$ZONE" 2>/dev/null; }
+  TARGET="$DEPLOY_INSTANCE ($ZONE):$APP"
+else
+  red "✗ No deploy target configured."
+  cat <<'MSG'
+
+  Copy main/.deploy.env.example to main/.deploy.env and set where this deploys
+  to. It is gitignored, so the address of your server does not go to GitHub.
+
+    DEPLOY_SSH=user@host           any box you can ssh to, or
+    DEPLOY_INSTANCE=my-vm          a Google Cloud VM (DEPLOY_ZONE too)
+
+    DEPLOY_PATH=/home/weika/solv-system     where the checkout lives there
+    DEPLOY_HEALTH=https://your-host/dashboard/health
+
+  docs/RUNBOOK.md has what the box needs installed before the first deploy.
+MSG
+  exit 1
+fi
+
+CHECK_ONLY=0
+[ "${1:-}" = "--check" ] && CHECK_ONLY=1
+
+# ── 1. Local must be clean and pushed ───────────────────────────────────────
+# Deploying with uncommitted changes ships something nobody can reproduce from
+# the repository; the server pulls from origin, so unpushed commits never arrive.
+LOCAL_SHA=$(git rev-parse HEAD)
+echo "Local"
+info "commit  $(git log --oneline -1)"
+info "target  $TARGET"
+
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  git status --short --untracked-files=no | sed 's/^/    /'
+  die "Uncommitted changes. Commit or stash before deploying."
+fi
+
+git fetch -q origin
+if [ -n "$(git log "origin/$BRANCH..HEAD" --oneline)" ]; then
+  git log "origin/$BRANCH..HEAD" --oneline | sed 's/^/    /'
+  die "Local commits are not pushed. The server pulls from origin/$BRANCH."
+fi
+grn "  ✓ clean and pushed"
+
+# ── 1b. CI must be green for this commit ────────────────────────────────────
+if [ "$CHECK_ONLY" != "1" ] && [ "${SKIP_CI:-0}" != "1" ] && command -v gh >/dev/null 2>&1; then
+  ci_run() { gh run list --commit "$LOCAL_SHA" --workflow ci --json databaseId -q '.[0].databaseId' 2>/dev/null || true; }
+  RUN_ID=$(ci_run)
+  if [ -z "$RUN_ID" ]; then sleep 20; RUN_ID=$(ci_run); fi
+  if [ -n "$RUN_ID" ]; then
+    info "CI run $RUN_ID — waiting for it"
+    if gh run watch "$RUN_ID" --exit-status >/dev/null 2>&1; then grn "  ✓ CI green"
+    else die "CI is red for $LOCAL_SHA — fix it before deploying (SKIP_CI=1 to override)"; fi
+  else
+    ylw "  ! no CI run found for $LOCAL_SHA — continuing without it"
+  fi
+fi
+
+# ── 2. What is the server actually running? ─────────────────────────────────
+echo
+echo "Server"
+remote 'true' >/dev/null 2>&1 || die "cannot reach $TARGET — check the address, your ssh access, and that $APP exists (docs/RUNBOOK.md)"
+BEFORE=$(remote 'git rev-parse HEAD' | tr -d '[:space:]')
+info "commit  $(remote 'git log --oneline -1' | head -1)"
+
+DIRTY=$(remote 'git status --porcelain --untracked-files=no' || true)
+if [ -n "$DIRTY" ]; then
+  red "  ✗ tracked files modified ON THE SERVER:"
+  echo "$DIRTY" | sed 's/^/      /'
+  info "these will block the pull — usually an npm install --save run there"
+fi
+
+if [ "$BEFORE" = "$LOCAL_SHA" ]; then
+  grn "  ✓ already at $LOCAL_SHA"
+  [ "$CHECK_ONLY" = "1" ] && exit 0
+else
+  info "behind by: $(remote "git log --oneline ${BEFORE}..origin/$BRANCH 2>/dev/null | wc -l" | tr -d '[:space:]') commit(s)"
+fi
+
+if [ "$CHECK_ONLY" = "1" ]; then
+  [ -n "$DIRTY" ] && die "server has local modifications"
+  echo; grn "check only — nothing changed"; exit 0
+fi
+
+# ── 3. Deploy ───────────────────────────────────────────────────────────────
+echo
+echo "Deploying"
+if [ -n "$DIRTY" ]; then
+  # `git checkout -- .` rather than a computed file list: the list has to
+  # survive three shell layers and the quoting silently mangles. A deploy
+  # target should never carry local edits, so discarding all of them is both
+  # simpler and more correct than reconstructing which ones.
+  info "discarding the server's local edits to tracked files"
+  remote 'git checkout -- .' >/dev/null || true
+  STILL=$(remote 'git status --porcelain --untracked-files=no' || true)
+  [ -n "$STILL" ] && die "could not discard the server's local edits: $STILL"
+fi
+
+PULL=$(remote "git fetch -q origin && git pull --ff-only origin $BRANCH 2>&1 | tail -3" || true)
+echo "$PULL" | sed 's/^/    /'
+
+# ── 4. The check that is the whole point ────────────────────────────────────
+AFTER=$(remote 'git rev-parse HEAD' | tr -d '[:space:]')
+if [ "$AFTER" != "$LOCAL_SHA" ]; then
+  echo
+  red "✗ DEPLOY DID NOT APPLY"
+  info "expected $LOCAL_SHA"
+  info "server   $AFTER"
+  info "the pull was refused — resolve the blockers above and run again"
+  exit 1
+fi
+grn "  ✓ server is on $AFTER"
+
+# ── 5. Only now is it worth building ────────────────────────────────────────
+echo
+echo "Building"
+# npm ci, never npm install: install rewrote package-lock.json on the box and
+# blocked the next pull.
+remote 'npm ci 2>&1 | tail -1' | sed 's/^/    /'
+remote 'npm --prefix ui ci 2>&1 | tail -1' | sed 's/^/    /'
+TESTS=$(remote 'npm test 2>&1 | grep -E "^Tests:" | tail -1' || true)
+info "${TESTS:-tests did not report}"
+echo "$TESTS" | grep -q 'failed' && die "tests failed on the server"
+BUILD=$(remote 'npm run build:ui 2>&1 | tail -4' || true)
+echo "$BUILD" | grep -q 'built in' || die "UI build failed: $BUILD"
+echo "$BUILD" | grep -E 'built in' | sed 's/^/    /'
+
+# ── 5b. Is the box fit to run it? ───────────────────────────────────────────
+echo
+echo "Preflight"
+PRE=$(remote 'NODE_ENV=production node main/scripts/preflight.js 2>&1' || true)
+echo "$PRE" | sed 's/^/    /'
+echo "$PRE" | grep -q 'not ready to run Solv' && die "preflight failed on the server — fix the ✗ lines above"
+
+# ── 5c. A verified backup before anything restarts ──────────────────────────
+echo
+echo "Backing up"
+BACKUP=$(remote 'node main/db/backup.js 2>&1 | tail -1' || true)
+info "$BACKUP"
+echo "$BACKUP" | grep -q 'Backed up' || die "backup did not succeed — not restarting"
+
+echo
+echo "Restarting"
+# Reload through the committed ecosystem file so the restart policy (backoff,
+# max_restarts) is what runs. The first deploy after a bare `pm2 start` cannot
+# reload into the new options, so it is deleted and started once.
+if remote 'pm2 jlist' | grep -q '"exp_backoff_restart_delay":1000'; then
+  remote "pm2 startOrReload ecosystem.config.js --update-env >/dev/null 2>&1; pm2 save >/dev/null 2>&1; sleep 7; pm2 list | grep $PM2_APP" | sed 's/^/    /'
+else
+  info "first deploy under ecosystem.config.js — replacing the bare pm2 process once"
+  remote "pm2 delete $PM2_APP >/dev/null 2>&1 || true; pm2 start ecosystem.config.js >/dev/null 2>&1; pm2 save >/dev/null 2>&1; sleep 7; pm2 list | grep $PM2_APP" | sed 's/^/    /'
+fi
+
+# ── 6. The running process, not the files on disk ───────────────────────────
+if [ -z "$HEALTH" ]; then
+  ylw "  ! DEPLOY_HEALTH is not set — cannot confirm the RUNNING process is on $LOCAL_SHA"
+  ylw "    set it in main/.deploy.env; this is the check that catches a restart that did not happen"
+else
+  HEALTH_OUT=$(curl -sk --max-time 20 "$HEALTH" || true)
+  info "$HEALTH_OUT"
+  echo "$HEALTH_OUT" | grep -q healthy || die "health check did not report healthy"
+  RUNNING=$(echo "$HEALTH_OUT" | sed -n 's/.*"commit":"\([0-9a-f]*\)".*/\1/p')
+  [ "$RUNNING" = "$LOCAL_SHA" ] || die "the running process reports commit '${RUNNING:-none}', not $LOCAL_SHA — it did not restart onto the new code"
+  grn "  ✓ running process is on $RUNNING"
+fi
+
+# ── 7. Daily backup cron (idempotent) and a name for this deploy ────────────
+# node by absolute path: cron's PATH need not include node. Resolved in its own
+# remote call and pasted in as a literal — a `$N` inside the command is expanded
+# by the ssh login shell (empty) before the inner bash ever runs.
+NODE_BIN=$(remote 'command -v node' | tr -d '[:space:]')
+[ -n "$NODE_BIN" ] || NODE_BIN=node
+remote "(crontab -l 2>/dev/null | grep -v 'main/db/backup.js'; printf '0 19 * * * cd %s && %s main/db/backup.js >> logs/backup.log 2>&1\n' $APP $NODE_BIN) | crontab -" >/dev/null 2>&1 \
+  && info "daily backup cron installed (03:00 Singapore, $NODE_BIN)" || ylw "  ! could not install the backup cron"
+TAG="deploy/$(date -u +%Y%m%d-%H%M%S)"
+git tag -f "$TAG" "$LOCAL_SHA" >/dev/null 2>&1 && git push -q origin "$TAG" 2>/dev/null && info "tagged $TAG" || ylw "  ! could not push tag $TAG"
+
+echo
+grn "✓ deployed $LOCAL_SHA — server commit verified, tests passed, preflight clean, backed up, running process confirmed"
