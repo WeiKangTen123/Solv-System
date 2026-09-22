@@ -33,7 +33,24 @@ function verifyImageToken(token, receiptId) {
 // Reads still running, so a test can wait for them.
 const _inflight = new Set();
 
-function storeReceipt(user, { mime, data, filename, source }) {
+// Filing a freshly uploaded receipt into a case. Unlike the bulk filing route
+// this accepts an expense that has not been checked yet — that is the whole
+// point of uploading into a case — but the case must still be the claimant's
+// own and still be open. Submit goes on refusing until every receipt in it has
+// been checked, so nothing gets weaker.
+function fileIntoCase(user, expenseId, reportId) {
+  if (!reportId) return null;
+  const reports = require('../store/reports');
+  const wf = require('../reports/workflow');
+  const r = reports.getReport(reportId);
+  if (!r || r.companyId !== user.companyId) return { error: 'Case not found', status: 404 };
+  if (r.userId !== user.id && user.role !== 'admin') return { error: 'That case belongs to someone else', status: 403 };
+  if (!wf.isEditable(r)) return { error: `A ${r.status} case cannot take more receipts`, status: 409 };
+  reports.addExpense(r.id, expenseId);
+  return null;
+}
+
+function storeReceipt(user, { mime, data, filename, source, reportId }) {
   if (!receiptStore.isAcceptedMime(mime)) {
     return { status: 400, body: { error: `Unsupported file type${mime ? ` (${mime})` : ''}. Accepted: ${receiptStore.acceptedMimes().join(', ')}.` } };
   }
@@ -60,6 +77,10 @@ function storeReceipt(user, { mime, data, filename, source }) {
   const src = source === 'phone' ? 'phone' : 'upload';
   const receipt = store.createReceipt({ id: receiptId, companyId: user.companyId, userId: user.id, file: storedName, mime, sizeBytes: buffer.length, sha256: hash, source: src, originalName: filename || null });
   const expense = store.createExpense({ companyId: user.companyId, userId: user.id, receiptId, source: src, status: 'reading', currency: users.getUserDefaults(user.id).currency });
+  if (reportId) {
+    const bad = fileIntoCase(user, expense.id, reportId);
+    if (bad) return { status: bad.status, body: { error: bad.error } };
+  }
   logger.info('Receipt stored', { userId: user.id, receiptId, bytes: buffer.length, mime, source: src });
 
   const done = new Promise(resolve => setImmediate(() => {
@@ -89,7 +110,7 @@ function captureUrl(req, token) { return `${req.protocol}://${req.get('host')}/c
 
 router.post('/pair', requireAuth, async (req, res) => {
   try {
-    const token = pairing.create(req.user.id);
+    const token = pairing.create(req.user.id, { reportId: (req.body || {}).reportId || null });
     const url   = captureUrl(req, token);
     const qrSvg = await QRCode.toString(url, { type: 'svg', margin: 1, width: 220, errorCorrectionLevel: 'M' });
     res.status(201).json({ token, url, qrSvg, expiresInMs: pairing.TTL_MS, maxUploads: pairing.MAX_USES });
@@ -132,12 +153,18 @@ const EXPIRED = { error: 'This link has expired. Show a new QR code on your comp
 router.get('/capture/:token', (req, res) => {
   const state = pairing.verify(req.params.token);
   if (!state) return res.status(401).json({ ok: false, ...EXPIRED });
-  res.json({ ok: true, usesLeft: state.usesLeft, expiresInMs: state.expiresInMs });
+  let openCase = null;
+  if (state.reportId) {
+    const r = require('../store/reports').getReport(state.reportId);
+    if (r) openCase = { id: r.id, number: r.number, title: r.title || null };
+  }
+  res.json({ ok: true, usesLeft: state.usesLeft, expiresInMs: state.expiresInMs, reportId: state.reportId || null, case: openCase });
 });
 router.get('/capture/:token/status', (req, res) => {
   const state = pairing.verify(req.params.token);
   if (!state) return res.status(401).json(EXPIRED);
-  res.json({ ok: true, usesLeft: state.usesLeft, expiresInMs: state.expiresInMs, receipts: _phoneView(state.receiptIds, false) });
+  res.json({ ok: true, usesLeft: state.usesLeft, expiresInMs: state.expiresInMs, reportId: state.reportId || null,
+             receipts: _phoneView(state.receiptIds, false) });
 });
 router.post('/capture/:token', (req, res) => {
   const state = pairing.verify(req.params.token);
@@ -145,7 +172,7 @@ router.post('/capture/:token', (req, res) => {
   try {
     const me = users.findById(state.userId);
     if (!me) return res.status(401).json(EXPIRED);
-    const { status, body } = storeReceipt(me, { ...(req.body || {}), source: 'phone' });
+    const { status, body } = storeReceipt(me, { ...(req.body || {}), source: 'phone', reportId: state.reportId || null });
     if (status === 201) pairing.consume(req.params.token, body.receipt.id);
     if (body.imageToken) delete body.imageToken;
     res.status(status).json(body);
@@ -185,5 +212,6 @@ router.get('/:id/image', asyncHandler(async (req, res) => {
 
 module.exports = router;
 module.exports.storeReceipt = storeReceipt;
+module.exports.fileIntoCase = fileIntoCase;
 module.exports.issueImageToken = issueImageToken;
 module.exports._drain = async function _drain() { while (_inflight.size) await Promise.allSettled([..._inflight]); };
