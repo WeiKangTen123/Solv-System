@@ -36,7 +36,9 @@ function _coverPatch(body) {
   const patch = {};
   for (const k of COVER) if (body[k] !== undefined) patch[k] = body[k] === '' ? null : body[k];
   for (const k of ['periodFrom', 'periodTo']) if (patch[k] && !/^\d{4}-\d{2}-\d{2}$/.test(String(patch[k]))) throw new Error(`${k === 'periodFrom' ? 'From' : 'To'} must be YYYY-MM-DD`);
-  if (patch.kind && !['trip', 'period'].includes(patch.kind)) throw new Error('kind must be trip or period');
+  // 'case' was added to the store, the schema and the printed cover and missed
+  // here, so every case created through the UI was refused by its own route.
+  if (patch.kind && !['trip', 'period', 'case'].includes(patch.kind)) throw new Error('kind must be trip, period or case');
   if (patch.advances !== undefined && patch.advances !== null && !(Number(patch.advances) >= 0)) throw new Error('Advances must be a number');
   if (patch.nights !== undefined && patch.nights !== null) patch.nights = Number(patch.nights) >= 0 ? Math.round(Number(patch.nights)) : null;
   return patch;

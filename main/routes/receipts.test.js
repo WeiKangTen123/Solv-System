@@ -154,6 +154,26 @@ describe('routes/receipts — uploading into a case', () => {
       .send({ mime: 'image/jpeg', data: jpeg(), reportId: 'no-such-case' }).expect(404);
   });
 
+  // The case was checked after the file had been written and the rows created,
+  // so a refused upload answered 403 and left a stray expense in the pile with
+  // the reader already running on it.
+  test('a refused upload leaves nothing behind at all', async () => {
+    const theirs = newCase(other);
+    const before = store.listExpenses({ userId: owner.id }).length;
+    const files = () => store.listExpenses({ userId: owner.id }).filter(e => e.receipt).length;
+    const filesBefore = files();
+
+    await request(serverFor(app)).post('/api/receipts').set(as(ownerTok))
+      .send({ mime: 'image/jpeg', data: jpeg(), reportId: theirs.id }).expect(403);
+    await request(serverFor(app)).post('/api/receipts').set(as(ownerTok))
+      .send({ mime: 'image/jpeg', data: jpeg(), reportId: 'no-such-case' }).expect(404);
+    await routes._drain();
+
+    expect(store.listExpenses({ userId: owner.id })).toHaveLength(before);
+    expect(files()).toBe(filesBefore);
+    expect(reports.getReport(theirs.id).expenses).toHaveLength(0);
+  });
+
   test('a phone pairing opened for a case sends its photographs there', async () => {
     const c = newCase();
     const pair = await request(serverFor(app)).post('/api/receipts/pair').set(as(ownerTok)).send({ reportId: c.id }).expect(201);

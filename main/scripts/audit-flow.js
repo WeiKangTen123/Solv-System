@@ -676,6 +676,101 @@ function expectStatus(r, want, what) {
     expectStatus(await call('DELETE', `/api/reports/${d.json.report.id}`, { token: S.E }), 200, 'deleting a draft');
   });
 
+  // ── 8b. Cases ───────────────────────────────────────────────────────────
+  section('Cases');
+
+  // Unique bytes each time, so the duplicate guard does not answer instead of
+  // the case guard. The reader will make nothing of them, which is fine: what
+  // is being checked is where the receipt lands, not what it says.
+  let _b = 0;
+  const scrap = () => Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, ++_b, Date.now() % 251]).toString('base64');
+  const countMine = async () => ((await call('GET', '/api/expenses', { token: S.E })).json.expenses || []).length;
+  // The reader runs after the upload answers, and an expense still being read
+  // cannot be edited or checked. Every case check below waits for it.
+  const waitRead = async id => {
+    for (let i = 0; i < 40; i++) {
+      const e = (await call('GET', `/api/expenses/${id}`, { token: S.E })).json.expense;
+      if (!e || e.status !== 'reading') return e;
+      await sleep(1500);
+    }
+    throw new Error('the read never finished');
+  };
+
+  await check('a case can be created by hand', async () => {
+    const r = await call('POST', '/api/reports', { token: S.E, body: { kind: 'case', title: 'Chakan commissioning', purpose: 'Site work' } });
+    expectStatus(r, [200, 201], 'create case');
+    expect(r.json.report.kind === 'case', `kind came back as ${r.json.report.kind}`);
+    S.case = r.json.report;
+    return r.json.report.number;
+  });
+
+  await check('a receipt uploaded into a case is in it straight away, unchecked', async () => {
+    const r = await call('POST', '/api/receipts', { token: S.E, body: { mime: 'image/jpeg', data: scrap(), filename: 'a.jpg', reportId: S.case.id } });
+    expectStatus(r, 201, 'upload into a case');
+    S.caseExpense = r.json.expense.id;
+    const e = await waitRead(S.caseExpense);
+    expect(e.reportId === S.case.id, `the receipt did not join the case: ${e.reportId}`);
+    expect(e.status !== 'reviewed', 'it should not be checked yet');
+    return 'in the case, waiting to be checked';
+  });
+
+  await check('a refused upload leaves nothing behind', async () => {
+    const before = await countMine();
+    const theirs = (await call('POST', '/api/reports', { token: S.H, body: { kind: 'case', title: "Henry's case" } })).json.report;
+    const r = await call('POST', '/api/receipts', { token: S.E, body: { mime: 'image/jpeg', data: scrap(), filename: 'b.jpg', reportId: theirs.id } });
+    expectStatus(r, [403, 404], 'uploading into someone else\'s case');
+    const after = await countMine();
+    expect(after === before, `the refused upload still created ${after - before} expense(s)`);
+  });
+
+  await check('a case that has been submitted takes no more receipts', async () => {
+    const c = (await call('POST', '/api/reports', { token: S.E, body: { kind: 'case', title: 'Closed case' } })).json.report;
+    const up = await call('POST', '/api/receipts', { token: S.E, body: { mime: 'image/jpeg', data: scrap(), filename: 'c.jpg', reportId: c.id } });
+    expectStatus(up, 201, 'seed the case');
+    await waitRead(up.json.expense.id);
+    expectStatus(await call('PATCH', `/api/expenses/${up.json.expense.id}`, { token: S.E, body: { merchant: 'Kopitiam', receiptDate: '2026-09-10', currency: 'SGD', total: 12.5 } }), 200, 'fill the receipt in');
+    expectStatus(await call('PUT', `/api/expenses/${up.json.expense.id}/lines`, { token: S.E, body: { lines: [{ category: 'Meals', amount: 12.5, currency: 'SGD' }] } }), 200, 'give it a line');
+    await call('PATCH', `/api/expenses/${up.json.expense.id}/status`, { token: S.E, body: { status: 'reviewed' } });
+    expectStatus(await call('POST', `/api/reports/${c.id}/submit`, { token: S.E }), 200, 'submit the case');
+    const before = await countMine();
+    expectStatus(await call('POST', '/api/receipts', { token: S.E, body: { mime: 'image/jpeg', data: scrap(), filename: 'd.jpg', reportId: c.id } }), 409, 'uploading into a submitted case');
+    expect(await countMine() === before, 'the refused upload still created an expense');
+    S.submittedCase = c.id;
+  });
+
+  await check('a phone session opened for a case sends its photographs there', async () => {
+    const pair = await call('POST', '/api/receipts/pair', { token: S.E, body: { reportId: S.case.id } });
+    expectStatus(pair, [200, 201], 'pair for a case');
+    const page = await call('GET', `/api/receipts/capture/${pair.json.token}`, { tag: 'GET /api/receipts/capture/:id' });
+    expectStatus(page, 200, 'the phone page');
+    expect(page.json.reportId === S.case.id, 'the phone was not told which case it is filling');
+    expect(page.json.case && page.json.case.number === S.case.number, 'the phone does not show the case name');
+    const up = await call('POST', `/api/receipts/capture/${pair.json.token}`, { tag: 'POST /api/receipts/capture/:id', body: { mime: 'image/jpeg', data: scrap(), filename: 'phone.jpg' } });
+    expectStatus(up, 201, 'phone upload');
+    const e = await waitRead(up.json.expense.id);
+    expect(e.reportId === S.case.id, 'the photograph did not land in the case');
+    return `${page.json.case.number} · ${page.json.case.title}`;
+  });
+
+  await check('a whole case is checked in one call, and says what it could not', async () => {
+    const inCase = (await call('GET', `/api/reports/${S.case.id}`, { token: S.E })).json.report.expenses;
+    for (const e of inCase) {
+      await waitRead(e.id);
+      await call('PATCH', `/api/expenses/${e.id}`, { token: S.E, body: { merchant: 'Kopitiam', receiptDate: '2026-09-11', currency: 'SGD', total: 8.4 } });
+      await call('PUT', `/api/expenses/${e.id}/lines`, { token: S.E, body: { lines: [{ category: 'Meals', amount: 8.4, currency: 'SGD' }] } });
+    }
+    const r = await call('POST', `/api/reports/${S.case.id}/review-all`, { token: S.E });
+    expectStatus(r, 200, 'review-all');
+    expect(r.json.reviewed >= 1, `nothing was checked: ${JSON.stringify(r.json.skipped).slice(0, 120)}`);
+    expect(Array.isArray(r.json.skipped), 'no list of what could not be checked');
+    return `${r.json.reviewed} checked, ${r.json.skipped.length} could not be`;
+  });
+
+  await check('a submitted case cannot be bulk-checked, and a stranger never can', async () => {
+    expectStatus(await call('POST', `/api/reports/${S.submittedCase}/review-all`, { token: S.E }), 409, 'bulk-checking a submitted case');
+    expectStatus(await call('POST', `/api/reports/${S.case.id}/review-all`, { token: S.N }), [403, 404], 'a stranger bulk-checking');
+  });
+
   // ── 9. Xero ─────────────────────────────────────────────────────────────
   section('Xero');
 
@@ -780,7 +875,23 @@ function expectStatus(r, want, what) {
       const stage = String(job.stage || job.status);
       expect(stage !== 'undefined', `the job carries no stage: ${JSON.stringify(job).slice(0, 120)}`);
       expect(stage !== 'queued', `the worker never picked the job up (stage ${stage})`);
+      S.importJob = job;
       return `finished as "${stage}"`;
+    });
+
+    await check('what the import created is in a case of its own', async () => {
+      const job = S.importJob;
+      if (!job || job.stage !== 'done') return `the import finished as ${job && job.stage}, nothing to check`;
+      const caseId = job.result && job.result.caseId;
+      const made = (job.result && job.result.created) || [];
+      if (!made.length) return 'the import created nothing, so no case was expected';
+      expect(caseId, 'the import created records but no case');
+      const c = await call('GET', `/api/reports/${caseId}`, { token: S.E });
+      expectStatus(c, 200, 'read the case the import made');
+      expect(c.json.report.kind === 'case', `the import made a ${c.json.report.kind}, not a case`);
+      expect(c.json.report.expenses.length > 0, 'the case the import made is empty');
+      expect(/claim form|\w/.test(c.json.report.title || ''), 'the case has no title');
+      return `${c.json.report.number} · ${c.json.report.expenses.length} in it`;
     });
 
     await check('DELETE /api/claims/import/:jobId clears the job', async () => {
