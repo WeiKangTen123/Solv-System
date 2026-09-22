@@ -20,6 +20,24 @@ const NOT_ON_A_CASE = new Set(['destination', 'nights']);
 const coverFor = kind => (kind === 'case' ? COVER.filter(([k]) => !NOT_ON_A_CASE.has(k)) : COVER);
 const SOURCE = { frankfurter: 'ECB reference rate', 'open.er-api': 'ExchangeRate-API', manual: 'entered', base: 'base currency' };
 
+// What a receipt's lines are, in one short phrase. Listing every line's
+// category verbatim turned a folio split four ways into a column of single
+// words 170px tall, which is how the screen came to look unfinished.
+function summarise(lines = []) {
+  if (!lines.length) return '—';
+  const cats = [...new Set(lines.map(l => l.category).filter(Boolean))];
+  const shown = cats.slice(0, 2).join(', ') + (cats.length > 2 ? ` +${cats.length - 2}` : '');
+  const behalf = lines.some(l => l.onBehalfOf);
+  if (lines.length === 1) return shown + (behalf ? ' ‡' : '');
+  return `${lines.length} lines · ${shown}${behalf ? ' ‡' : ''}`;
+}
+
+// The cell used to name the person inline — Lodging (Henry Bennett). The
+// dagger is shorter, but a mark nothing explains is worse than a long column,
+// so whoever it stands for is named once under the table.
+const onBehalfNames = (expenses = []) =>
+  [...new Set(expenses.flatMap(e => (e.lines || []).map(l => l.onBehalfOf).filter(Boolean)))];
+
 export default function ReportDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -146,8 +164,16 @@ export default function ReportDetail() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0 12px' }}>
               {coverFor(r.kind).map(([k, label, type]) => (
                 <div className="form-group" key={k} style={{ gridColumn: k === 'title' || k === 'purpose' || k === 'notes' ? '1 / -1' : 'auto' }}>
-                  <label className="form-label" htmlFor={`c-${k}`}>{label}</label>
-                  <input id={`c-${k}`} className="form-input" type={type} step={type === 'number' ? '0.01' : undefined} disabled={!canEdit} value={cover[k] ?? ''} onChange={e => setCover({ ...cover, [k]: e.target.value })} />
+                  <label className="form-label" htmlFor={canEdit ? `c-${k}` : undefined}>{label}</label>
+                  {canEdit
+                    ? <input id={`c-${k}`} className="form-input" type={type} step={type === 'number' ? '0.01' : undefined} value={cover[k] ?? ''} onChange={e => setCover({ ...cover, [k]: e.target.value })} />
+                    // Once it is out of your hands the cover is a finished
+                    // document. A row of disabled boxes reads as a form you are
+                    // not allowed to use; this reads as what was submitted.
+                    : <div style={{ fontSize: 13.5, padding: '6px 0', minHeight: 30, borderBottom: '1px solid var(--border)',
+                                    color: (cover[k] ?? '') === '' ? 'var(--text-muted)' : 'var(--text-primary)' }}>
+                        {(cover[k] ?? '') === '' ? '—' : String(cover[k])}
+                      </div>}
                 </div>
               ))}
             </div>
@@ -156,23 +182,28 @@ export default function ReportDetail() {
 
           <div className="card">
             <div className="card-title">Expenses ({r.expenses.length})</div>
-            {!r.expenses.length ? <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Nothing filed yet.</div> : (
+            {!r.expenses.length ? <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Nothing filed yet.</div> : (<>
               <div style={{ overflowX: 'auto' }}>
-                <table className="data-table">
-                  <thead><tr><th>Date</th><th>Merchant</th><th style={{ textAlign: 'right' }}>Amount</th><th style={{ textAlign: 'right' }}>{base}</th><th>Lines</th><th>Status</th><th></th></tr></thead>
+                <table className="data-table check-table">
+                  <thead><tr><th>Date</th><th>Merchant</th><th style={{ textAlign: 'right' }}>Amount</th><th style={{ textAlign: 'right' }}>{base}</th><th>Lines</th><th>Status</th>{canEdit && <th></th>}</tr></thead>
                   <tbody>{r.expenses.map(e => (
                     <tr key={e.id}>
                       <td style={{ whiteSpace: 'nowrap' }}>{e.receiptDate || '—'}</td>
-                      <td><Link to={`/expenses/${e.id}`}>{e.merchant || 'Untitled'}</Link>{e.purpose && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{e.purpose}</div>}</td>
+                      <td style={{ minWidth: 128 }}><Link to={`/expenses/${e.id}`}>{e.merchant || 'Untitled'}</Link>{e.purpose && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{e.purpose}</div>}</td>
                       <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{fmtMoney(e.total, e.currency)}</td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', color: e.fxPending ? 'var(--warning)' : undefined }}>{e.baseTotal != null ? fmtMoney(e.baseTotal, base) : 'rate pending'}</td>
-                      <td style={{ fontSize: 12 }}>{e.lines.map(l => `${l.category}${l.onBehalfOf ? ` (${l.onBehalfOf})` : ''}`).join(', ')}</td>
-                      <td><StatusBadge status={e.status} /></td>
-                      <td>{canEdit && <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => act('rm', () => api.delete(`/reports/${id}/expenses/${e.id}`))}>Remove</button>}</td>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', color: e.fxPending ? 'var(--warning)' : undefined }}>{e.baseTotal != null ? fmtMoney(e.baseTotal, '') : 'rate pending'}</td>
+                      <td style={{ fontSize: 12, minWidth: 112 }}>{summarise(e.lines)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}><StatusBadge status={e.status} /></td>
+                      {canEdit && <td><button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => act('rm', () => api.delete(`/reports/${id}/expenses/${e.id}`))}>Remove</button></td>}
                     </tr>))}</tbody>
                 </table>
               </div>
-            )}
+              {onBehalfNames(r.expenses).length > 0 && (
+                <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--text-muted)' }}>
+                  ‡ includes a cost paid on behalf of {onBehalfNames(r.expenses).join(', ')}.
+                </div>
+              )}
+            </>)}
             {canEdit && unfiled.length > 0 && (
               <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Reviewed expenses not yet in a report</div>
