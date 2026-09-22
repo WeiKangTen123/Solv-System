@@ -38,6 +38,12 @@ export default function Home() {
   const sum = ns => Math.round(ns.reduce((s, n) => s + (Number(n) || 0), 0) * 100) / 100;
   const toClaim = sum([...unfiled.map(e => e.baseTotal), ...drafts.map(r => r.totalBase)]);
   const owed = sum(reports.filter(r => ['submitted', 'approved'].includes(r.status)).map(r => r.totalBase));
+  // A line still waiting for an exchange rate has no base amount, so it adds
+  // nothing to either figure. Left unsaid, the tile quietly understates what a
+  // person is owed and nothing on the screen says why. Not a count: one side
+  // of this knows about unpriced expenses and the other about unpriced lines,
+  // and adding them would print a number that means neither.
+  const awaiting = unfiled.some(e => e.fxPending) || drafts.some(r => r.pendingRates > 0);
   async function fileInto(expenseId, reportId) {
     if (!reportId) return;
     try {
@@ -69,7 +75,9 @@ export default function Home() {
         <div className="stat-card">
           <div className="stat-label">Ready to claim</div>
           <div className="stat-value">{fmtMoney(toClaim, base)}</div>
-          <div className="stat-sub">{unfiled.length + drafts.length ? 'checked, not sent yet' : 'nothing waiting'}</div>
+          <div className="stat-sub" style={awaiting ? { color: 'var(--warning)' } : undefined}>
+            {awaiting ? 'more is waiting for an exchange rate' : unfiled.length + drafts.length ? 'checked, not sent yet' : 'nothing waiting'}
+          </div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Owed to you</div>

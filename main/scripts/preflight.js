@@ -85,10 +85,16 @@ check('database', () => {
     const integrity = db.pragma('integrity_check', { simple: true });
     if (integrity !== 'ok') return fail('database', `integrity_check says ${integrity}`);
     const version = db.pragma('user_version', { simple: true });
-    const { LATEST } = require(path.join(ROOT, 'main/db/migrate'));
-    const users = db.prepare('SELECT COUNT(*) n FROM users').get().n;
+    const { LATEST } = require(path.join(ROOT, 'main/db/schema-version'));   // not migrate: requiring it opens and creates the database
     if (version > LATEST) return warn('database', `schema ${version} is newer than this code expects (${LATEST}) — you are deploying older code over a migrated database`);
+    // A file with no tables in it is a database boot has not finished with,
+    // not a broken one: a first start that stopped early, or the empty file an
+    // earlier version of this script left behind. Counting users threw, and a
+    // box in that state was called unfit when all it needed was to be started.
+    const hasUsers = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'").get();
     const behind = version < LATEST ? ` (boot will migrate ${version} → ${LATEST})` : '';
+    if (!hasUsers) return ok('database', `empty file at schema ${version} — boot will create the schema`);
+    const users = db.prepare('SELECT COUNT(*) n FROM users').get().n;
     ok('database', `intact, schema ${version}${behind}, ${users} user(s)`);
   } finally { db.close(); }
 });
@@ -157,7 +163,10 @@ check('crash alerts', () => {
 check('disk space', () => {
   // Receipts are kept as files; a full disk corrupts nothing but stops every
   // upload, and SQLite's WAL needs room to check point.
-  const out = require('child_process').execSync(`df -Pk ${JSON.stringify(DATA_DIR)}`, { encoding: 'utf8' }).trim().split('\n').pop().split(/\s+/);
+  // execFileSync, not execSync: the path is interpolated into no shell at all.
+  // Quoting it with JSON.stringify produced double quotes, inside which a
+  // DATA_DIR holding $(...) was executed by the shell rather than measured.
+  const out = require('child_process').execFileSync('df', ['-Pk', DATA_DIR], { encoding: 'utf8' }).trim().split('\n').pop().split(/\s+/);
   const freeGb = Number(out[3]) / 1048576;
   const line = `${freeGb.toFixed(1)} GB free on the volume holding DATA_DIR`;
   if (freeGb < 1) return fail('disk space', line);
