@@ -53,13 +53,11 @@ die()  { red "✗ $*"; exit 1; }
 if [ -n "${DEPLOY_SSH:-}" ]; then
   MODE=ssh
   remote() { ssh -o BatchMode=yes "$DEPLOY_SSH" "cd $APP && $1" 2>/dev/null; }
-  pull_file() { scp -q "$DEPLOY_SSH:$1" "$2"; }
   TARGET="$DEPLOY_SSH:$APP"
 elif [ -n "${DEPLOY_INSTANCE:-}" ]; then
   MODE=gcloud
   command -v gcloud >/dev/null 2>&1 || die "DEPLOY_INSTANCE is set but gcloud is not installed."
   remote() { gcloud compute ssh "$DEPLOY_INSTANCE" --zone="$ZONE" --command="sudo -u $RUNAS -H bash -lc \"cd $APP && $1\"" 2>/dev/null; }
-  pull_file() { gcloud compute scp "$DEPLOY_INSTANCE:$1" "$2" --zone="$ZONE" 2>/dev/null; }
   TARGET="$DEPLOY_INSTANCE ($ZONE):$APP"
 else
   red "✗ No deploy target configured."
@@ -212,6 +210,7 @@ else
 fi
 
 # ── 6. The running process, not the files on disk ───────────────────────────
+CONFIRMED=""
 if [ -z "$HEALTH" ]; then
   ylw "  ! DEPLOY_HEALTH is not set — cannot confirm the RUNNING process is on $LOCAL_SHA"
   ylw "    set it in main/.deploy.env; this is the check that catches a restart that did not happen"
@@ -222,6 +221,7 @@ else
   RUNNING=$(echo "$HEALTH_OUT" | sed -n 's/.*"commit":"\([0-9a-f]*\)".*/\1/p')
   [ "$RUNNING" = "$LOCAL_SHA" ] || die "the running process reports commit '${RUNNING:-none}', not $LOCAL_SHA — it did not restart onto the new code"
   grn "  ✓ running process is on $RUNNING"
+  CONFIRMED=" running process confirmed,"
 fi
 
 # ── 7. Daily backup cron (idempotent) and a name for this deploy ────────────
@@ -236,4 +236,9 @@ TAG="deploy/$(date -u +%Y%m%d-%H%M%S)"
 git tag -f "$TAG" "$LOCAL_SHA" >/dev/null 2>&1 && git push -q origin "$TAG" 2>/dev/null && info "tagged $TAG" || ylw "  ! could not push tag $TAG"
 
 echo
-grn "✓ deployed $LOCAL_SHA — server commit verified, tests passed, preflight clean, backed up, running process confirmed"
+if [ -n "$CONFIRMED" ]; then
+  grn "✓ deployed $LOCAL_SHA — server commit verified, tests passed, preflight clean, backed up,$CONFIRMED healthy"
+else
+  ylw "✓ shipped $LOCAL_SHA — server commit verified, tests passed, preflight clean, backed up."
+  ylw "  NOT confirmed: that the running process is on $LOCAL_SHA. Set DEPLOY_HEALTH and run --check."
+fi

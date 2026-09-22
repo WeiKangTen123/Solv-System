@@ -75,9 +75,8 @@ function run() {
   });
 }
 
-// The version a migrated database ends on. Kept as a constant so preflight can
-// say whether a box is on the current schema without running the migration to
-// find out; migrate.test.js holds it to the highest step declared above.
-const LATEST = 3;
+// Re-exported for callers that already have migrate loaded. Anything that only
+// wants the number requires db/schema-version directly: see the note there.
+const { LATEST } = require('./schema-version');
 
 module.exports = { run, LATEST, _ensureColumn, _step };

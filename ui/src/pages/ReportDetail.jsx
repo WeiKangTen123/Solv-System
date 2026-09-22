@@ -27,9 +27,13 @@ function summarise(lines = []) {
   if (!lines.length) return '—';
   const cats = [...new Set(lines.map(l => l.category).filter(Boolean))];
   const shown = cats.slice(0, 2).join(', ') + (cats.length > 2 ? ` +${cats.length - 2}` : '');
-  const behalf = lines.some(l => l.onBehalfOf);
-  if (lines.length === 1) return shown + (behalf ? ' ‡' : '');
-  return `${lines.length} lines · ${shown}${behalf ? ' ‡' : ''}`;
+  const behalf = lines.some(l => l.onBehalfOf) ? ' ‡' : '';
+  // The reader does not always land a category, and a receipt checked in a
+  // hurry can carry none at all. Without this the cell read "4 lines · " with
+  // a separator pointing at nothing, or was simply empty for a single line.
+  const what = shown || 'Uncategorised';
+  if (lines.length === 1) return what + behalf;
+  return `${lines.length} lines · ${what}${behalf}`;
 }
 
 // The cell used to name the person inline — Lodging (Henry Bennett). The
