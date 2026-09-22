@@ -46,7 +46,13 @@ function checkCase(user, reportId) {
   if (!reportId) return null;
   const r = require('../store/reports').getReport(reportId);
   if (!r || r.companyId !== user.companyId) return { error: 'Case not found', status: 404 };
-  if (r.userId !== user.id && user.role !== 'admin') return { error: 'That case belongs to someone else', status: 403 };
+  // No admin bypass here, unlike every other report route. Filing an EXISTING
+  // expense into someone's report is a reasonable thing for an admin to do, and
+  // POST /api/reports/:id/expenses lets them, checking that the expense belongs
+  // to the report's owner. Uploading a NEW one creates it under the uploader's
+  // name, so an admin doing it put their own receipt inside the claimant's
+  // reimbursement, invisible to the person who submits it.
+  if (r.userId !== user.id) return { error: 'That case belongs to someone else', status: 403 };
   if (!require('../reports/workflow').isEditable(r)) return { error: `A ${r.status} case cannot take more receipts`, status: 409 };
   return null;
 }
@@ -110,7 +116,16 @@ function captureUrl(req, token) { return `${req.protocol}://${req.get('host')}/c
 
 router.post('/pair', requireAuth, async (req, res) => {
   try {
-    const token = pairing.create(req.user.id, { reportId: (req.body || {}).reportId || null });
+    const reportId = (req.body || {}).reportId || null;
+    if (reportId) {
+      // Checked here, not only at upload: the capture page is unauthenticated
+      // and echoes the case's number and title, so an unchecked id would let
+      // anyone holding the link read the name of a report that is not theirs.
+      const me = users.findById(req.user.id);
+      const bad = checkCase(me, reportId);
+      if (bad) return res.status(bad.status).json({ error: bad.error });
+    }
+    const token = pairing.create(req.user.id, { reportId });
     const url   = captureUrl(req, token);
     const qrSvg = await QRCode.toString(url, { type: 'svg', margin: 1, width: 220, errorCorrectionLevel: 'M' });
     res.status(201).json({ token, url, qrSvg, expiresInMs: pairing.TTL_MS, maxUploads: pairing.MAX_USES });

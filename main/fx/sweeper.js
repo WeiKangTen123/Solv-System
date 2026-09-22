@@ -21,12 +21,20 @@ let running = false;
 
 // Expenses carrying at least one line with no rate. A foreign line without a
 // rate is the whole point; a base-currency line always has 1.
+// Only what a sweep could actually fix. Without the last two conditions the
+// oldest twenty-five expenses that can never be priced — one whose rate was
+// refused and is waiting for a person, one sitting in a submitted report — held
+// the batch for ever, and the twenty-sixth, which the provider would have
+// priced instantly, was never reached on any sweep.
 function pendingExpenseIds(limit = BATCH) {
   return db.prepare(`SELECT DISTINCT e.id FROM expenses e
                      JOIN expense_lines l ON l.expense_id = e.id
+                     LEFT JOIN expense_reports r ON r.id = e.report_id
                      WHERE l.fx_rate IS NULL
                        AND l.fx_override_by IS NULL
+                       AND l.fx_check IS NULL
                        AND e.status NOT IN ('duplicate', 'rejected')
+                       AND (e.report_id IS NULL OR r.status IN ('draft', 'rejected'))
                      ORDER BY e.created_at LIMIT ?`).all(limit).map(r => r.id);
 }
 

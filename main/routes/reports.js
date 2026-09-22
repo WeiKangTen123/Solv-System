@@ -159,6 +159,10 @@ router.post('/:id/review-all', requireAuth, (req, res) => {
   const reviewed = [], skipped = [];
   for (const e of r.expenses) {
     if (e.status === 'reviewed') continue;
+    // A report should only ever hold its owner's expenses, but this loop is the
+    // one place that would launder somebody else's into a claim if one ever got
+    // in, so it asks rather than assuming.
+    if (e.userId !== r.userId) { skipped.push({ id: e.id, merchant: e.merchant, why: 'it belongs to someone else' }); continue; }
     if (e.status === 'duplicate') { skipped.push({ id: e.id, merchant: e.merchant, why: 'it is a duplicate' }); continue; }
     if (e.status === 'reading')   { skipped.push({ id: e.id, merchant: e.merchant, why: 'it is still being read' }); continue; }
     const missing = [];
@@ -171,6 +175,7 @@ router.post('/:id/review-all', requireAuth, (req, res) => {
     store.updateExpense(e.id, { status: 'reviewed' });
     reviewed.push(e.id);
   }
+  if (reviewed.length) reports.addEvent(r.id, req.user.id, 'checked', `${reviewed.length} receipt${reviewed.length === 1 ? '' : 's'}`);
   logger.info('Case checked in bulk', { id: r.id, number: r.number, reviewed: reviewed.length, skipped: skipped.length, by: req.user.email });
   res.json({ ..._view(reports.getReport(r.id), req), reviewed: reviewed.length, skipped });
 });

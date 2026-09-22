@@ -40,9 +40,6 @@ function run() {
   // the next time one is needed. Manual rates are somebody's decision and are
   // left alone, and every rate already frozen on an expense line stays frozen,
   // so no report that has been submitted moves.
-  _step(1, 'refetch cached provider rates at full precision', () => {
-    db.prepare("DELETE FROM fx_rates WHERE source != 'manual'").run();
-  });
 
   // 2. SQLite cannot alter a CHECK constraint, so allowing a third report kind
   // means rebuilding the table around the new one. Everything else about it is
@@ -59,10 +56,22 @@ function run() {
         db.exec('INSERT INTO expense_reports_rebuilt SELECT * FROM expense_reports');
         db.exec('DROP TABLE expense_reports');
         db.exec('ALTER TABLE expense_reports_rebuilt RENAME TO expense_reports');
+        // DROP TABLE took the table's indexes with it, and schema.sql ran
+        // before this step, so its CREATE INDEX IF NOT EXISTS statements have
+        // already been satisfied and will not run again until the next boot.
+        db.exec(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
       })();
     } finally {
       if (on) db.pragma('foreign_keys = ON');
     }
+  });
+
+  // Numbered 3, not 1: a database that booted on the build where the steps were
+  // declared out of order is stamped 2, and would skip a step numbered below
+  // that for ever — while being precisely the database still holding rates
+  // fetched to two significant figures.
+  _step(3, 'refetch cached provider rates at full precision', () => {
+    db.prepare("DELETE FROM fx_rates WHERE source != 'manual'").run();
   });
 }
 

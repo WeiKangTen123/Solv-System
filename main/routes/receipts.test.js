@@ -174,6 +174,34 @@ describe('routes/receipts — uploading into a case', () => {
     expect(reports.getReport(theirs.id).expenses).toHaveLength(0);
   });
 
+  // The worst thing a case could do: an admin uploading into a claimant's case
+  // created the expense under the ADMIN's name and filed it into the claimant's
+  // report, so an admin's receipt became a line on someone else's reimbursement
+  // that the claimant could not even open.
+  test('not even an admin may put their own receipt in someone else\'s case', async () => {
+    const boss = await users.createUser({ email: 'boss2@solv.sg', password: 'password123', companyId: owner.companyId, role: 'admin' });
+    const bossTok = jwt.sign({ id: boss.id, email: boss.email, role: 'admin' }, require('../middleware/auth-middleware').jwtSecret());
+    const theirs = newCase(owner);
+
+    await request(serverFor(app)).post('/api/receipts').set({ Authorization: `Bearer ${bossTok}` })
+      .send({ mime: 'image/jpeg', data: jpeg(), reportId: theirs.id }).expect(403);
+    await routes._drain();
+
+    expect(reports.getReport(theirs.id).expenses).toHaveLength(0);
+    expect(store.listExpenses({ userId: boss.id })).toHaveLength(0);
+  });
+
+  test('a pairing cannot be opened for a case that is not yours', async () => {
+    const theirs = newCase(other);
+    await request(serverFor(app)).post('/api/receipts/pair').set(as(ownerTok)).send({ reportId: theirs.id }).expect(403);
+    await request(serverFor(app)).post('/api/receipts/pair').set(as(ownerTok)).send({ reportId: 'nope' }).expect(404);
+    // and the unauthenticated capture page therefore cannot echo a title you may not see
+    const mine = newCase(owner);
+    const ok = await request(serverFor(app)).post('/api/receipts/pair').set(as(ownerTok)).send({ reportId: mine.id }).expect(201);
+    const page = await request(serverFor(app)).get(`/api/receipts/capture/${ok.body.token}`).expect(200);
+    expect(page.body.case.id).toBe(mine.id);
+  });
+
   test('a phone pairing opened for a case sends its photographs there', async () => {
     const c = newCase();
     const pair = await request(serverFor(app)).post('/api/receipts/pair').set(as(ownerTok)).send({ reportId: c.id }).expect(201);

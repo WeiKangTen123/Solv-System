@@ -246,7 +246,7 @@ export default function ExpenseReview() {
                 </div>
                 {rateEdit && (
                   <form onSubmit={submitRate} style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <input id="fx-rate" className="form-input" type="number" step="0.000001" min="0" style={{ maxWidth: 150 }} value={rateEdit.rate} onChange={e => setRateEdit({ ...rateEdit, rate: e.target.value })} aria-label="Rate" required />
+                    <input id="fx-rate" className="form-input" type="number" step="any" min="0" style={{ maxWidth: 150 }} value={rateEdit.rate} onChange={e => setRateEdit({ ...rateEdit, rate: e.target.value })} aria-label="Rate" required />
                     <input id="fx-reason" className="form-input" style={{ flex: 1, minWidth: 180 }} placeholder="Why (e.g. card statement rate)" value={rateEdit.reason} onChange={e => setRateEdit({ ...rateEdit, reason: e.target.value })} aria-label="Reason" required />
                     <button className="btn btn-primary btn-sm" type="submit" disabled={!!busy}>Use this rate</button>
                     <button className="btn btn-ghost btn-sm" type="button" onClick={() => setRateEdit(null)}>Cancel</button>

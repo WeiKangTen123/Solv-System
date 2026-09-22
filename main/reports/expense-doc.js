@@ -195,7 +195,7 @@ function workbookModel(payload) {
       ['Purpose', report.purpose || report.title], ['From', report.periodFrom], ['To', report.periodTo], ['Destination', report.destination], ['Status', report.status], ['Approved by', approver.name],
       ['Approved at', report.approvedAt], ['Advances', m.advances], [`Total ${m.base}`, m.total], [`Reimbursement ${m.base}`, m.reimbursement]] },
     { name: 'Lines', header: ['#', 'Date', 'Merchant', 'Description', 'Purpose', 'On behalf of', 'Category', 'Currency', 'Amount', 'Rate', 'Rate date', 'Rate source', m.base, 'Receipt'],
-      rows: lines.map((l, i) => [i + 1, l.date, l.merchant, l.description, l.purpose, l.onBehalfOf, l.category, l.currency, Number(l.amount), l.fxRate, l.fxRateDate, l.fxSource, l.baseAmount, l.ref]),
+      rows: lines.map((l, i) => [i + 1, l.date, l.merchant, l.description, l.purpose, l.onBehalfOf, l.category, l.currency, Number(l.amount), l.fxRate === null || l.fxRate === undefined ? '' : Number(fmtRate(l.fxRate)), l.fxRateDate, l.fxSource, l.baseAmount, l.ref]),
       money: [9, 13], totalLabel: `Total ${m.base}`, total: m.total },
     { name: 'Rates', rows: [...m.rateNotes.map(t => [t]), ...m.notes.map(t => [t])] },
     { name: 'Receipts', header: ['Ref', 'Receipt', 'Pages'], rows: receipts.map(r => [r.ref, r.title, r.pages.length]) },

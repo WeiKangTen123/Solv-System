@@ -144,7 +144,9 @@ describe('fx checks', () => {
     const out = await sweeper.sweep();
 
     expect(out.priced).toBe(1);
-    expect(out.locked).toBe(1);
+    // the locked one is excluded by the query now rather than looked at and
+    // skipped, so it never enters the batch at all
+    expect(out.looked).toBe(1);
     expect(store.getExpense(stranded.id).fxPending).toBe(false);
     expect(store.getExpense(stranded.id).lines[0].baseAmount).toBe(13.4);
     expect(store.getExpense(filed.id).lines[0].fxRate).toBeNull();        // untouched
@@ -160,5 +162,89 @@ describe('fx checks', () => {
     providers.frankfurter.mockResolvedValue(ecb(0.0134, '2026-09-04'));
     await require('./sweeper').sweep();
     expect(store.getExpense(e.id).lines[0].fxRate).toBe(0.0135);
+  });
+});
+
+// What an audit found once the checks were in: the thing that can withhold a
+// figure from somebody's pay was built on a baseline it did not qualify, and a
+// block, once written, could not be lifted by anything the app offers.
+describe('fx checks — a block has to be escapable', () => {
+  let db, rates, providers, apply, store, users, u;
+
+  beforeEach(async () => {
+    jest.resetModules();
+    jest.doMock('./providers', () => ({ frankfurter: jest.fn(), erapi: jest.fn(), TIMEOUT: 5000, THIN_RATE: 0.1 }));
+    require('../db/migrate').run();
+    db = require('../db'); providers = require('./providers'); rates = require('./rates');
+    apply = require('./apply'); store = require('../store/expenses'); users = require('../store/users');
+    u = await users.createUser({ email: 'e@solv.sg', password: 'password123' });
+  });
+  afterEach(() => jest.dontMock('./providers'));
+
+  const ecb = (rate, date) => ({ rate, providerDate: date, source: 'frankfurter' });
+
+  test('a refused rate is not stored, so it cannot become tomorrow\'s baseline', async () => {
+    providers.frankfurter.mockResolvedValue(ecb(0.0134, '2026-09-01'));
+    await rates.getRate({ from: 'INR', to: 'SGD', date: '2026-09-01' });
+
+    providers.frankfurter.mockResolvedValue(ecb(0.0067, '2026-09-02'));   // a glitch, half the rate
+    const bad = await rates.getRate({ from: 'INR', to: 'SGD', date: '2026-09-02' });
+    expect(bad.blocked).toMatch(/moved/);
+    expect(db.prepare("SELECT COUNT(*) n FROM fx_rates WHERE rate_date = '2026-09-02'").get().n).toBe(0);
+
+    // the day after, the correct rate is measured against 1 Sep, not the glitch
+    providers.frankfurter.mockResolvedValue(ecb(0.01342, '2026-09-03'));
+    const good = await rates.getRate({ from: 'INR', to: 'SGD', date: '2026-09-03' });
+    expect(good.blocked).toBeUndefined();
+    expect(good.rate).toBe(0.01342);
+  });
+
+  test('a rate somebody typed in is never the baseline a provider is judged against', async () => {
+    rates.setManualRate({ from: 'THB', to: 'SGD', date: '2026-09-01', rate: 0.05, by: 'finance@solv.sg' });  // a typo; the real rate is ~0.04
+    providers.frankfurter.mockResolvedValue(ecb(0.0401, '2026-09-02'));
+    const r = await rates.getRate({ from: 'THB', to: 'SGD', date: '2026-09-02' });
+    expect(r.blocked).toBeUndefined();
+    expect(r.rate).toBe(0.0401);
+  });
+
+  test('Refresh rate reaches past the cache, so a block that was wrong can be settled', async () => {
+    providers.frankfurter.mockResolvedValue(ecb(0.0134, '2026-09-01'));
+    await rates.getRate({ from: 'INR', to: 'SGD', date: '2026-09-01' });
+    providers.frankfurter.mockResolvedValue(ecb(0.0134, '2026-09-02'));
+    await rates.getRate({ from: 'INR', to: 'SGD', date: '2026-09-02' });
+
+    // a cached rate is served without asking anyone
+    providers.frankfurter.mockClear();
+    await rates.getRate({ from: 'INR', to: 'SGD', date: '2026-09-02' });
+    expect(providers.frankfurter).not.toHaveBeenCalled();
+
+    // unless the person asked for it again
+    await rates.getRate({ from: 'INR', to: 'SGD', date: '2026-09-02', force: true });
+    expect(providers.frankfurter).toHaveBeenCalled();
+  });
+
+  test('a legitimate move over a longer gap is allowed, a wild one is not', () => {
+    expect(rates.allowedMove(1)).toBeCloseTo(0.10, 5);
+    expect(rates.allowedMove(9)).toBeCloseTo(0.30, 5);       // scales with the gap
+    expect(rates.allowedMove(100)).toBeCloseTo(0.30, 5);     // and is capped
+  });
+
+  test('the sweeper skips what it can never price, so newer receipts are reached', async () => {
+    providers.frankfurter.mockResolvedValue(null);
+    providers.erapi.mockResolvedValue(null);
+    const mk = () => store.createExpense({ companyId: u.companyId, userId: u.id, status: 'review-needed', currency: 'INR', total: 100,
+      receiptDate: '2026-09-04', lines: [{ category: 'Other', amount: 100, currency: 'INR' }] });
+    const stuck = mk();
+    const fresh = mk();
+    await apply.applyFx(stuck.id);
+    await apply.applyFx(fresh.id);
+    // the first one is waiting on a person, not on a provider
+    store.updateLine(store.getExpense(stuck.id).lines[0].id, { fxCheck: 'INR moved 50.0% against SGD. Check it.' });
+
+    providers.frankfurter.mockResolvedValue(ecb(0.0134, '2026-09-04'));
+    const out = await require('./sweeper').sweep();
+    expect(out.priced).toBe(1);
+    expect(store.getExpense(fresh.id).fxPending).toBe(false);
+    expect(store.getExpense(stuck.id).fxPending).toBe(true);   // still waiting for a person
   });
 });

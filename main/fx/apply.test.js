@@ -15,7 +15,7 @@ describe('fx/apply', () => {
     const e = exp('INR', 88188.77, [{ category: 'Lodging', amount: 43131.36 }, { category: 'Lodging', amount: 36713.34, onBehalfOf: 'Tan Suan Kuan' }, { category: 'Meals', amount: 8344.07 }]);
     const out = await apply.applyFx(e.id);
     expect(out.pending).toBe(0);
-    expect(rates.getRate).toHaveBeenCalledWith({ from: 'INR', to: 'SGD', date: '2026-09-04' });
+    expect(rates.getRate).toHaveBeenCalledWith({ from: 'INR', to: 'SGD', date: '2026-09-04', force: false });
     const after = store.getExpense(e.id);
     expect(after.lines.map(l => l.baseAmount)).toEqual([578.39, 492.33, 111.89]);
     expect(after.lines[0]).toMatchObject({ fxRate: 0.01341, fxRateDate: '2026-09-04', fxSource: 'frankfurter', fxPolicy: 'receipt_date' });

@@ -45,6 +45,14 @@ function countExpensesForFile(userId, file) {
 }
 
 // ── Lines ────────────────────────────────────────────────────────────────────
+const FX_DAY_SLACK = 4;   // a long weekend
+function _farApart(priced, asked) {
+  if (!priced || !asked) return false;
+  const gap = (Date.parse(priced) - Date.parse(asked)) / 86400000;
+  if (!Number.isFinite(gap)) return false;
+  return gap > 0 || gap < -FX_DAY_SLACK;
+}
+
 function _line(row) {
   return {
     id: row.id, expenseId: row.expense_id, sortOrder: row.sort_order, category: row.category, description: row.description,
@@ -52,10 +60,13 @@ function _line(row) {
     fxRate: row.fx_rate, fxRateDate: row.fx_rate_date, fxSource: row.fx_source, fxFetchedAt: row.fx_fetched_at, fxPolicy: row.fx_policy,
     fxOverrideBy: row.fx_override_by, fxOverrideReason: row.fx_override_reason, baseAmount: toDollars(row.base_cents),
     fxAskedDate: row.fx_asked_date, fxCheck: row.fx_check,
-    // A rate priced after the receipt is not the receipt's rate. It happens for
-    // the ~130 currencies the ECB does not publish, where the only provider
-    // left knows today and nothing else.
-    fxNotOnTheDay: !!(row.fx_rate_date && row.fx_asked_date && row.fx_rate_date > row.fx_asked_date),
+    // A rate priced a long way from the receipt is not the receipt's rate. It
+    // happens forwards for the ~130 currencies the ECB does not publish, where
+    // the only provider left knows today and nothing else; and backwards when a
+    // receipt carries a date in the future, usually a misread year, which used
+    // to take today's rate with nothing said. A weekend or a holiday is three
+    // days at most, which is what the window allows for.
+    fxNotOnTheDay: _farApart(row.fx_rate_date, row.fx_asked_date),
     onBehalfOf: row.on_behalf_of, accountCode: row.account_code,
   };
 }
