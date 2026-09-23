@@ -89,13 +89,13 @@ CREATE TABLE IF NOT EXISTS expense_reports (
   period_to       TEXT,
   destination     TEXT,
   nights          INTEGER,
-  status          TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'approved', 'rejected', 'paid', 'posted')),
+  status          TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'approved', 'rejected', 'claimed', 'posted')),
   submitted_at    TEXT,
   approved_by     TEXT,
   approved_at     TEXT,
   rejected_reason TEXT,
   advances_cents  INTEGER NOT NULL DEFAULT 0,
-  paid_at         TEXT,
+  claimed_at      TEXT,
   xero_invoice_id TEXT,
   xero_error      TEXT,
   notes           TEXT,
@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS expenses (
   box            TEXT,      -- JSON [ymin,xmin,ymax,xmax] 0-1000 when one photo held several receipts
   page           INTEGER,   -- 1-based page when one PDF page is its own receipt
   source         TEXT NOT NULL DEFAULT 'upload',
+  claimed_at     TEXT,
   created_at     TEXT NOT NULL,
   updated_at     TEXT
 );

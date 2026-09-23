@@ -53,12 +53,19 @@ describe('routes/reports', () => {
     expect(q.body.reports.map(x => x.id)).toEqual([r.id]);
     const a = await request(serverFor(app)).post(`/api/reports/${r.id}/approve`).set(as(mgr)).expect(200);
     expect(a.body.report).toMatchObject({ status: 'approved', approvedBy: mgr.id });
-    await request(serverFor(app)).post(`/api/reports/${r.id}/paid`).set(as(mgr)).expect(403);
+    // The last step belongs to the claimant: this system records that a claim
+    // was put through, which is not something a manager or finance can know.
+    await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(mgr)).expect(403);
     const fq = await request(serverFor(app)).get('/api/reports/queue').set(as(fin)).expect(200);
     expect(fq.body.reports.map(x => x.id)).toEqual([r.id]);
-    const p = await request(serverFor(app)).post(`/api/reports/${r.id}/paid`).set(as(fin)).expect(200);
-    expect(p.body.report.status).toBe('paid');
-    expect(p.body.report.events.map(x => x.action)).toEqual(['created', 'submitted', 'approved', 'paid']);
+    await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(fin)).expect(403);
+    const p = await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(emp)).expect(200);
+    expect(p.body.report.status).toBe('claimed');
+    expect(p.body.report.claimedAt).toBeTruthy();
+    expect(p.body.report.events.map(x => x.action)).toEqual(['created', 'submitted', 'approved', 'claimed']);
+    // and claiming the report claimed what was in it
+    const claimed = await request(serverFor(app)).get(`/api/expenses/${e.id}`).set(as(emp)).expect(200);
+    expect(claimed.body.expense.claimed).toBe(true);
   });
 
   test('reject sends it back with a reason; the owner can edit and resubmit', async () => {

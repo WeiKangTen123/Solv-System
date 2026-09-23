@@ -82,7 +82,7 @@ export default function Home() {
         <div className="stat-card">
           <div className="stat-label">Owed to you</div>
           <div className="stat-value">{fmtMoney(owed, base)}</div>
-          <div className="stat-sub">submitted or approved, not yet paid</div>
+          <div className="stat-sub">submitted or approved, not yet claimed</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Needs your check</div>

@@ -630,18 +630,34 @@ function expectStatus(r, want, what) {
     expect(r.json.report.status === 'approved', `status is ${r.json.report.status}`);
   });
 
-  await check('only finance can mark it paid', async () => {
-    expectStatus(await call('POST', `/api/reports/${S.report.id}/paid`, { token: S.H }), 403, 'manager marking paid');
-    const r = await call('POST', `/api/reports/${S.report.id}/paid`, { token: S.F });
-    expectStatus(r, 200, 'finance marking paid');
-    expect(r.json.report.status === 'paid', `status is ${r.json.report.status}`);
+  await check('only the claimant marks it claimed', async () => {
+    expectStatus(await call('POST', `/api/reports/${S.report.id}/claimed`, { token: S.H }), 403, 'the manager who approved it');
+    expectStatus(await call('POST', `/api/reports/${S.report.id}/claimed`, { token: S.F }), 403, 'finance');
+    const r = await call('POST', `/api/reports/${S.report.id}/claimed`, { token: S.E });
+    expectStatus(r, 200, 'the claimant');
+    expect(r.json.report.status === 'claimed', `status is ${r.json.report.status}`);
+    return `claimed ${r.json.report.claimedAt ? 'with a timestamp' : 'WITHOUT a timestamp'}`;
+  });
+
+  await check('a receipt can be claimed on its own and unclaimed again', async () => {
+    const mine = await call('GET', '/api/expenses', { token: S.E });
+    const one = (mine.json.expenses || []).find(e => !e.reportId) || (mine.json.expenses || [])[0];
+    if (!one) return 'no expense to try it on';
+    expectStatus(await call('POST', `/api/expenses/${one.id}/claimed`, { token: S.H }), [403, 404], 'somebody else claiming it');
+    const on = await call('POST', `/api/expenses/${one.id}/claimed`, { token: S.E });
+    expectStatus(on, 200, 'the owner claiming it');
+    expect(on.json.expense.claimed === true, 'claimed is not true after claiming');
+    const off = await call('DELETE', `/api/expenses/${one.id}/claimed`, { token: S.E });
+    expectStatus(off, 200, 'the owner unclaiming it');
+    expect(off.json.expense.claimed === false, 'claimed is not false after unclaiming');
+    return 'on, then off';
   });
 
   await check('GET /api/reports/:id/events has the whole history', async () => {
     const r = await call('GET', `/api/reports/${S.report.id}/events`, { token: S.E });
     expectStatus(r, 200, 'events');
     const kinds = (r.json.events || []).map(e => e.kind || e.type || e.action);
-    for (const want of ['created', 'submitted', 'rejected', 'approved', 'paid']) {
+    for (const want of ['created', 'submitted', 'rejected', 'approved', 'claimed']) {
       expect(kinds.includes(want), `the history is missing "${want}": ${kinds.join(', ')}`);
     }
     return kinds.join(' → ');
@@ -670,8 +686,8 @@ function expectStatus(r, want, what) {
     expectStatus(await call('GET', `/api/reports/${S.report.id}/export-url?format=pdf`, { token: S.N }), [403, 404], 'stranger export-url');
   });
 
-  await check('a draft report can be deleted, a paid one cannot', async () => {
-    expectStatus(await call('DELETE', `/api/reports/${S.report.id}`, { token: S.E }), [400, 403, 409], 'deleting a paid report');
+  await check('a draft report can be deleted, a claimed one cannot', async () => {
+    expectStatus(await call('DELETE', `/api/reports/${S.report.id}`, { token: S.E }), [400, 403, 409], 'deleting a claimed report');
     const d = await call('POST', '/api/reports', { token: S.E, body: { title: 'Throwaway' } });
     expectStatus(await call('DELETE', `/api/reports/${d.json.report.id}`, { token: S.E }), 200, 'deleting a draft');
   });

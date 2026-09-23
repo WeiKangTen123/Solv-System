@@ -130,7 +130,7 @@ function _transition(action, fn) {
 router.post('/:id/submit',  requireAuth, _transition('submitted', (r, req) => wf.submit(r.id, req.user)));
 router.post('/:id/approve', requireAuth, _transition('approved',  (r, req) => wf.approve(r.id, req.user)));
 router.post('/:id/reject',  requireAuth, _transition('rejected',  (r, req) => wf.reject(r.id, req.user, (req.body || {}).reason)));
-router.post('/:id/paid',    requireAuth, _transition('paid',      (r, req) => wf.markPaid(r.id, req.user)));
+router.post('/:id/claimed', requireAuth, _transition('claimed',   (r, req) => wf.markClaimed(r.id, req.user)));
 
 // POST /:id/post — finance sends the approved report to Xero as one draft bill.
 // ?dryRun=1 answers with the bill that would be sent and sends nothing.

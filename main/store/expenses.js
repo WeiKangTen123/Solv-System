@@ -117,6 +117,7 @@ const EXPENSE_COLS = {
   receiptId: 'receipt_id', reportId: 'report_id', merchant: 'merchant', receiptDate: 'receipt_date', receiptTime: 'receipt_time',
   invoiceNo: 'invoice_no', currency: 'currency', purpose: 'purpose', description: 'description', category: 'category', status: 'status',
   duplicateOf: 'duplicate_of', errorMsg: 'error_msg', aiReadAt: 'ai_read_at', aiConfidence: 'ai_confidence', page: 'page', source: 'source',
+  claimedAt: 'claimed_at',
 };
 const MONEY = { total: 'total_cents', tax: 'tax_cents', subTotal: 'subtotal_cents' };
 
@@ -135,6 +136,7 @@ function _expense(row, lines, receipt) {
     total: toDollars(row.total_cents) ?? 0, tax: toDollars(row.tax_cents), subTotal: toDollars(row.subtotal_cents),
     purpose: row.purpose, description: row.description, category: row.category, status: row.status, duplicateOf: row.duplicate_of,
     errorMsg: row.error_msg, aiReadAt: row.ai_read_at, aiConfidence: row.ai_confidence, box, page: row.page, source: row.source,
+    claimedAt: row.claimed_at, claimed: !!row.claimed_at,
     createdAt: row.created_at, updatedAt: row.updated_at, lines: lines || [], receipt: receipt || null,
   };
 }

@@ -71,7 +71,8 @@ describe('preflight', () => {
 
     const { out, code } = preflight({ DATA_DIR: path.join(dir, 'data') });
     expect(code).toBe(0);
-    expect(state(out, 'database').detail).toContain('boot will migrate 1 → 3');
+    const { LATEST } = require(path.join(ROOT, 'main/db/schema-version'));
+    expect(state(out, 'database').detail).toContain(`boot will migrate 1 → ${LATEST}`);
     expect(state(out, 'database').detail).toMatch(/user\(s\)/);
   });
 

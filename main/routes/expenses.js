@@ -151,6 +151,20 @@ router.patch('/:id/status', requireAuth, (req, res) => {
   res.json(_out(store.updateExpense(e.id, { status })));
 });
 
+// POST /:id/claimed — the owner's own record that this one receipt has been put
+// through, for a one-off claimed outside any report. DELETE takes it back.
+// Claiming the report it sits in claims it too; see reports/workflow.js.
+router.post('/:id/claimed', requireAuth, (req, res) => {
+  const e = _load(req, res); if (!e) return;
+  try { res.json(_out(wf.markExpenseClaimed(e.id, req.user, true))); }
+  catch (err) { res.status(/Only the claimant/.test(err.message) ? 403 : 400).json({ error: err.message }); }
+});
+router.delete('/:id/claimed', requireAuth, (req, res) => {
+  const e = _load(req, res); if (!e) return;
+  try { res.json(_out(wf.markExpenseClaimed(e.id, req.user, false))); }
+  catch (err) { res.status(/Only the claimant/.test(err.message) ? 403 : 400).json({ error: err.message }); }
+});
+
 router.post('/:id/reread', requireAuth, asyncHandler(async (req, res) => {
   const e = _loadEditable(req, res); if (!e) return;
   if (!e.receipt) return res.status(400).json({ error: 'This expense has no receipt file to read' });
