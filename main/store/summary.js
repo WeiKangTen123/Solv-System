@@ -34,13 +34,29 @@ function _where(scope, alias = 'e') {
   return { sql: `${alias}.user_id IN (${scope.userIds.map(() => '?').join(',')})`, args: [...scope.userIds] };
 }
 
-// The six months ending with this one, as YYYY-MM, oldest first. Built in JS
-// rather than SQL so a month with no expenses in it is still a column on the
-// chart instead of a gap the eye reads as continuous.
-function _monthKeys(now = new Date()) {
+// Which month it is where the company is, as YYYY-MM. Receipt dates are plain
+// dates written in the claimant's own day, so the window they are matched
+// against has to be the company's day too. Asked in UTC, the chart called
+// September "this month" for the first eight hours of every October in
+// Singapore, and dropped a receipt dated the 1st out of the window entirely.
+function _thisMonth(now, tz) {
+  try {
+    // en-CA renders as YYYY-MM-DD, which is the shape the rest of this works in.
+    return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now).slice(0, 7);
+  } catch {
+    // An unknown zone is a misconfiguration, not a reason to answer nothing.
+    return now.toISOString().slice(0, 7);
+  }
+}
+
+// The six months ending with this one, oldest first. Built in JS rather than
+// SQL so a month with no expenses in it is still a column on the chart instead
+// of a gap the eye reads as continuous.
+function _monthKeys(now = new Date(), tz = 'UTC') {
+  const [y, m] = _thisMonth(now, tz).split('-').map(Number);
   const out = [];
   for (let i = MONTHS - 1; i >= 0; i--) {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const d = new Date(Date.UTC(y, m - 1 - i, 1));
     out.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
   }
   return out;
@@ -52,10 +68,10 @@ function _monthKeys(now = new Date()) {
 const DATED = "COALESCE(NULLIF(e.receipt_date, ''), e.created_at)";
 const LIVE = "e.status NOT IN ('duplicate', 'rejected')";
 
-function summary(me, allUsers, { now = new Date() } = {}) {
+function summary(me, allUsers, { now = new Date(), timezone = 'UTC' } = {}) {
   const scope = _scope(me, allUsers);
   const w = _where(scope);
-  const months = _monthKeys(now);
+  const months = _monthKeys(now, timezone);
   const from = `${months[0]}-01`;
 
   const byMonth = db.prepare(`
@@ -100,8 +116,8 @@ function summary(me, allUsers, { now = new Date() } = {}) {
     FROM expense_reports r WHERE ${rw.sql} AND r.submitted_at IS NOT NULL`).get(...rw.args);
 
   const totalCents = db.prepare(`
-    SELECT SUM(CASE WHEN r.status = 'claimed' THEN l.base_cents ELSE 0 END) AS claimed,
-           SUM(CASE WHEN r.status = 'approved' THEN l.base_cents ELSE 0 END) AS awaiting
+    SELECT SUM(CASE WHEN r.status = 'claimed' OR e.claimed_at IS NOT NULL THEN l.base_cents ELSE 0 END) AS claimed,
+           SUM(CASE WHEN r.status = 'approved' AND e.claimed_at IS NULL THEN l.base_cents ELSE 0 END) AS awaiting
     FROM expenses e JOIN expense_lines l ON l.expense_id = e.id
     LEFT JOIN expense_reports r ON r.id = e.report_id
     WHERE ${w.sql} AND ${LIVE} AND l.base_cents IS NOT NULL AND ${DATED} >= ?`).get(...w.args, from);
@@ -113,6 +129,7 @@ function summary(me, allUsers, { now = new Date() } = {}) {
   return {
     scope: scope.kind,
     base: me.baseCurrency || 'SGD',
+    timezone,
     months: series,
     thisMonth: series[series.length - 1].base,
     lastMonth: series.length > 1 ? series[series.length - 2].base : 0,

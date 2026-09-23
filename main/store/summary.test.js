@@ -140,6 +140,46 @@ describe('dashboard summary', () => {
     expect(s.claimed).toBe(100);
   });
 
+  // Receipt dates are plain dates, written where the claimant is. Asked in UTC,
+  // the window called September "this month" for the first eight hours of every
+  // October in Singapore, and a receipt dated the 1st fell outside it entirely.
+  test('the month window is the company\'s month, not UTC\'s', () => {
+    const { _monthKeys } = require('./summary');
+    const justAfterMidnightInSingapore = new Date('2026-09-30T16:30:00Z');
+    expect(_monthKeys(justAfterMidnightInSingapore, 'UTC').slice(-1)[0]).toBe('2026-09');
+    expect(_monthKeys(justAfterMidnightInSingapore, 'Asia/Singapore').slice(-1)[0]).toBe('2026-10');
+    expect(_monthKeys(justAfterMidnightInSingapore, 'Asia/Singapore')).toHaveLength(6);
+    expect(_monthKeys(justAfterMidnightInSingapore, 'Asia/Singapore')[0]).toBe('2026-05');
+    // A zone nobody recognises is a misconfiguration, not a reason to answer nothing.
+    expect(_monthKeys(justAfterMidnightInSingapore, 'Not/AZone').slice(-1)[0]).toBe('2026-09');
+  });
+
+  test('a receipt claimed on its own counts as claimed', () => {
+    const e = spend(ela, { merchant: 'A one-off', amount: 250, base: 250, date: day(1) });
+    expect(summary(me(ela), users.getAllUsers(cid)).claimed).toBe(0);
+    wf.markExpenseClaimed(e.id, me(ela));
+    const s = summary(me(ela), users.getAllUsers(cid));
+    expect(s.claimed).toBe(250);
+    expect(s.total).toBe(250);            // still counted as spend, claimed or not
+    wf.markExpenseClaimed(e.id, me(ela), false);
+    expect(summary(me(ela), users.getAllUsers(cid)).claimed).toBe(0);
+  });
+
+  // Approved money a person has already put through is no longer waiting on
+  // them, so it must not sit in both figures at once.
+  test('what is approved but already claimed is not still awaiting a claim', () => {
+    const r = reports.createReport({ companyId: cid, userId: ela.id, title: 'Trip' });
+    const e = spend(ela, { merchant: 'Hotel', amount: 300, base: 300, date: day(1) });
+    reports.addExpense(r.id, e.id);
+    wf.submit(r.id, me(ela));
+    wf.approve(r.id, me(mgr));
+    expect(summary(me(ela), users.getAllUsers(cid)).awaitingClaim).toBe(300);
+    wf.markExpenseClaimed(e.id, me(ela));
+    const s = summary(me(ela), users.getAllUsers(cid));
+    expect(s.awaitingClaim).toBe(0);
+    expect(s.claimed).toBe(300);
+  });
+
   test('an expense is dated by its receipt, not by when it was filed', () => {
     const lastMonth = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 15)).toISOString().slice(0, 10);
     spend(ela, { merchant: 'Late claim', amount: 80, base: 80, date: lastMonth });

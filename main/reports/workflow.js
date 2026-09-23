@@ -77,6 +77,11 @@ function reject(reportId, actor, reason) {
 function markClaimed(reportId, actor) {
   const r = _get(reportId);
   if (r.userId !== actor.id && actor.role !== 'admin') throw new Error('Only the claimant can mark their own report claimed');
+  // 'posted' is accepted, and claiming it moves the status to 'claimed'. That
+  // is deliberate and matches bills.js, which leaves a claimed report claimed
+  // when it is posted: claiming is the claimant's own record and outranks a
+  // bookkeeping step. Nothing is lost — xero_invoice_id still holds the bill,
+  // and the report screen shows it whatever the status says.
   if (!['approved', 'posted'].includes(r.status)) throw new Error('A report must be approved before it can be claimed');
   const at = new Date().toISOString();
   reports.setState(reportId, { status: 'claimed', claimedAt: at });
