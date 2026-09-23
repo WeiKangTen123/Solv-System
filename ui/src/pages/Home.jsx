@@ -7,6 +7,7 @@ import { useVisiblePolling } from '../utils/useVisiblePolling';
 import { Link } from 'react-router-dom';
 import StatusBadge from '../components/StatusBadge';
 import { fmtMoney } from '../utils/format';
+import Insights from '../components/Insights';
 
 // Whole days since an ISO timestamp. What a queue is really asking is not how
 // many reports are in it but how long the oldest one has been there.
@@ -237,6 +238,8 @@ export default function Home() {
             </Link>))}
         </div>
       </div>
+
+      <Insights />
 
       <div className="card">
         <div className="card-title">Needs your check ({needing.length})</div>

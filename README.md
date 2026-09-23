@@ -53,7 +53,8 @@ main/
   llm/           gemini-client (company keys, rate limit), llm-json (parsing what a model returns)
   pdf/           render.js + render-worker.mjs (pages → JPEG in a child process), pages.js (one document or many)
   store/         expenses.js (receipts, expenses, lines, cents), reports.js (reports, totals, events),
-                 users.js (companies, staff, roles, company config)
+                 users.js (companies, staff, roles, company config),
+                 summary.js (the dashboard's figures, aggregated in SQL and scoped by role)
   fx/            providers (Frankfurter/ECB, open.er-api), rates (cache, manual priority),
                  apply (per-line, policy, overrides)
   reports/       workflow (state machine), expense-payload, expense-doc (pdfmake definition, CSV,
@@ -65,7 +66,7 @@ main/
   utils/         the generic helpers only: base64, crypto, ids, logger, paths
   scripts/       read-sample.js, fx-sample.js, demo-report.js, smoke-flow.js, jest setup
 ui/src/          pages: Login, Home, MyExpenses, ExpenseReview, Reports, ReportDetail, Approvals,
-                 Settings, Capture
+                 Settings, Capture, CaseCheck; components/Insights.jsx draws the home dashboard
 docs/            specs/, plans/, acceptance/ (+ exports/), reference/ — see docs/README.md
 samples/         receipts/ (the two Marriott folios), reads/ (the reader's saved output for each)
 ```
@@ -90,7 +91,7 @@ Inter Tight carries the interface and IBM Plex Mono every figure, so amounts lin
 
 | Command | What |
 |---|---|
-| `npm test` | 55 suites, jest + supertest, everything mocked at the network edge |
+| `npm test` | 58 suites, jest + supertest, everything mocked at the network edge |
 | `npm run lint` | eslint over server and UI (errors fail the suite too) |
 | `node main/scripts/read-sample.js <file>` | read one receipt with the live model and print the fields and lines |
 | `node main/scripts/fx-sample.js samples/reads/<folio>.json` | price a saved read with the live providers |
