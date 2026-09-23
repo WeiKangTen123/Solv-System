@@ -919,6 +919,24 @@ function expectStatus(r, want, what) {
     expectStatus(await call('DELETE', '/api/claims/group/no-such-group', { token: S.E, tag: 'DELETE /api/claims/group/:id' }), [200, 204, 404], 'delete unknown group');
   });
 
+  // ── 10b. the dashboard's figures ────────────────────────────────────────
+  section('Dashboard summary');
+  await check('GET /api/dashboard/summary answers, scoped to who is asking', async () => {
+    const mine = await call('GET', '/api/dashboard/summary', { token: S.E });
+    expectStatus(mine, 200, 'employee');
+    expect(mine.json.scope === 'own', `an employee's scope is "${mine.json.scope}", not "own"`);
+    const boss = await call('GET', '/api/dashboard/summary', { token: S.A });
+    expectStatus(boss, 200, 'admin');
+    expect(boss.json.scope === 'company', `an admin's scope is "${boss.json.scope}", not "company"`);
+    expect(Array.isArray(boss.json.months) && boss.json.months.length === 6, 'six months of figures were not returned');
+    expect(boss.json.total >= mine.json.total, 'the company total is smaller than one employee\'s');
+    return `own ${mine.json.base} ${mine.json.total} · company ${boss.json.total}`;
+  });
+
+  await check('the summary needs a token', async () => {
+    expectStatus(await call('GET', '/api/dashboard/summary', {}), 401, 'no token');
+  });
+
   // ── 11. sign out ────────────────────────────────────────────────────────
   section('Sign out');
   await check('POST /api/auth/logout answers', async () => {

@@ -586,6 +586,19 @@ body {
   gap: 16px;
 }
 
+/* Two columns that stay two. .grid-2 fits as many 260px tracks as the width
+   allows, which put the dashboard's four cards in a single row of quarters:
+   each one holds a chart or a column of figures and needs half the page, not a
+   quarter of it. */
+.grid-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+@media (max-width: 780px) {
+  .grid-pair { grid-template-columns: 1fr; }
+}
+
 /* ── Divider ─────────────────────────────────────── */
 .divider {
   height: 1px;
@@ -696,7 +709,8 @@ body {
 }
 
 .mobile-mode .grid-2,
-.mobile-mode .grid-3 {
+.mobile-mode .grid-3,
+.mobile-mode .grid-pair {
   grid-template-columns: 1fr !important;
 }
 
