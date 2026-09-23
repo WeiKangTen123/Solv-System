@@ -20,6 +20,24 @@ describe('routes/auth', () => {
     expect(me.body.user.companyName).toBe('Solv');
   });
 
+  // The sign-in screen asks this to decide whether to offer a Register tab. It
+  // used to offer one whenever an account already existed, which is exactly
+  // when registering is refused, so the only thing that tab could do was 403.
+  test('/status says whether anyone may create their own account', async () => {
+    const empty = await request(serverFor(app)).get('/api/auth/status').expect(200);
+    expect(empty.body).toEqual({ hasUsers: false, registrationOpen: true });
+
+    await request(serverFor(app)).post('/api/auth/register').send({ email: 'a@solv.sg', password: 'password123' }).expect(201);
+    const closed = await request(serverFor(app)).get('/api/auth/status').expect(200);
+    expect(closed.body).toEqual({ hasUsers: true, registrationOpen: false });
+    await request(serverFor(app)).post('/api/auth/register').send({ email: 'b@solv.sg', password: 'password123' }).expect(403);
+
+    process.env.ALLOW_REGISTRATION = 'true';
+    const open = await request(serverFor(app)).get('/api/auth/status').expect(200);
+    delete process.env.ALLOW_REGISTRATION;
+    expect(open.body).toEqual({ hasUsers: true, registrationOpen: true });
+  });
+
   test('second registration is refused unless ALLOW_REGISTRATION=true', async () => {
     await request(serverFor(app)).post('/api/auth/register').send({ email: 'a@solv.sg', password: 'password123' }).expect(201);
     await request(serverFor(app)).post('/api/auth/register').send({ email: 'b@solv.sg', password: 'password123' }).expect(403);

@@ -15,6 +15,9 @@ export default function Login() {
 
   const [mode, setMode]       = useState('login');
   const [firstRun, setFirstRun] = useState(false);
+  // Until the server answers, assume registration is closed: showing a tab and
+  // withdrawing it reads worse than a tab that appears a moment late.
+  const [canRegister, setCanRegister] = useState(false);
   const [email, setEmail]     = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
@@ -28,7 +31,10 @@ export default function Login() {
 
   useEffect(() => {
     api.get('/auth/status')
-      .then(d => { if (!d.hasUsers) { setFirstRun(true); setMode('register'); } })
+      .then(d => {
+        if (!d.hasUsers) { setFirstRun(true); setMode('register'); }
+        setCanRegister(!!d.registrationOpen);
+      })
       .catch(() => {});
     return () => clearTimeout(shakeTimer.current);
   }, []);
@@ -183,7 +189,7 @@ export default function Login() {
             animation:      shaking ? 'shake 0.55s ease' : undefined,
           }}>
 
-            {!firstRun && (
+            {!firstRun && canRegister && (
               <div style={{
                 display:      'flex', gap: 4,
                 background:   'var(--bg-input)',

@@ -16,7 +16,12 @@ function sign(user) {
   return jwt.sign({ id: user.id, email: user.email, role: user.role }, jwtSecret(), { expiresIn: '7d' });
 }
 
-router.get('/status', (_req, res) => res.json({ hasUsers: users.hasUsers() }));
+// Whether anyone may create their own account. One definition, asked by both
+// the status route and register below: they disagreed, and the sign-in screen
+// offered a Register tab whose only possible outcome was a 403.
+const registrationOpen = () => !users.hasUsers() || process.env.ALLOW_REGISTRATION === 'true';
+
+router.get('/status', (_req, res) => res.json({ hasUsers: users.hasUsers(), registrationOpen: registrationOpen() }));
 
 // The first account creates the company and is its admin. After that,
 // registration is closed unless ALLOW_REGISTRATION=true; admins add staff.
@@ -25,7 +30,7 @@ router.post('/register', authLimiter, async (req, res) => {
     const { email, password, name } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
-    if (users.hasUsers() && process.env.ALLOW_REGISTRATION !== 'true') {
+    if (!registrationOpen()) {
       return res.status(403).json({ error: 'Registration is closed. Ask your administrator to add you.' });
     }
     // A later self-registration (flag on) joins the first company as an employee.
