@@ -6,11 +6,18 @@ const path = require('path');
 const ROOT = path.join(__dirname, '../..');
 const ZERO_KEY = '0'.repeat(64);
 
+// The secrets are supplied here, not left to whatever main/.env the machine
+// happens to have. Left to that, the "ready" cases passed on a developer's
+// laptop and failed on CI, where there is no .env and preflight — rightly —
+// refuses a box with no JWT_SECRET. A test that only passes with the author's
+// dotfile is testing the dotfile.
+const GOOD = { NODE_ENV: 'development', JWT_SECRET: 'j'.repeat(48), ENCRYPTION_KEY: 'a'.repeat(64) };
+
 function preflight(env = {}, args = ['--json']) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'solv-pre-'));
   const opts = {
     cwd: ROOT, encoding: 'utf8',
-    env: { ...process.env, DATA_DIR: path.join(dir, 'data'), LOGS_DIR: path.join(dir, 'logs'), ...env },
+    env: { ...process.env, ...GOOD, DATA_DIR: path.join(dir, 'data'), LOGS_DIR: path.join(dir, 'logs'), ...env },
   };
   try {
     return { code: 0, out: execFileSync(process.execPath, ['main/scripts/preflight.js', ...args], opts), dir };
