@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import ReceiptUpload from '../components/receipts/ReceiptUpload';
 import ExpenseTable from '../components/ExpenseTable';
@@ -7,6 +8,7 @@ import { useVisiblePolling } from '../utils/useVisiblePolling';
 const FILTERS = [['', 'All'], ['review-needed', 'Needs review'], ['reviewed', 'Reviewed'], ['duplicate', 'Duplicates']];
 
 export default function MyExpenses() {
+  const navigate = useNavigate();
   const [expenses, setExpenses] = useState([]);
   const [status, setStatus] = useState('');
   const [err, setErr] = useState(null);
@@ -20,10 +22,10 @@ export default function MyExpenses() {
 
   return (
     <div>
-      {err && <div className="alert alert-error">Could not load your expenses: {err}</div>}
+      {err && <div className="alert alert-error">Could not load your receipts: {err}</div>}
       <div className="page-header" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-        <div><h1>My expenses</h1><p>Every receipt you have added, newest first.</p></div>
-        <ReceiptUpload onUploaded={load} />
+        <div><h1>My receipts</h1><p>Every receipt you have recorded, newest first. Anything added here starts a case.</p></div>
+        <ReceiptUpload onUploaded={load} onCase={c => navigate(`/reports/${c.id}`)} />
       </div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
         {FILTERS.map(([k, label]) => (

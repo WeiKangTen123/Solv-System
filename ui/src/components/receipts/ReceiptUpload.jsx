@@ -13,9 +13,19 @@ import ClaimImport from './ClaimImport';
 // Nothing here talks to Xero. An uploaded receipt becomes a local record for the
 // user to review.
 // `reportId` points every upload at one case, which is what makes the case
-// screen work: the receipts go in where you are standing, instead of into the
-// loose pile to be filed again later.
-export default function ReceiptUpload({ onUploaded, reportId = null }) {
+// screen work: the receipts go in where you are standing.
+//
+// Without one — from Home or the receipts list — a case is made for whatever
+// arrives, and `onCase` is told which. There is no loose pile any more: every
+// receipt lives in a case from the moment it lands, because a receipt that
+// belongs to nothing is a receipt somebody has to come back and file.
+const caseTitle = () => {
+  const d = new Date();
+  const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `Receipts, ${d.getDate()} ${MONTH[d.getMonth()]} ${d.getFullYear()}`;
+};
+
+export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
   // An import survives closing the panel, and GET /claims/active is how you
   // find it again: without this the progress view, the reconciliation summary
   // and the Undo button were gone for good the moment the dialog was closed.
@@ -31,8 +41,14 @@ export default function ReceiptUpload({ onUploaded, reportId = null }) {
   const [busy, setBusy]     = useState(false);
   const [error, setError]   = useState('');
   const [note, setNote]     = useState('');
-  const [pairing, setPairing] = useState(false);
+  // `pairing` holds the case the phone session is pointed at, or the one that
+  // was already open. A session started from Home makes its case up front, so
+  // every photograph has somewhere to land; a session that produced nothing
+  // deletes it again on close, rather than leaving an empty case behind.
+  const [pairing, setPairing] = useState(null);
   const [importing, setImporting] = useState(false);
+
+  const newCase = async () => (await api.post('/reports', { kind: 'case', title: caseTitle() })).report;
 
   async function handleFiles(files) {
     const list = Array.from(files || []);
@@ -44,11 +60,20 @@ export default function ReceiptUpload({ onUploaded, reportId = null }) {
     const failures = [];
     let ok = 0;
 
+    // One case for everything picked together: ten images chosen at once are
+    // one claim, not ten.
+    let target = reportId;
+    let made = null;
+    if (!target) {
+      try { made = await newCase(); target = made.id; }
+      catch (err) { setBusy(false); setError(`Could not start a case: ${err.message}`); return; }
+    }
+
     for (const file of list) {
       try {
         const { blob, mime, originalBytes, bytes } = await prepareReceipt(file);
         const data = await blobToBase64(blob);
-        await api.post('/receipts', { mime, data, filename: file.name, source: 'upload', ...(reportId ? { reportId } : {}) });
+        await api.post('/receipts', { mime, data, filename: file.name, source: 'upload', reportId: target });
         ok++;
         // Worth saying out loud: a 9MB photo becoming 700KB is the difference
         // between Xero accepting the attachment and rejecting it.
@@ -62,8 +87,29 @@ export default function ReceiptUpload({ onUploaded, reportId = null }) {
 
     setBusy(false);
     if (failures.length) setError(failures.join(' · '));
-    if (ok && onUploaded) onUploaded();
     if (fileRef.current) fileRef.current.value = '';  // let the same file be picked again
+    if (made && !ok) {
+      // Nothing landed, so the case it was made for is not a case.
+      try { await api.delete(`/reports/${made.id}`); } catch { /* it will show as empty; not worth an error on top of the upload's */ }
+      return;
+    }
+    if (ok && onUploaded) onUploaded();
+    if (made && onCase) onCase(made);
+  }
+
+  async function startPhone() {
+    setError('');
+    if (reportId) { setPairing({ id: reportId, made: false }); return; }
+    try { const c = await newCase(); setPairing({ id: c.id, made: true, arrived: 0, report: c }); }
+    catch (err) { setError(`Could not start a case: ${err.message}`); }
+  }
+
+  async function endPhone() {
+    const p = pairing;
+    setPairing(null);
+    if (!p || !p.made) return;
+    if (p.arrived > 0) { if (onCase) onCase(p.report); return; }
+    try { await api.delete(`/reports/${p.id}`); } catch { /* an empty case is the worst outcome; not an error */ }
   }
 
   return (
@@ -96,9 +142,10 @@ export default function ReceiptUpload({ onUploaded, reportId = null }) {
         </button>
         <button
           className="btn btn-sm"
-          onClick={() => setPairing(true)}
+          disabled={busy}
+          onClick={startPhone}
           style={{ whiteSpace: 'nowrap' }}
-          title="Scan a code to photograph expense claims with your phone"
+          title="Scan a code to photograph receipts with your phone"
         >
           Use my phone
         </button>
@@ -129,7 +176,11 @@ export default function ReceiptUpload({ onUploaded, reportId = null }) {
       )}
 
       {pairing && (
-        <PhonePairingModal onClose={() => setPairing(false)} onArrived={onUploaded} reportId={reportId} />
+        <PhonePairingModal
+          onClose={endPhone}
+          onArrived={() => { setPairing(p => (p ? { ...p, arrived: (p.arrived || 0) + 1 } : p)); if (onUploaded) onUploaded(); }}
+          reportId={pairing.id}
+        />
       )}
 
       {importing && (
