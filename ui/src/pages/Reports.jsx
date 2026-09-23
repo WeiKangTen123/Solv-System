@@ -68,7 +68,7 @@ export default function Reports() {
       )}
 
       <div className="card">
-        {!reports.length ? <div style={{ padding: '22px 0', color: 'var(--text-muted)', fontSize: 13 }}>No reports yet. Create one, then file your reviewed expenses into it.</div> : (
+        {!reports.length ? <div style={{ padding: '22px 0', color: 'var(--text-muted)', fontSize: 13 }}>No cases yet. Add receipts on Home and a case is made for them, or create one here and add to it.</div> : (
           <div style={{ overflowX: 'auto' }}>
             <table className="data-table">
               <thead><tr><th>Number</th><th>Title</th>{scope !== 'mine' && <th>Claimant</th>}<th>Period</th><th style={{ textAlign: 'right' }}>Expenses</th><th style={{ textAlign: 'right' }}>{base}</th><th>Status</th></tr></thead>

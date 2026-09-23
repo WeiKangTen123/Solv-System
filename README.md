@@ -20,7 +20,7 @@ Production: `npm run build:ui` then `NODE_ENV=production npm start` (serves the 
 
 A case is a bundle of receipts that belong together: a trip, a job, a month of fuel. It is the same object as a report, so everything downstream is unchanged, and it prints as one.
 
-There are two ways to start one. Drop a zip of receipts and the import creates a case named after the file, reads every receipt in it and files them all in. Or create one by hand and add receipts to it as they happen, by dropping files on the case, by importing a zip into it, or by scanning its QR code and photographing them on a phone, in which case every photograph taken while that session is open lands in that case.
+Every receipt lives in a case; there is no loose pile. Pick one image or ten on Home and one case is made for them, named by the day. Drop a zip and the import makes a case named after the file, reads every receipt in it and files them all in. Scan the QR code on Home and a case is made for the phone session, so every photograph taken while it is open lands there; a session that produced nothing deletes its case again. Or create a case by hand and add to it as receipts happen — by dropping files on it, importing a zip into it, or scanning its own code.
 
 Unlike the bulk filing route, a receipt uploaded into a case joins it before anyone has checked it, which is the point of working case-first. Claiming still refuses until every receipt in the case has been checked and priced.
 

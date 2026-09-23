@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import ReceiptUpload from '../components/receipts/ReceiptUpload';
 import ExpenseTable from '../components/ExpenseTable';
 import { useVisiblePolling } from '../utils/useVisiblePolling';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Insights from '../components/Insights';
 import { fmtMoney } from '../utils/format';
 
@@ -23,6 +23,7 @@ const thisMonth = iso => !!iso && String(iso).slice(0, 7) === new Date().toISOSt
 // watching it work.
 export default function Home() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const isAdmin = user?.role === 'admin';
   const [expenses, setExpenses] = useState([]);
   const [reports, setReports] = useState([]);
@@ -106,7 +107,8 @@ export default function Home() {
           <p>Add receipts and the reader fills in the merchant, date, amount and category.</p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <ReceiptUpload onUploaded={load} />
+          {/* Whatever is added here becomes a case, and the page goes to it. */}
+          <ReceiptUpload onUploaded={load} onCase={c => navigate(`/reports/${c.id}`)} />
           <Link to="/reports" className="btn btn-outline">+ New case</Link>
         </div>
       </div>
