@@ -49,15 +49,35 @@ describe('reports/workflow', () => {
     expect(wf.submit(r.id, owner).status).toBe('submitted');
   });
 
-  test('paid: finance or admin, only after approval; then the report is final', () => {
-    const r = draft(); reports.addExpense(r.id, ready().id); wf.submit(r.id, owner);
-    expect(() => wf.markPaid(r.id, fin)).toThrow(/approved/);
+  test('claimed: the owner, only after approval; then the report is final', () => {
+    const r = draft(); const e = ready(); reports.addExpense(r.id, e.id); wf.submit(r.id, owner);
+    expect(() => wf.markClaimed(r.id, owner)).toThrow(/approved/);
     wf.approve(r.id, mgr);
-    expect(() => wf.markPaid(r.id, mgr)).toThrow(/finance/);
-    const out = wf.markPaid(r.id, fin);
-    expect(out.status).toBe('paid');
-    expect(out.paidAt).toBeTruthy();
+    // Neither the manager who approved it nor finance may say it was claimed:
+    // only the person who would have put it through knows that.
+    expect(() => wf.markClaimed(r.id, mgr)).toThrow(/claimant/);
+    expect(() => wf.markClaimed(r.id, fin)).toThrow(/claimant/);
+    const out = wf.markClaimed(r.id, owner);
+    expect(out.status).toBe('claimed');
+    expect(out.claimedAt).toBeTruthy();
     expect(wf.isEditable(out)).toBe(false);
+    // the receipts inside went in together, so they are claimed together
+    expect(store.getExpense(e.id).claimed).toBe(true);
+  });
+
+  test('a receipt can be claimed on its own, and unclaimed again', () => {
+    const e = ready();
+    expect(store.getExpense(e.id).claimed).toBe(false);
+    expect(() => wf.markExpenseClaimed(e.id, mgr)).toThrow(/claimant/);
+    expect(wf.markExpenseClaimed(e.id, owner).claimed).toBe(true);
+    expect(wf.markExpenseClaimed(e.id, owner, false).claimed).toBe(false);
+  });
+
+  // Claiming one receipt out of a case says nothing about the case itself.
+  test('claiming a receipt inside a report does not claim the report', () => {
+    const r = draft(); const e = ready(); reports.addExpense(r.id, e.id);
+    wf.markExpenseClaimed(e.id, owner);
+    expect(reports.getReport(r.id).status).toBe('draft');
   });
 
   test('an expense in a submitted report is locked', () => {

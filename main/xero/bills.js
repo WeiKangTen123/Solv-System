@@ -80,7 +80,7 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
   const r = reports.getReport(reportId);
   if (!r) throw new Error('Report not found');
   if (r.xeroInvoiceId) throw new Error(`This report is already in Xero as bill ${r.xeroInvoiceId}`);
-  if (!['approved', 'paid'].includes(r.status)) throw new Error('Only an approved report can be posted to Xero');
+  if (!['approved', 'claimed'].includes(r.status)) throw new Error('Only an approved report can be posted to Xero');
 
   const payload = await reportPayload(reportId, { withReceipts: false });
   const company = payload.company;
@@ -143,7 +143,7 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
     }
   }
 
-  reports.setState(reportId, { status: r.status === 'paid' ? 'paid' : 'posted', xeroInvoiceId: created.invoiceID, xeroError: warnings.length ? `Attachments: ${warnings.join('; ')}` : null });
+  reports.setState(reportId, { status: r.status === 'claimed' ? 'claimed' : 'posted', xeroInvoiceId: created.invoiceID, xeroError: warnings.length ? `Attachments: ${warnings.join('; ')}` : null });
   reports.addEvent(reportId, actor.id, 'posted', `Xero bill ${created.invoiceID}`);
   logger.info('Report posted to Xero', { reportId, number: r.number, invoiceID: created.invoiceID, lines: bill.invoice.lineItems.length, by: actor.email });
   return { dryRun: false, tenantId: tenant.tenantId, tenantName: tenant.tenantName, xeroInvoiceId: created.invoiceID, warnings, bill };

@@ -1,11 +1,16 @@
-const reports = require('../store/reports');
-const users   = require('../store/users');
+const reports  = require('../store/reports');
+const users    = require('../store/users');
+const expenses = require('../store/expenses');
 
 // The report state machine and who may move it.
-//   draft → submitted → approved → paid → posted
+//   draft → submitted → approved → claimed → posted
 //              ↓            ↓
-//           rejected ← ─ ─ ┘ (finance may reject an approved report before paying)
+//           rejected ← ─ ─ ┘ (finance may reject an approved report before it is claimed)
 //   rejected → submitted (the owner edits and resubmits)
+//
+// The last step is the claimant's, not finance's. This system records claims;
+// it does not move money, so it cannot know that anybody was paid. What it can
+// know is that the person put an approved claim through — so they say so.
 const EDITABLE = new Set(['draft', 'rejected']);
 
 function _get(id) { const r = reports.getReport(id); if (!r) throw new Error('Report not found'); return r; }
@@ -66,17 +71,29 @@ function reject(reportId, actor, reason) {
   return reports.getReport(reportId);
 }
 
-function markPaid(reportId, actor) {
+// Marking it claimed is the owner's own record that they have put an approved
+// claim through. Nobody else's business, so nobody else may do it — except an
+// admin, who has to be able to tidy up after somebody who has left.
+function markClaimed(reportId, actor) {
   const r = _get(reportId);
-  if (!(actor.role === 'finance' || actor.role === 'admin')) throw new Error('Only finance can mark a report paid');
-  // Submit, approve and reject all refuse to let someone act on their own
-  // report; paying was the one step that did not, so a finance user could see
-  // their own claim all the way to paid on one other person's approval.
-  if (r.userId === actor.id) throw new Error('Someone else has to mark your own report paid');
-  if (!['approved', 'posted'].includes(r.status)) throw new Error('A report must be approved before it is paid');
-  reports.setState(reportId, { status: 'paid', paidAt: new Date().toISOString() });
-  reports.addEvent(reportId, actor.id, 'paid', null);
+  if (r.userId !== actor.id && actor.role !== 'admin') throw new Error('Only the claimant can mark their own report claimed');
+  if (!['approved', 'posted'].includes(r.status)) throw new Error('A report must be approved before it can be claimed');
+  const at = new Date().toISOString();
+  reports.setState(reportId, { status: 'claimed', claimedAt: at });
+  // Claiming the report claims everything in it: the receipts went in together.
+  for (const e of r.expenses) expenses.updateExpense(e.id, { claimedAt: at });
+  reports.addEvent(reportId, actor.id, 'claimed', null);
   return reports.getReport(reportId);
 }
 
-module.exports = { submit, approve, reject, markPaid, canDecide, isEditable, isLocked, EDITABLE };
+// A receipt claimed on its own, outside any report — a one-off someone put
+// through directly. Marking it does not move the report it may sit in: a case
+// is claimed when its owner says the whole case is.
+function markExpenseClaimed(expenseId, actor, claimed = true) {
+  const e = expenses.getExpense(expenseId);
+  if (!e) throw new Error('Expense not found');
+  if (e.userId !== actor.id && actor.role !== 'admin') throw new Error('Only the claimant can mark their own receipt claimed');
+  return expenses.updateExpense(expenseId, { claimedAt: claimed ? new Date().toISOString() : null });
+}
+
+module.exports = { submit, approve, reject, markClaimed, markExpenseClaimed, canDecide, isEditable, isLocked, EDITABLE };

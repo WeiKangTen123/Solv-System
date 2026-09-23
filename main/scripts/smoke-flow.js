@@ -79,8 +79,8 @@ const step = (n, msg) => console.log(`${String(n).padStart(2)}. ${msg}`);
 
   const dry = await call('POST', `/api/reports/${report.id}/post?dryRun=1`, { token: F });
   step(11, `Xero dry run: ${dry.bill.invoice.lineItems.length} lines, ${dry.bill.invoice.currencyCode} ${dry.bill.total}, contact ${dry.bill.contact.name}, org ${dry.tenantName || 'none connected'}`);
-  const paid = await call('POST', `/api/reports/${report.id}/paid`, { token: F });
-  step(12, `marked paid: ${paid.report.status}; history: ${paid.report.events.map(e => e.action).join(' → ')}`);
+  const claimed = await call('POST', `/api/reports/${report.id}/claimed`, { token: E });
+  step(12, `the claimant marked it claimed: ${claimed.report.status}; history: ${claimed.report.events.map(e => e.action).join(' → ')}`);
 
   const errors = (log.match(/error/gi) || []).length;
   step(13, `server log: ${errors} error lines`);

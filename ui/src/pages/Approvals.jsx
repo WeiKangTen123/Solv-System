@@ -8,7 +8,7 @@ import { formatRelative } from '../utils/formatDate';
 import { useVisiblePolling } from '../utils/useVisiblePolling';
 
 // What is waiting on this person: a manager sees direct reports' submitted
-// reports; finance sees everything submitted or approved and not yet paid.
+// reports; finance sees everything submitted or approved and not yet claimed.
 export default function Approvals() {
   const { user } = useAuth();
   const navigate = useNavigate();

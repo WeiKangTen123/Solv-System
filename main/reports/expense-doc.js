@@ -95,7 +95,7 @@ function buildModel(payload) {
 }
 
 function statusLine(report) {
-  if (['approved', 'paid', 'posted'].includes(report.status)) return `Approved ${fmtDate(report.approvedAt)}`;
+  if (['approved', 'claimed', 'posted'].includes(report.status)) return `Approved ${fmtDate(report.approvedAt)}`;
   return report.status.charAt(0).toUpperCase() + report.status.slice(1);
 }
 
@@ -148,7 +148,7 @@ function expenseReportDoc(payload) {
     { columns: [
       { width: '*', stack: [{ text: 'Claimant', style: 'label', margin: [0, 16, 0, 2] }, { text: L(owner.name || owner.email || ''), style: 'value' }, { text: report.submittedAt ? `submitted ${fmtDate(report.submittedAt)}` : 'not yet submitted', style: 'note' }] },
       { width: '*', stack: [{ text: 'Approved by', style: 'label', margin: [0, 16, 0, 2] }, { text: L(approver.name || approver.email || '—'), style: 'value' }, { text: report.approvedAt ? fmtStamp(report.approvedAt, company.timezone) : 'pending', style: 'note' }] },
-      { width: '*', stack: [{ text: 'For office use', style: 'label', margin: [0, 16, 0, 2] }, { text: [report.paidAt ? `Paid ${fmtDate(report.paidAt)}` : 'Not yet paid', report.xeroInvoiceId ? `Xero ${report.xeroInvoiceId}` : null, `Receipts: ${receipts.length}${receipts.length ? ` (${receipts.map(r => r.ref).join(', ')})` : ''}`].filter(Boolean).join(' · '), style: 'note' }] },
+      { width: '*', stack: [{ text: 'For office use', style: 'label', margin: [0, 16, 0, 2] }, { text: [report.claimedAt ? `Claimed ${fmtDate(report.claimedAt)}` : 'Not yet claimed', report.xeroInvoiceId ? `Xero ${report.xeroInvoiceId}` : null, `Receipts: ${receipts.length}${receipts.length ? ` (${receipts.map(r => r.ref).join(', ')})` : ''}`].filter(Boolean).join(' · '), style: 'note' }] },
     ] },
   ];
   for (const r of receipts) {

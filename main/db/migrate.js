@@ -66,12 +66,53 @@ function run() {
     }
   });
 
+  // A receipt can be claimed on its own, so the column is ensured for databases
+  // that predate it. Deliberately not part of the status CHECK: an expense's
+  // status says how well the reader did, and claiming is a separate question.
+  _ensureColumn('expenses', 'claimed_at', 'claimed_at TEXT');
+
   // Numbered 3, not 1: a database that booted on the build where the steps were
   // declared out of order is stamped 2, and would skip a step numbered below
   // that for ever — while being precisely the database still holding rates
   // fetched to two significant figures.
   _step(3, 'refetch cached provider rates at full precision', () => {
     db.prepare("DELETE FROM fx_rates WHERE source != 'manual'").run();
+  });
+
+  // 4. The system records claims; it does not pay anybody. The last step used
+  // to be finance marking a report paid, which said something the software had
+  // no way of knowing. It is now the claimant marking it claimed. Another CHECK
+  // constraint, so another rebuild.
+  //
+  // The column list is read from the table rather than written out here: an
+  // earlier _ensureColumn may have added a column this file does not name, and
+  // `INSERT ... SELECT *` cannot carry 'paid' across a CHECK that no longer
+  // allows it. Each column is copied by name, with status translated on the way.
+  _step(4, 'a report is claimed by its owner, not paid by finance', () => {
+    const has = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'expense_reports'").get();
+    if (!has || /'claimed'/.test(has.sql)) return;
+    const cols = db.prepare('PRAGMA table_info(expense_reports)').all().map(c => c.name);
+    const select = cols.map(c => {
+      if (c === 'status') return "CASE status WHEN 'paid' THEN 'claimed' ELSE status END";
+      return `"${c}"`;
+    }).join(', ');
+    const target = cols.map(c => `"${c === 'paid_at' ? 'claimed_at' : c}"`).join(', ');
+    const on = db.pragma('foreign_keys', { simple: true });
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(has.sql
+          .replace("'rejected', 'paid', 'posted'", "'rejected', 'claimed', 'posted'")
+          .replace(/\bpaid_at\b/g, 'claimed_at')
+          .replace('expense_reports', 'expense_reports_rebuilt'));
+        db.exec(`INSERT INTO expense_reports_rebuilt (${target}) SELECT ${select} FROM expense_reports`);
+        db.exec('DROP TABLE expense_reports');
+        db.exec('ALTER TABLE expense_reports_rebuilt RENAME TO expense_reports');
+        db.exec(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));   // the indexes DROP TABLE took with it
+      })();
+    } finally {
+      if (on) db.pragma('foreign_keys = ON');
+    }
   });
 }
 

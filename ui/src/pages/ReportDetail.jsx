@@ -246,8 +246,8 @@ export default function ReportDetail() {
               {isOwner && editable && <button className="btn btn-primary" disabled={!!busy} onClick={() => act('submit', () => api.post(`/reports/${id}/submit`, {}))}>{busy === 'submit' ? 'Submitting…' : 'Submit for approval'}</button>}
               {canDecide && r.status === 'submitted' && <button className="btn btn-primary" disabled={!!busy} onClick={() => act('approve', () => api.post(`/reports/${id}/approve`, {}))}>Approve</button>}
               {canDecide && (r.status === 'submitted' || (r.status === 'approved' && isFinance)) && <button className="btn btn-outline" disabled={!!busy} onClick={() => setRejecting({ reason: '' })}>Send back…</button>}
-              {isFinance && r.status === 'approved' && <button className="btn btn-primary" disabled={!!busy} onClick={() => act('paid', () => api.post(`/reports/${id}/paid`, {}))}>Mark paid</button>}
-              {isFinance && ['approved', 'paid'].includes(r.status) && !r.xeroInvoiceId && (
+              {isOwner && r.status === 'approved' && <button className="btn btn-primary" disabled={!!busy} onClick={() => act('claimed', () => api.post(`/reports/${id}/claimed`, {}))}>{busy === 'claimed' ? 'Marking…' : 'I have claimed this'}</button>}
+              {isFinance && ['approved', 'claimed'].includes(r.status) && !r.xeroInvoiceId && (
                 xero?.connected ? (
                   <>
                     <button className="btn btn-outline" disabled={!!busy} onClick={() => act('preview', async () => { setPreview(await api.post(`/reports/${id}/post?dryRun=1`, {})); })}>Preview Xero bill</button>
@@ -256,8 +256,8 @@ export default function ReportDetail() {
                 ) : <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Connect Xero in Settings to post this report as a bill.</div>
               )}
               {r.xeroInvoiceId && <div style={{ fontSize: 12.5, color: 'var(--success)' }}>In Xero as draft bill {r.xeroInvoiceId}{xero?.tenantName ? ` (${xero.tenantName})` : ''}.</div>}
-              {!isOwner && !canDecide && !(isFinance && r.status === 'approved') && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Nothing for you to do on this report right now.</div>}
-              {isOwner && !editable && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{r.status === 'submitted' ? 'Waiting for your manager.' : r.status === 'approved' ? 'Approved; finance will pay it.' : r.status === 'paid' ? `Paid ${formatDateTime(r.paidAt, user?.timezone)}.` : ''}</div>}
+              {!isOwner && !canDecide && !(isFinance && ['approved', 'claimed'].includes(r.status)) && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Nothing for you to do on this report right now.</div>}
+              {isOwner && !editable && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{r.status === 'submitted' ? 'Waiting for your manager.' : r.status === 'approved' ? 'Approved. Put it through, then mark it claimed.' : r.status === 'claimed' ? `Claimed ${formatDateTime(r.claimedAt, user?.timezone)}.` : ''}</div>}
             </div>
             {preview && (
               <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10, fontSize: 12 }}>

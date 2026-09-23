@@ -126,16 +126,23 @@ describe('guards that the approval workflow depends on', () => {
     await request(serverFor(app)).get(`/api/receipts/${mine.receipt.id}/token`).set(as(fin)).expect(200);
   });
 
-  // ── segregation of duties on the last step ──────────────────────────────
-  test('finance cannot mark their own report paid, but can mark someone else\'s', async () => {
+  // ── who owns the last step ──────────────────────────────────────────────
+  // It used to be finance marking a report paid, and the guard worth pinning
+  // was that they could not pay themselves. The last step is now the claimant
+  // saying they put an approved claim through, so the guard inverts: nobody
+  // may declare that on somebody else's behalf. An admin still may, to tidy up
+  // after someone who has left.
+  test('only the claimant, or an admin, can mark a report claimed', async () => {
+    const { report } = await approvedReport();
+    const owner = { id: report.userId, role: 'employee' };
+    expect(() => wf.markClaimed(report.id, fin)).toThrow(/claimant/i);
+    expect(() => wf.markClaimed(report.id, mgr)).toThrow(/claimant/i);
+    expect(wf.markClaimed(report.id, owner).status).toBe('claimed');
+
     const own = reports.createReport({ companyId: fin.companyId, userId: fin.id, title: 'Finance trip' });
-    const e = seed(fin);
-    reports.addExpense(own.id, e.id);
+    reports.addExpense(own.id, seed(fin).id);
     wf.submit(own.id, fin);
     wf.approve(own.id, admin);   // fin reports to nobody, so an admin decides
-    expect(() => wf.markPaid(own.id, fin)).toThrow(/someone else/i);
-
-    const { report } = await approvedReport();
-    expect(wf.markPaid(report.id, fin).status).toBe('paid');
+    expect(wf.markClaimed(own.id, admin).status).toBe('claimed');
   });
 });

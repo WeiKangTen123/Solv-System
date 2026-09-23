@@ -1,6 +1,6 @@
 # Solv Expenses
 
-Expense claims for a company that pays its staff back in SGD for receipts in any currency. Staff add receipts (drag-drop, phone camera by QR code, or a ZIP with the claim-form spreadsheet); the reader extracts merchant, date, invoice number, currency, total, tax and category lines, including from scanned multi-page hotel folios; every foreign line is converted at a live exchange rate that is frozen on the line and can be edited with a reason; reviewed expenses are filed into an expense report with a cover; the claimant submits, the manager approves, finance marks it paid and posts it to Xero as a draft bill with the receipts attached; the report exports as PDF, XLSX or CSV with the rate footnote and the receipts appended.
+Expense claims for a company that pays its staff back in SGD for receipts in any currency. Staff add receipts (drag-drop, phone camera by QR code, or a ZIP with the claim-form spreadsheet); the reader extracts merchant, date, invoice number, currency, total, tax and category lines, including from scanned multi-page hotel folios; every foreign line is converted at a live exchange rate that is frozen on the line and can be edited with a reason; reviewed expenses are filed into an expense report with a cover; the claimant submits, the manager approves, the claimant marks it claimed once it has gone through, and finance posts it to Xero as a draft bill with the receipts attached; the report exports as PDF, XLSX or CSV with the rate footnote and the receipts appended.
 
 Built on the same stack as `xero-invoice-app-master`, with its proven modules ported (reader, duplicate detection, job queue, phone capture, batch import, Xero connection) and five things added: scanned-PDF rendering, multi-page single-document reads, the exchange-rate service, expense reports with approval, and the exports.
 
@@ -32,10 +32,12 @@ Checking happens in one table at `/reports/:id/check`: a row per receipt, the fi
 |---|---|
 | employee | adds receipts, reviews the reader's fields and lines, files them into reports, submits |
 | manager | approves or sends back direct reports' submitted reports |
-| finance | everything a manager can, plus marks paid, manual exchange rates, Xero, exports for anyone |
+| finance | everything a manager can, plus manual exchange rates, Xero, exports for anyone |
 | admin | finance plus staff and company settings |
 
-`draft → submitted → approved → paid → posted`; `submitted/approved → rejected → submitted`. An expense inside a submitted report is locked until the report is sent back.
+`draft → submitted → approved → claimed → posted`; `submitted/approved → rejected → submitted`. An expense inside a submitted report is locked until the report is sent back.
+
+The last step belongs to the claimant, not to finance. Solv records claims; it does not move money, so it cannot know that anybody was paid — what it can know is that the person put an approved claim through, so they are the one who says so. Marking a report claimed marks every receipt in it; a receipt can also be claimed on its own, for a one-off put through outside any report, and claiming one receipt inside a case says nothing about the case.
 
 ## Where things are
 
@@ -75,7 +77,7 @@ Porcelain: a cool white ground, near-black actions, hairline borders, and no bra
 Three rules the palette keeps:
 
 - Colour means state and nothing else. No accent competes with it, because the accent has no colour.
-- Each status owns a hue: blue in progress, amber needs you, green settled, teal paid, rose refused. The same five in both themes, deepened for white and brightened for black.
+- Each status owns a hue: blue in progress, amber needs you, green settled, teal claimed, rose refused. The same five in both themes, deepened for white and brightened for black.
 - Surfaces separate by edge, not by shadow. Shadows are kept for things that genuinely float, such as a modal.
 
 It is also deliberately nothing like the Xero automation, which is dark with an indigo accent. Anyone running both knows which window they are in without reading a word.
