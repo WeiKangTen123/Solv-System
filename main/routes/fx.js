@@ -24,7 +24,7 @@ router.get('/rates', requireAuth, (req, res) => {
   res.json({ rates: rates.listRates({ to: req.query.to || users.getCompany(me.companyId).baseCurrency, from: req.query.from || undefined, since: req.query.since || undefined }) });
 });
 
-router.post('/rates', requireAuth, requireRole('finance', 'admin'), (req, res) => {
+router.post('/rates', requireAuth, requireRole('admin'), (req, res) => {
   try {
     const me = users.findById(req.user.id);
     const { from, to, date, rate } = req.body || {};
@@ -32,7 +32,7 @@ router.post('/rates', requireAuth, requireRole('finance', 'admin'), (req, res) =
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-router.delete('/rates', requireAuth, requireRole('finance', 'admin'), (req, res) => {
+router.delete('/rates', requireAuth, requireRole('admin'), (req, res) => {
   const { from, to, date } = req.query;
   if (!rates.deleteManualRate({ from: String(from || '').toUpperCase(), to: String(to || '').toUpperCase(), date })) return res.status(404).json({ error: 'No manual rate on that day' });
   res.json({ ok: true });

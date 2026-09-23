@@ -6,17 +6,15 @@ const { serverFor } = require('../scripts/test-server');
 jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 0.01341, rateDate: '2026-09-04', providerDate: '2026-09-04', source: 'frankfurter', fetchedAt: '2026-09-18T03:00:00.000Z' }) }));
 
 describe('routes/reports', () => {
-  let app, users, store, admin, mgr, fin, emp, other, tokens;
+  let app, users, store, admin, emp, other, tokens;
   beforeEach(async () => {
     jest.resetModules(); require('../db/migrate').run();
     users = require('../store/users'); store = require('../store/expenses');
     admin = await users.createUser({ email: 'a@solv.sg', password: 'password123', name: 'Admin' });
-    mgr = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: admin.companyId, role: 'manager', name: 'Henry Bennett' });
-    fin = await users.createUser({ email: 'f@solv.sg', password: 'password123', companyId: admin.companyId, role: 'finance', name: 'Fin' });
-    emp = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId, managerId: mgr.id, name: 'Elaine Khoo', department: 'Sales', employeeId: 'S0042' });
+    emp = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId, name: 'Elaine Khoo', department: 'Sales', employeeId: 'S0042' });
     other = await users.createUser({ email: 'o@solv.sg', password: 'password123', companyId: admin.companyId });
     const secret = require('../middleware/auth-middleware').jwtSecret();
-    tokens = Object.fromEntries([admin, mgr, fin, emp, other].map(u => [u.email, jwt.sign({ id: u.id, email: u.email, role: u.role }, secret)]));
+    tokens = Object.fromEntries([admin, emp, other].map(u => [u.email, jwt.sign({ id: u.id, email: u.email, role: u.role }, secret)]));
     app = express(); app.use(express.json()); app.use('/api/reports', require('./reports')); app.use('/api/expenses', require('./expenses'));
   });
   const as = u => ({ Authorization: `Bearer ${tokens[u.email]}` });
@@ -35,55 +33,47 @@ describe('routes/reports', () => {
     await request(serverFor(app)).delete(`/api/reports/${r.id}/expenses/${e1.id}`).set(as(emp)).expect(200);
     await request(serverFor(app)).delete(`/api/reports/${r.id}/expenses/${e1.id}`).set(as(emp)).expect(404);
     await request(serverFor(app)).get(`/api/reports/${r.id}`).set(as(other)).expect(404);
-    const view = await request(serverFor(app)).get(`/api/reports/${r.id}`).set(as(mgr)).expect(200);
-    expect(view.body).toMatchObject({ editable: true, isOwner: false, canDecide: false });
+    const view = await request(serverFor(app)).get(`/api/reports/${r.id}`).set(as(admin)).expect(200);
+    expect(view.body).toMatchObject({ editable: true, isOwner: false });
+    expect(view.body.report.status).toBe('open');
   });
 
-  test('the full journey: submit, manager approves, finance pays; wrong actors are refused; locked expenses', async () => {
+  test('the whole journey: open, claimed by the owner, locked, reopened; wrong actors are refused', async () => {
     const r = (await create(emp)).body.report; const e = reviewed(emp);
     await request(serverFor(app)).post(`/api/reports/${r.id}/expenses`).set(as(emp)).send({ expenseIds: [e.id] });
-    await request(serverFor(app)).post(`/api/reports/${r.id}/approve`).set(as(mgr)).expect(400);          // not submitted yet
-    const s = await request(serverFor(app)).post(`/api/reports/${r.id}/submit`).set(as(emp)).expect(200);
-    expect(s.body.report.status).toBe('submitted');
-    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ purpose: 'x' }).expect(409);
-    await request(serverFor(app)).patch(`/api/reports/${r.id}`).set(as(emp)).send({ title: 'x' }).expect(409);
-    await request(serverFor(app)).post(`/api/reports/${r.id}/approve`).set(as(other)).expect(404);       // not theirs to see
-    await request(serverFor(app)).post(`/api/reports/${r.id}/approve`).set(as(emp)).expect(403);
-    const q = await request(serverFor(app)).get('/api/reports/queue').set(as(mgr)).expect(200);
-    expect(q.body.reports.map(x => x.id)).toEqual([r.id]);
-    const a = await request(serverFor(app)).post(`/api/reports/${r.id}/approve`).set(as(mgr)).expect(200);
-    expect(a.body.report).toMatchObject({ status: 'approved', approvedBy: mgr.id });
-    // The last step belongs to the claimant: this system records that a claim
-    // was put through, which is not something a manager or finance can know.
-    await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(mgr)).expect(403);
-    const fq = await request(serverFor(app)).get('/api/reports/queue').set(as(fin)).expect(200);
-    expect(fq.body.reports.map(x => x.id)).toEqual([r.id]);
-    await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(fin)).expect(403);
+    await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(other)).expect(404);       // not theirs to see
     const p = await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(emp)).expect(200);
     expect(p.body.report.status).toBe('claimed');
     expect(p.body.report.claimedAt).toBeTruthy();
-    expect(p.body.report.events.map(x => x.action)).toEqual(['created', 'submitted', 'approved', 'claimed']);
-    // and claiming the report claimed what was in it
+    expect(p.body.report.events.map(x => x.action)).toEqual(['created', 'claimed']);
+    // claiming the case claimed what was in it, and locked it
     const claimed = await request(serverFor(app)).get(`/api/expenses/${e.id}`).set(as(emp)).expect(200);
     expect(claimed.body.expense.claimed).toBe(true);
-  });
-
-  test('reject sends it back with a reason; the owner can edit and resubmit', async () => {
-    const r = (await create(emp)).body.report; const e = reviewed(emp);
-    await request(serverFor(app)).post(`/api/reports/${r.id}/expenses`).set(as(emp)).send({ expenseIds: [e.id] });
-    await request(serverFor(app)).post(`/api/reports/${r.id}/submit`).set(as(emp)).expect(200);
-    await request(serverFor(app)).post(`/api/reports/${r.id}/reject`).set(as(mgr)).send({}).expect(400);
-    const rj = await request(serverFor(app)).post(`/api/reports/${r.id}/reject`).set(as(mgr)).send({ reason: 'Add the purpose' }).expect(200);
-    expect(rj.body.report).toMatchObject({ status: 'rejected', rejectedReason: 'Add the purpose' });
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ purpose: 'x' }).expect(409);
+    await request(serverFor(app)).patch(`/api/reports/${r.id}`).set(as(emp)).send({ title: 'x' }).expect(409);
+    await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(emp)).expect(400);         // already
+    // reopening is the owner's or an admin's, and frees the receipts again
+    await request(serverFor(app)).post(`/api/reports/${r.id}/reopen`).set(as(other)).expect(404);
+    const ro = await request(serverFor(app)).post(`/api/reports/${r.id}/reopen`).set(as(admin)).expect(200);
+    expect(ro.body.report.status).toBe('open');
+    expect(ro.body.report.events.map(x => x.action)).toEqual(['created', 'claimed', 'reopened']);
     await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ purpose: 'Client visit' }).expect(200);
-    await request(serverFor(app)).post(`/api/reports/${r.id}/submit`).set(as(emp)).expect(200);
   });
 
-  test('listing: own for employees, direct reports for managers, all for finance; drafts can be deleted', async () => {
+  test('a case with an unchecked receipt cannot be claimed, and says so', async () => {
+    const r = (await create(emp)).body.report;
+    const e = reviewed(emp, { status: 'review-needed' });
+    // the filing route refuses an unchecked one, so it goes in through the store
+    require('../store/reports').addExpense(r.id, e.id);
+    const res = await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(emp)).expect(400);
+    expect(res.body.error).toMatch(/not checked/);
+  });
+
+  test('listing: own for a user, everyone for an admin, and only an admin; open cases can be deleted', async () => {
     const mine = (await create(emp)).body.report; await create(other);
     expect((await request(serverFor(app)).get('/api/reports').set(as(emp)).expect(200)).body.reports.map(r => r.id)).toEqual([mine.id]);
-    expect((await request(serverFor(app)).get('/api/reports?scope=team').set(as(mgr)).expect(200)).body.reports.map(r => r.id)).toEqual([mine.id]);
-    expect((await request(serverFor(app)).get('/api/reports?scope=all').set(as(fin)).expect(200)).body.reports).toHaveLength(2);
+    expect((await request(serverFor(app)).get('/api/reports?scope=all').set(as(emp)).expect(200)).body.reports.map(r => r.id)).toEqual([mine.id]);   // asking does not widen it
+    expect((await request(serverFor(app)).get('/api/reports?scope=all').set(as(admin)).expect(200)).body.reports).toHaveLength(2);
     await request(serverFor(app)).delete(`/api/reports/${mine.id}`).set(as(other)).expect(404);
     await request(serverFor(app)).delete(`/api/reports/${mine.id}`).set(as(emp)).expect(200);
   });
@@ -198,12 +188,12 @@ describe('routes/reports — checking a case in bulk', () => {
     expect(res.body.skipped[0].why).toMatch(/do not add up/);
   });
 
-  test('somebody else\'s case, and a submitted one, are refused', async () => {
+  test('somebody else\'s case, and a claimed one, are refused', async () => {
     const mine = reports.createReport({ companyId: emp.companyId, userId: emp.id, kind: 'case', title: 'mine' });
     add(mine, { status: 'reviewed' });
     await request(serverFor(app)).post(`/api/reports/${mine.id}/review-all`).set(as(admin)).expect(200);  // an admin may
 
-    wf.submit(mine.id, emp);
+    wf.markClaimed(mine.id, emp);
     await request(serverFor(app)).post(`/api/reports/${mine.id}/review-all`).set(as(emp)).expect(409);
   });
 });

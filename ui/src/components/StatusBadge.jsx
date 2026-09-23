@@ -1,7 +1,7 @@
 const META = {
   reading: ['Reading…', 'badge-blue'], 'review-needed': ['Needs review', 'badge-yellow'], reviewed: ['Reviewed', 'badge-green'],
   duplicate: ['Duplicate', 'badge-red'], rejected: ['Rejected', 'badge-red'],
-  draft: ['Draft', 'badge-gray'], submitted: ['Submitted', 'badge-blue'], approved: ['Approved', 'badge-green'], claimed: ['Claimed', 'badge-teal'], posted: ['Posted to Xero', 'badge-green'],
+  open: ['Open', 'badge-blue'], claimed: ['Claimed', 'badge-teal'],
 };
 export default function StatusBadge({ status }) {
   const [label, cls] = META[status] || [status || '—', 'badge-gray'];

@@ -12,7 +12,7 @@ jest.mock('./attachments', () => ({ forReceipt: jest.fn().mockResolvedValue([{ n
 
 const payload = {
   company: { id: 'c1', name: 'Solv Pte Ltd', baseCurrency: 'SGD', timezone: 'Asia/Singapore' },
-  report: { number: 'EXP-2026-0007', title: 'India trip', purpose: 'Client visits', status: 'approved', approvedAt: '2026-09-10T06:02:00Z', submittedAt: '2026-09-05T02:00:00Z' },
+  report: { number: 'EXP-2026-0007', title: 'India trip', purpose: 'Client visits', status: 'claimed', claimedAt: '2026-09-10T06:02:00Z' },
   owner: { name: 'Elaine Xin Yu Khoo', email: 'elaine@solv.sg' },
   lines: [
     { ref: 'R1', date: '2026-09-04', merchant: 'Courtyard Pune', purpose: 'Site visit', category: 'Lodging', currency: 'INR', amount: 43131.36, fxRate: 0.01341, baseAmount: 578.39, onBehalfOf: null, tax: 13452.52 },
@@ -50,15 +50,13 @@ describe('xero/bills — buildBill', () => {
 });
 
 describe('xero/bills — postReport', () => {
-  let users, store, reports, wf, bills, admin, mgr, fin, emp, report;
+  let users, store, reports, wf, bills, admin, emp, report;
   beforeEach(async () => {
     jest.resetModules(); require('../db/migrate').run();
     mockCreateInvoices.mockReset(); mockAttach.mockClear();
     users = require('../store/users'); store = require('../store/expenses'); reports = require('../store/reports'); wf = require('../reports/workflow'); bills = require('./bills');
     admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
-    mgr = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: admin.companyId, role: 'manager' });
-    fin = await users.createUser({ email: 'f@solv.sg', password: 'password123', companyId: admin.companyId, role: 'finance' });
-    emp = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId, managerId: mgr.id, name: 'Elaine' });
+    emp = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId, name: 'Elaine' });
     users.saveCompanyConfig(admin.companyId, { DEFAULT_ACCOUNT_CODE: '429' });
     const rc = store.createReceipt({ companyId: admin.companyId, userId: emp.id, file: 'r.pdf', mime: 'application/pdf', sha256: 'h' });
     const e = store.createExpense({ companyId: admin.companyId, userId: emp.id, receiptId: rc.id, status: 'reviewed', merchant: 'Courtyard', currency: 'INR', total: 100, receiptDate: '2026-09-04',
@@ -67,42 +65,43 @@ describe('xero/bills — postReport', () => {
     reports.addExpense(report.id, e.id);
   });
 
-  test('refuses a report that is not approved', async () => {
-    await expect(bills.postReport(report.id, fin)).rejects.toThrow(/approved/);
+  test('refuses a case that has not been claimed', async () => {
+    await expect(bills.postReport(report.id, admin)).rejects.toThrow(/claimed/);
   });
 
   test('a dry run builds the bill and sends nothing', async () => {
-    wf.submit(report.id, emp); wf.approve(report.id, mgr);
-    const out = await bills.postReport(report.id, fin, { dryRun: true });
+    wf.markClaimed(report.id, emp);
+    const out = await bills.postReport(report.id, admin, { dryRun: true });
     expect(out.dryRun).toBe(true);
     expect(out.tenantName).toBe('Solv Pte Ltd');
     expect(out.bill.invoice.lineItems).toHaveLength(1);
     expect(out.bill.invoice.lineItems[0]).toMatchObject({ unitAmount: 1.34, accountCode: '494' });
     expect(mockCreateInvoices).not.toHaveBeenCalled();
-    expect(reports.getReport(report.id).status).toBe('approved');
+    expect(reports.getReport(report.id).status).toBe('claimed');
   });
 
   test('posts the bill, attaches the receipt, records the Xero id and an event', async () => {
-    wf.submit(report.id, emp); wf.approve(report.id, mgr);
+    wf.markClaimed(report.id, emp);
     mockCreateInvoices.mockResolvedValue({ body: { invoices: [{ invoiceID: 'xero-bill-1' }] } });
-    const out = await bills.postReport(report.id, fin);
+    const out = await bills.postReport(report.id, admin);
     expect(out.xeroInvoiceId).toBe('xero-bill-1');
     const sent = mockCreateInvoices.mock.calls[0][1].invoices[0];
     expect(sent).toMatchObject({ type: 'ACCPAY', status: 'DRAFT', contact: { contactID: 'contact-1' }, currencyCode: 'SGD' });
     expect(mockAttach).toHaveBeenCalledTimes(1);
     expect(mockAttach.mock.calls[0].slice(0, 3)).toEqual(['t1', 'xero-bill-1', 'R1.pdf']);
     const after = reports.getReport(report.id);
-    expect(after).toMatchObject({ status: 'posted', xeroInvoiceId: 'xero-bill-1', xeroError: null });
+    // the status stays claimed: the Xero id is what records the posting
+    expect(after).toMatchObject({ status: 'claimed', xeroInvoiceId: 'xero-bill-1', xeroError: null });
     expect(after.events.at(-1)).toMatchObject({ action: 'posted' });
-    await expect(bills.postReport(report.id, fin)).rejects.toThrow(/already in Xero/);
+    await expect(bills.postReport(report.id, admin)).rejects.toThrow(/already in Xero/);
   });
 
   test("Xero's validation error is stored on the report and surfaced", async () => {
-    wf.submit(report.id, emp); wf.approve(report.id, mgr);
+    wf.markClaimed(report.id, emp);
     mockCreateInvoices.mockRejectedValue(new Error(JSON.stringify({ response: { statusCode: 400, body: { Elements: [{ ValidationErrors: [{ Message: 'Account code 494 is not valid' }] }] } } })));
-    await expect(bills.postReport(report.id, fin)).rejects.toThrow(/Account code 494/);
+    await expect(bills.postReport(report.id, admin)).rejects.toThrow(/Account code 494/);
     const after = reports.getReport(report.id);
-    expect(after.status).toBe('approved');
+    expect(after.status).toBe('claimed');
     expect(after.xeroError).toMatch(/Account code 494/);
     expect(after.events.at(-1).action).toBe('xero_failed');
   });

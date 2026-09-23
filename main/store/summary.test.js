@@ -3,7 +3,7 @@ const express = require('express');
 const { serverFor } = require('../scripts/test-server');
 
 describe('dashboard summary', () => {
-  let users, store, reports, wf, summary, app, cid, boss, mgr, fin, ela, mar;
+  let users, store, reports, wf, summary, app, cid, boss, ela, mar;
 
   const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 
@@ -24,10 +24,8 @@ describe('dashboard summary', () => {
 
     boss = await users.createUser({ email: 'wk@solv.sg', password: 'password123', name: 'Wei Kang' });
     cid = boss.companyId;
-    mgr = await users.createUser({ email: 'h@solv.sg', password: 'password123', companyId: cid, role: 'manager', name: 'Henry' });
-    fin = await users.createUser({ email: 'f@solv.sg', password: 'password123', companyId: cid, role: 'finance', name: 'Priya' });
-    ela = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: cid, name: 'Elaine', managerId: mgr.id });
-    mar = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: cid, name: 'Marcus' });   // reports to nobody
+    ela = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: cid, name: 'Elaine' });
+    mar = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: cid, name: 'Marcus' });
 
     app = express();
     app.use(express.json());
@@ -39,27 +37,18 @@ describe('dashboard summary', () => {
   test('an employee is totalled over their own expenses only', () => {
     spend(ela, { merchant: 'Hotel', amount: 1289, base: 403.84, ccy: 'MYR', cat: 'Lodging', date: day(3) });
     spend(mar, { merchant: 'Someone else', amount: 500, base: 500, date: day(3) });
-    const s = summary(me(ela), users.getAllUsers(cid));
+    const s = summary(me(ela));
     expect(s.scope).toBe('own');
     expect(s.total).toBe(403.84);
     expect(s.byCategory).toEqual([{ category: 'Lodging', base: 403.84, lines: 1, share: 1 }]);
   });
 
-  test("a manager is totalled over their direct reports and themselves, never the whole company", () => {
-    spend(ela, { merchant: 'Hotel', amount: 100, base: 100, cat: 'Lodging', date: day(2) });
-    spend(mgr, { merchant: 'Dinner', amount: 50, base: 50, date: day(2) });
-    spend(mar, { merchant: 'Not their report', amount: 999, base: 999, date: day(2) });
-    const s = summary(me(mgr), users.getAllUsers(cid));
-    expect(s.scope).toBe('team');
-    expect(s.total).toBe(150);                       // Marcus reports to nobody, so he is out
-  });
-
-  test('finance and admin are totalled over the company', () => {
+  test('an admin is totalled over the company', () => {
     spend(ela, { merchant: 'Hotel', amount: 100, base: 100, date: day(2) });
     spend(mar, { merchant: 'Taxi', amount: 999, base: 999, date: day(2) });
-    expect(summary(me(fin), users.getAllUsers(cid)).scope).toBe('company');
-    expect(summary(me(fin), users.getAllUsers(cid)).total).toBe(1099);
-    expect(summary(me(boss), users.getAllUsers(cid)).total).toBe(1099);
+    expect(summary(me(boss)).scope).toBe('company');
+    expect(summary(me(boss)).total).toBe(1099);
+    expect(summary(me(mar)).total).toBe(999);
   });
 
   // The scope comes from the caller's own row. There is no parameter for it,
@@ -81,7 +70,7 @@ describe('dashboard summary', () => {
 
   test('every month in the window is a column, including the empty ones', () => {
     spend(ela, { merchant: 'Lunch', amount: 20, base: 20, date: day(1) });
-    const s = summary(me(ela), users.getAllUsers(cid));
+    const s = summary(me(ela));
     expect(s.months).toHaveLength(6);
     expect(s.months.map(m => m.month)).toEqual([...s.months].map(m => m.month).sort());   // oldest first
     expect(s.months[s.months.length - 1].base).toBe(20);
@@ -93,7 +82,7 @@ describe('dashboard summary', () => {
     spend(ela, { merchant: 'Real', amount: 100, base: 100, date: day(1) });
     spend(ela, { merchant: 'Same again', amount: 100, base: 100, date: day(1), status: 'duplicate' });
     spend(ela, { merchant: 'Refused', amount: 100, base: 100, date: day(1), status: 'rejected' });
-    expect(summary(me(ela), users.getAllUsers(cid)).total).toBe(100);
+    expect(summary(me(ela)).total).toBe(100);
   });
 
   // A line with no rate has no base amount. Counting it as zero would make the
@@ -105,7 +94,7 @@ describe('dashboard summary', () => {
       currency: 'VND', total: 12400000,
       lines: [{ category: 'Lodging', description: '3 nights', amount: 12400000, currency: 'VND' }],
     });
-    const s = summary(me(ela), users.getAllUsers(cid));
+    const s = summary(me(ela));
     expect(s.total).toBe(100);
     expect(s.unpricedLines).toBe(1);
   });
@@ -113,30 +102,29 @@ describe('dashboard summary', () => {
   test('currencies are shared out by what they came to in the base currency', () => {
     spend(ela, { merchant: 'KL hotel', amount: 1000, base: 300, ccy: 'MYR', cat: 'Lodging', date: day(1) });
     spend(ela, { merchant: 'Lunch', amount: 100, base: 100, ccy: 'SGD', date: day(1) });
-    const s = summary(me(ela), users.getAllUsers(cid));
+    const s = summary(me(ela));
     expect(s.byCurrency).toEqual([
       { currency: 'MYR', base: 300, receipts: 1, share: 0.75 },
       { currency: 'SGD', base: 100, receipts: 1, share: 0.25 },
     ]);
   });
 
-  test('how long each hop took, and null rather than zero when nothing has', () => {
-    const fresh = summary(me(ela), users.getAllUsers(cid));
-    expect(fresh.cycle.submitToApprove).toBeNull();
-    expect(fresh.cycle.approvedCount).toBe(0);
+  test('how long a case stays open, and null rather than zero when none has been claimed', () => {
+    const fresh = summary(me(ela));
+    expect(fresh.cycle.openToClaimed).toBeNull();
+    expect(fresh.cycle.claimedCount).toBe(0);
 
     const r = reports.createReport({ companyId: cid, userId: ela.id, title: 'Trip' });
     reports.addExpense(r.id, spend(ela, { merchant: 'Hotel', amount: 100, base: 100, date: day(1) }).id);
-    wf.submit(r.id, ela);
-    reports.setState(r.id, { submittedAt: new Date(Date.now() - 4 * 86400000).toISOString() });
-    wf.approve(r.id, mgr);
-    reports.setState(r.id, { approvedAt: new Date(Date.now() - 2 * 86400000).toISOString() });
+    // opened four days ago, claimed now
+    require('../db').prepare('UPDATE expense_reports SET created_at = ? WHERE id = ?').run(new Date(Date.now() - 4 * 86400000).toISOString(), r.id);
+    expect(summary(me(ela)).cycle.openCount).toBe(1);
     wf.markClaimed(r.id, ela);
 
-    const s = summary(me(ela), users.getAllUsers(cid));
-    expect(s.cycle.submitToApprove).toBe(2);        // four days back to two days back
-    expect(s.cycle.approveToClaim).toBe(2);         // two days back to now
+    const s = summary(me(ela));
+    expect(s.cycle.openToClaimed).toBe(4);
     expect(s.cycle.claimedCount).toBe(1);
+    expect(s.cycle.openCount).toBe(0);
     expect(s.claimed).toBe(100);
   });
 
@@ -156,34 +144,35 @@ describe('dashboard summary', () => {
 
   test('a receipt claimed on its own counts as claimed', () => {
     const e = spend(ela, { merchant: 'A one-off', amount: 250, base: 250, date: day(1) });
-    expect(summary(me(ela), users.getAllUsers(cid)).claimed).toBe(0);
+    expect(summary(me(ela)).claimed).toBe(0);
     wf.markExpenseClaimed(e.id, me(ela));
-    const s = summary(me(ela), users.getAllUsers(cid));
+    const s = summary(me(ela));
     expect(s.claimed).toBe(250);
     expect(s.total).toBe(250);            // still counted as spend, claimed or not
     wf.markExpenseClaimed(e.id, me(ela), false);
-    expect(summary(me(ela), users.getAllUsers(cid)).claimed).toBe(0);
+    expect(summary(me(ela)).claimed).toBe(0);
   });
 
-  // Approved money a person has already put through is no longer waiting on
-  // them, so it must not sit in both figures at once.
-  test('what is approved but already claimed is not still awaiting a claim', () => {
+  // Money in an open case is open; once its receipt is claimed it is not
+  // still open as well, so it must not sit in both figures at once.
+  test('what is open, and what is already claimed, are not counted twice', () => {
     const r = reports.createReport({ companyId: cid, userId: ela.id, title: 'Trip' });
     const e = spend(ela, { merchant: 'Hotel', amount: 300, base: 300, date: day(1) });
     reports.addExpense(r.id, e.id);
-    wf.submit(r.id, me(ela));
-    wf.approve(r.id, me(mgr));
-    expect(summary(me(ela), users.getAllUsers(cid)).awaitingClaim).toBe(300);
+    const loose = spend(ela, { merchant: 'Taxi', amount: 20, base: 20, date: day(1) });   // in no case: open too
+    expect(summary(me(ela)).open).toBe(320);
     wf.markExpenseClaimed(e.id, me(ela));
-    const s = summary(me(ela), users.getAllUsers(cid));
-    expect(s.awaitingClaim).toBe(0);
+    const s = summary(me(ela));
+    expect(s.open).toBe(20);
     expect(s.claimed).toBe(300);
+    wf.markExpenseClaimed(loose.id, me(ela));
+    expect(summary(me(ela)).open).toBe(0);
   });
 
   test('an expense is dated by its receipt, not by when it was filed', () => {
     const lastMonth = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 15)).toISOString().slice(0, 10);
     spend(ela, { merchant: 'Late claim', amount: 80, base: 80, date: lastMonth });
-    const s = summary(me(ela), users.getAllUsers(cid));
+    const s = summary(me(ela));
     expect(s.thisMonth).toBe(0);
     expect(s.lastMonth).toBe(80);
   });

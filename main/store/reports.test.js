@@ -4,7 +4,7 @@ describe('store/reports', () => {
     jest.resetModules(); require('../db/migrate').run();
     users = require('./users'); store = require('./expenses'); reports = require('./reports');
     u = await users.createUser({ email: 'e@solv.sg', password: 'password123', name: 'Elaine' });
-    m = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: u.companyId, role: 'manager', name: 'Henry' });
+    m = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: u.companyId, name: 'Henry' });
   });
   const exp = (extra = {}) => store.createExpense({ companyId: u.companyId, userId: u.id, status: 'reviewed', currency: 'INR', total: 100, receiptDate: '2026-09-04',
     lines: [{ category: 'Lodging', amount: 60, baseAmount: 0.8, fxRate: 0.01341, fxRateDate: '2026-09-04', fxSource: 'frankfurter', fxFetchedAt: 'x' }, { category: 'Meals', amount: 40, baseAmount: 0.54, fxRate: 0.01341, fxRateDate: '2026-09-04', fxSource: 'frankfurter', fxFetchedAt: 'x' }], ...extra });
@@ -14,7 +14,7 @@ describe('store/reports', () => {
     const b = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'Another' });
     expect(a.number).toBe(`EXP-${new Date().getFullYear()}-0001`);
     expect(b.number).toBe(`EXP-${new Date().getFullYear()}-0002`);
-    expect(a.status).toBe('draft');
+    expect(a.status).toBe('open');
   });
 
   test('filing expenses gives totals by category, a reimbursement, and flags what is not ready', () => {
@@ -41,19 +41,20 @@ describe('store/reports', () => {
     expect(mine).toHaveLength(1);
     expect(mine[0]).toMatchObject({ title: 'A', expenseCount: 1, totalBase: 1.34, ownerName: 'Elaine' });
     expect(reports.listReports({ companyId: u.companyId })).toHaveLength(2);
-    expect(reports.listReports({ companyId: u.companyId, status: 'submitted' })).toHaveLength(0);
+    expect(reports.listReports({ companyId: u.companyId, status: 'claimed' })).toHaveLength(0);
+    expect(mine[0].unreviewed).toBe(0);
     expect(reports.listReports({ userIds: [] })).toEqual([]);
   });
 
   test('events are recorded with the actor', () => {
     const r = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'A' });
-    reports.addEvent(r.id, u.id, 'submitted', null);
-    reports.addEvent(r.id, m.id, 'approved', 'looks right');
+    reports.addEvent(r.id, u.id, 'claimed', null);
+    reports.addEvent(r.id, m.id, 'reopened', 'marked by mistake');
     const ev = reports.listEvents(r.id);
-    expect(ev.map(e => [e.action, e.actorName])).toEqual([['created', 'Elaine'], ['submitted', 'Elaine'], ['approved', 'Henry']]);
+    expect(ev.map(e => [e.action, e.actorName])).toEqual([['created', 'Elaine'], ['claimed', 'Elaine'], ['reopened', 'Henry']]);
   });
 
-  test('deleting a draft unfiles its expenses', () => {
+  test('deleting an open case unfiles its expenses', () => {
     const r = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'A' });
     const e = exp(); reports.addExpense(r.id, e.id);
     reports.deleteReport(r.id);

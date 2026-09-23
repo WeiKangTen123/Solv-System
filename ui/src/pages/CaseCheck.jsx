@@ -168,7 +168,7 @@ export default function CaseCheck() {
       </div>
 
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
-      {!view.editable && <div className="alert alert-info">This case has been {r.status}; nothing can be changed until it is sent back.</div>}
+      {!view.editable && <div className="alert alert-info">This case has been claimed; reopen it to change anything.</div>}
       {view.editable && !mayEdit && <div className="alert alert-info">This is {view.report.ownerName || 'someone else'}&rsquo;s case. You can read it; only they can check their own receipts.</div>}
 
       <div style={{ display: 'grid', gridTemplateColumns: selected ? 'minmax(0, 1fr) 360px' : '1fr', gap: 16, alignItems: 'start' }}>

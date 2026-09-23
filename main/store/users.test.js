@@ -14,27 +14,26 @@ describe('store/users', () => {
     expect(company.reportColumns.length).toBeGreaterThan(3);
   });
 
-  test('later accounts join the same company as employees unless a role is given', async () => {
+  test('later accounts join the same company as users unless a role is given', async () => {
     const admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
     const e = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId });
-    const m = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: admin.companyId, role: 'manager' });
-    expect(e.role).toBe('employee');
-    expect(m.role).toBe('manager');
+    const a2 = await users.createUser({ email: 'a2@solv.sg', password: 'password123', companyId: admin.companyId, role: 'admin' });
+    expect(e.role).toBe('user');
+    expect(a2.role).toBe('admin');
     expect(e.companyId).toBe(admin.companyId);
+    await expect(users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: admin.companyId, role: 'manager' })).rejects.toThrow(/Unknown role/);
   });
 
-  test('a manager can be assigned and read back; sanitize never leaks the hash', async () => {
+  test('profile fields update and read back; sanitize never leaks the hash', async () => {
     const admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
-    const m = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: admin.companyId, role: 'manager' });
     const e = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId });
-    users.updateUser(e.id, { managerId: m.id, department: 'Sales', employeeId: 'S0042', name: 'Elaine' });
+    users.updateUser(e.id, { department: 'Sales', employeeId: 'S0042', name: 'Elaine' });
     const back = users.findById(e.id);
-    expect(back.managerId).toBe(m.id);
     expect(back.department).toBe('Sales');
     expect(back.employeeId).toBe('S0042');
     expect(back.password).toBeUndefined();
-    expect(users.reportsTo(e.id, m.id)).toBe(true);
-    expect(users.reportsTo(m.id, e.id)).toBe(false);
+    expect(back.managerId).toBeUndefined();          // nobody reports to anybody
+    expect(() => users.updateUser(e.id, { role: 'finance' })).toThrow(/Unknown role/);
   });
 
   test('validatePassword and email uniqueness', async () => {

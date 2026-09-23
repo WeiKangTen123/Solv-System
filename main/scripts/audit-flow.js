@@ -142,19 +142,21 @@ function expectStatus(r, want, what) {
   // ── 2. users ────────────────────────────────────────────────────────────
   section('Staff and roles');
 
-  await check('POST /api/users adds a manager, an employee and finance', async () => {
+  await check('POST /api/users adds three users; there are no other roles to give', async () => {
     const mk = body => call('POST', '/api/users', { token: S.A, body });
-    const h = await mk({ email: 'henry@solv.sg', password: 'password123', name: 'Henry Bennett', role: 'manager' });
-    expectStatus(h, [200, 201], 'create manager');
+    const h = await mk({ email: 'henry@solv.sg', password: 'password123', name: 'Henry Bennett' });
+    expectStatus(h, [200, 201], 'create user');
     S.henry = h.json.user;
-    const e = await mk({ email: 'elaine@solv.sg', password: 'password123', name: 'Elaine Khoo', department: 'Sales', employeeId: 'S0042', managerId: S.henry.id });
-    expectStatus(e, [200, 201], 'create employee');
+    expect(S.henry.role === 'user', `a new account is "${S.henry.role}", not "user"`);
+    const e = await mk({ email: 'elaine@solv.sg', password: 'password123', name: 'Elaine Khoo', department: 'Sales', employeeId: 'S0042' });
+    expectStatus(e, [200, 201], 'create user');
     S.elaine = e.json.user;
-    expect(S.elaine.managerId === S.henry.id, 'the manager link was not stored');
-    const f = await mk({ email: 'finance@solv.sg', password: 'password123', name: 'Fiona Finance', role: 'finance' });
-    expectStatus(f, [200, 201], 'create finance');
+    expect(S.elaine.managerId === undefined, 'a manager link came back on a system with no managers');
+    const f = await mk({ email: 'finance@solv.sg', password: 'password123', name: 'Fiona', });
+    expectStatus(f, [200, 201], 'create user');
     S.fin = f.json.user;
-    return '3 added';
+    expectStatus(await mk({ email: 'x@solv.sg', password: 'password123', role: 'manager' }), 400, 'a role that no longer exists');
+    return '3 added, "manager" refused';
   });
 
   await check('everyone can log in', async () => {
@@ -381,14 +383,17 @@ function expectStatus(r, want, what) {
     expectStatus(r, [403, 404], 'employee reading another user');
   });
 
-  await check('finance can read across the company', async () => {
-    const r = await call('GET', '/api/expenses?all=1', { token: S.F });
-    expectStatus(r, 200, 'finance wide read');
+  await check('an admin can read across the company; a user asking for it gets their own', async () => {
+    const r = await call('GET', '/api/expenses?all=1', { token: S.A });
+    expectStatus(r, 200, 'admin wide read');
+    const narrow = await call('GET', '/api/expenses?all=1', { token: S.H });
+    expectStatus(narrow, 200, 'user asking for all');
+    expect((narrow.json.expenses || []).every(e => e.userId === S.henry.id), "a user's ?all=1 returned somebody else's expenses");
   });
 
-  await check('a manager can read a direct report\'s expenses', async () => {
+  await check('a user cannot read another user\'s expenses', async () => {
     const r = await call('GET', `/api/expenses?userId=${S.elaine.id}`, { token: S.H });
-    expectStatus(r, 200, 'manager reading a report');
+    expectStatus(r, [403, 404], 'a user reading another user');
   });
 
   if (!NO_MODEL) {
@@ -436,7 +441,7 @@ function expectStatus(r, want, what) {
     });
 
     await check('PATCH /api/expenses/:id/fx takes a manual rate with a reason', async () => {
-      const r = await call('PATCH', `/api/expenses/${S.exp1.id}/fx`, { token: S.F, body: { rate: 0.0135, reason: 'card statement' } });
+      const r = await call('PATCH', `/api/expenses/${S.exp1.id}/fx`, { token: S.A, body: { rate: 0.0135, reason: 'card statement' } });
       expectStatus(r, 200, 'override fx');
       const l = r.json.expense.lines[0];
       expect(Math.abs(l.fxRate - 0.0135) < 1e-9, `the rate did not stick: ${l.fxRate}`);
@@ -445,7 +450,7 @@ function expectStatus(r, want, what) {
     });
 
     await check('an override without a reason is refused', async () => {
-      const r = await call('PATCH', `/api/expenses/${S.exp1.id}/fx`, { token: S.F, body: { rate: 0.02 } });
+      const r = await call('PATCH', `/api/expenses/${S.exp1.id}/fx`, { token: S.A, body: { rate: 0.02 } });
       expectStatus(r, 400, 'override with no reason');
     });
 
@@ -520,14 +525,14 @@ function expectStatus(r, want, what) {
     return `${r.json.rates.length} cached`;
   });
 
-  await check('finance can enter a manual rate, an employee cannot', async () => {
+  await check('an admin can enter a manual rate, a user cannot', async () => {
     const body = { from: 'INR', to: 'SGD', date: '2026-09-01', rate: 0.0134 };
-    expectStatus(await call('POST', '/api/fx/rates', { token: S.E, body }), 403, 'employee entering a rate');
-    expectStatus(await call('POST', '/api/fx/rates', { token: S.F, body }), [200, 201], 'finance entering a rate');
+    expectStatus(await call('POST', '/api/fx/rates', { token: S.E, body }), 403, 'user entering a rate');
+    expectStatus(await call('POST', '/api/fx/rates', { token: S.A, body }), [200, 201], 'admin entering a rate');
   });
 
   await check('DELETE /api/fx/rates removes a manual rate', async () => {
-    expectStatus(await call('DELETE', '/api/fx/rates?from=INR&to=SGD&date=2026-09-01', { token: S.F }), 200, 'delete rate');
+    expectStatus(await call('DELETE', '/api/fx/rates?from=INR&to=SGD&date=2026-09-01', { token: S.A }), 200, 'delete rate');
   });
 
   // ── 8. reports ──────────────────────────────────────────────────────────
@@ -568,10 +573,13 @@ function expectStatus(r, want, what) {
   }
 
   await check('GET /api/reports honours the scope', async () => {
-    for (const [scope, token, who] of [['mine', S.E, 'Elaine'], ['team', S.H, 'Henry'], ['all', S.F, 'finance']]) {
+    for (const [scope, token, who] of [['mine', S.E, 'Elaine'], ['all', S.A, 'the admin']]) {
       const r = await call('GET', `/api/reports?scope=${scope}`, { token });
       expectStatus(r, 200, `scope ${scope} as ${who}`);
     }
+    const narrow = await call('GET', '/api/reports?scope=all', { token: S.E });
+    expectStatus(narrow, 200, 'a user asking for all');
+    expect((narrow.json.reports || []).every(r => r.userId === S.elaine.id), "a user's scope=all returned somebody else's cases");
   });
 
   await check('a stranger cannot open the report', async () => {
@@ -593,50 +601,29 @@ function expectStatus(r, want, what) {
     expectStatus(await call('POST', `/api/reports/${S.report.id}/review-all`, { token: S.N }), [403, 404], 'stranger bulk-checking');
   });
 
-  await check('POST /api/reports/:id/submit hands it over', async () => {
-    const r = await call('POST', `/api/reports/${S.report.id}/submit`, { token: S.E });
-    expectStatus(r, 200, 'submit');
-    expect(r.json.report.status === 'submitted', `status is ${r.json.report.status}`);
-  });
-
-  await check('a submitted report locks its cover and its expenses', async () => {
-    expectStatus(await call('PATCH', `/api/reports/${S.report.id}`, { token: S.E, body: { notes: 'sneaky edit' } }), 409, 'editing a submitted cover');
-    if (S.exp1) expectStatus(await call('PATCH', `/api/expenses/${S.exp1.id}`, { token: S.E, body: { purpose: 'sneaky' } }), 409, 'editing a locked expense');
-  });
-
-  await check('the claimant cannot approve her own report', async () => {
-    expectStatus(await call('POST', `/api/reports/${S.report.id}/approve`, { token: S.E }), 403, 'self-approval');
-  });
-
-  await check('GET /api/reports/queue shows it to the manager', async () => {
-    const r = await call('GET', '/api/reports/queue', { token: S.H });
-    expectStatus(r, 200, 'queue');
-    expect((r.json.reports || []).some(x => x.id === S.report.id), 'the submitted report is not in the manager queue');
-    return `${r.json.reports.length} waiting`;
-  });
-
-  await check('a rejection needs a reason, and reopens the report', async () => {
-    expectStatus(await call('POST', `/api/reports/${S.report.id}/reject`, { token: S.H }), 400, 'reject with no reason');
-    const r = await call('POST', `/api/reports/${S.report.id}/reject`, { token: S.H, body: { reason: 'Please attach the taxi receipt' } });
-    expectStatus(r, 200, 'reject');
-    expect(r.json.report.status === 'rejected', `status is ${r.json.report.status}`);
-    expectStatus(await call('PATCH', `/api/reports/${S.report.id}`, { token: S.E, body: { notes: 'taxi receipt added' } }), 200, 'editing a rejected report');
-  });
-
-  await check('it can be resubmitted and approved by the manager', async () => {
-    expectStatus(await call('POST', `/api/reports/${S.report.id}/submit`, { token: S.E }), 200, 'resubmit');
-    const r = await call('POST', `/api/reports/${S.report.id}/approve`, { token: S.H });
-    expectStatus(r, 200, 'approve');
-    expect(r.json.report.status === 'approved', `status is ${r.json.report.status}`);
-  });
-
-  await check('only the claimant marks it claimed', async () => {
-    expectStatus(await call('POST', `/api/reports/${S.report.id}/claimed`, { token: S.H }), 403, 'the manager who approved it');
-    expectStatus(await call('POST', `/api/reports/${S.report.id}/claimed`, { token: S.F }), 403, 'finance');
+  await check('POST /api/reports/:id/claimed is the owner\'s, and locks the case', async () => {
+    expectStatus(await call('POST', `/api/reports/${S.report.id}/claimed`, { token: S.H }), [403, 404], 'another user claiming it');
+    expectStatus(await call('POST', `/api/reports/${S.report.id}/claimed`, { token: S.N }), [403, 404], 'a stranger claiming it');
     const r = await call('POST', `/api/reports/${S.report.id}/claimed`, { token: S.E });
     expectStatus(r, 200, 'the claimant');
     expect(r.json.report.status === 'claimed', `status is ${r.json.report.status}`);
-    return `claimed ${r.json.report.claimedAt ? 'with a timestamp' : 'WITHOUT a timestamp'}`;
+    expect(!!r.json.report.claimedAt, 'claimed without a timestamp');
+    expectStatus(await call('PATCH', `/api/reports/${S.report.id}`, { token: S.E, body: { notes: 'sneaky edit' } }), 409, 'editing a claimed cover');
+    if (S.exp1) expectStatus(await call('PATCH', `/api/expenses/${S.exp1.id}`, { token: S.E, body: { purpose: 'sneaky' } }), 409, 'editing a locked expense');
+    expectStatus(await call('POST', `/api/reports/${S.report.id}/claimed`, { token: S.E }), 400, 'claiming it twice');
+    return 'claimed, locked';
+  });
+
+  await check('POST /api/reports/:id/reopen undoes it, for the owner or an admin', async () => {
+    expectStatus(await call('POST', `/api/reports/${S.report.id}/reopen`, { token: S.H }), [403, 404], 'another user reopening it');
+    const r = await call('POST', `/api/reports/${S.report.id}/reopen`, { token: S.A });
+    expectStatus(r, 200, 'the admin reopening it');
+    expect(r.json.report.status === 'open', `status is ${r.json.report.status}`);
+    expectStatus(await call('PATCH', `/api/reports/${S.report.id}`, { token: S.E, body: { notes: 'taxi receipt added' } }), 200, 'editing a reopened case');
+    const again = await call('POST', `/api/reports/${S.report.id}/claimed`, { token: S.E });
+    expectStatus(again, 200, 'claiming it again');
+    expect(again.json.report.status === 'claimed', `status is ${again.json.report.status}`);
+    return 'reopened, edited, claimed again';
   });
 
   await check('a receipt can be claimed on its own and unclaimed again', async () => {
@@ -657,7 +644,7 @@ function expectStatus(r, want, what) {
     const r = await call('GET', `/api/reports/${S.report.id}/events`, { token: S.E });
     expectStatus(r, 200, 'events');
     const kinds = (r.json.events || []).map(e => e.kind || e.type || e.action);
-    for (const want of ['created', 'submitted', 'rejected', 'approved', 'claimed']) {
+    for (const want of ['created', 'claimed', 'reopened']) {
       expect(kinds.includes(want), `the history is missing "${want}": ${kinds.join(', ')}`);
     }
     return kinds.join(' → ');
@@ -739,7 +726,7 @@ function expectStatus(r, want, what) {
     expect(after === before, `the refused upload still created ${after - before} expense(s)`);
   });
 
-  await check('a case that has been submitted takes no more receipts', async () => {
+  await check('a case that has been claimed takes no more receipts', async () => {
     const c = (await call('POST', '/api/reports', { token: S.E, body: { kind: 'case', title: 'Closed case' } })).json.report;
     const up = await call('POST', '/api/receipts', { token: S.E, body: { mime: 'image/jpeg', data: scrap(), filename: 'c.jpg', reportId: c.id } });
     expectStatus(up, 201, 'seed the case');
@@ -747,11 +734,11 @@ function expectStatus(r, want, what) {
     expectStatus(await call('PATCH', `/api/expenses/${up.json.expense.id}`, { token: S.E, body: { merchant: 'Kopitiam', receiptDate: '2026-09-10', currency: 'SGD', total: 12.5 } }), 200, 'fill the receipt in');
     expectStatus(await call('PUT', `/api/expenses/${up.json.expense.id}/lines`, { token: S.E, body: { lines: [{ category: 'Meals', amount: 12.5, currency: 'SGD' }] } }), 200, 'give it a line');
     await call('PATCH', `/api/expenses/${up.json.expense.id}/status`, { token: S.E, body: { status: 'reviewed' } });
-    expectStatus(await call('POST', `/api/reports/${c.id}/submit`, { token: S.E }), 200, 'submit the case');
+    expectStatus(await call('POST', `/api/reports/${c.id}/claimed`, { token: S.E }), 200, 'claim the case');
     const before = await countMine();
-    expectStatus(await call('POST', '/api/receipts', { token: S.E, body: { mime: 'image/jpeg', data: scrap(), filename: 'd.jpg', reportId: c.id } }), 409, 'uploading into a submitted case');
+    expectStatus(await call('POST', '/api/receipts', { token: S.E, body: { mime: 'image/jpeg', data: scrap(), filename: 'd.jpg', reportId: c.id } }), 409, 'uploading into a claimed case');
     expect(await countMine() === before, 'the refused upload still created an expense');
-    S.submittedCase = c.id;
+    S.claimedCase = c.id;
   });
 
   await check('a phone session opened for a case sends its photographs there', async () => {
@@ -782,8 +769,8 @@ function expectStatus(r, want, what) {
     return `${r.json.reviewed} checked, ${r.json.skipped.length} could not be`;
   });
 
-  await check('a submitted case cannot be bulk-checked, and a stranger never can', async () => {
-    expectStatus(await call('POST', `/api/reports/${S.submittedCase}/review-all`, { token: S.E }), 409, 'bulk-checking a submitted case');
+  await check('a claimed case cannot be bulk-checked, and a stranger never can', async () => {
+    expectStatus(await call('POST', `/api/reports/${S.claimedCase}/review-all`, { token: S.E }), 409, 'bulk-checking a claimed case');
     expectStatus(await call('POST', `/api/reports/${S.case.id}/review-all`, { token: S.N }), [403, 404], 'a stranger bulk-checking');
   });
 
@@ -791,7 +778,7 @@ function expectStatus(r, want, what) {
   section('Xero');
 
   await check('GET /api/xero reports the connection state', async () => {
-    const r = await call('GET', '/api/xero', { token: S.F });
+    const r = await call('GET', '/api/xero', { token: S.A });
     expectStatus(r, 200, 'xero status');
     expect(r.json.connected === false || r.json.connected === undefined, 'it should not claim to be connected');
     return `connected: ${!!r.json.connected}`;
@@ -803,32 +790,32 @@ function expectStatus(r, want, what) {
   });
 
   await check('PATCH /api/xero/credentials stores keys and masks the secret', async () => {
-    const r = await call('PATCH', '/api/xero/credentials', { token: S.F, body: { XERO_CLIENT_ID: 'audit-client', XERO_CLIENT_SECRET: 'audit-secret-value', DEFAULT_ACCOUNT_CODE: '429' } });
+    const r = await call('PATCH', '/api/xero/credentials', { token: S.A, body: { XERO_CLIENT_ID: 'audit-client', XERO_CLIENT_SECRET: 'audit-secret-value', DEFAULT_ACCOUNT_CODE: '429' } });
     expectStatus(r, 200, 'patch credentials');
-    const read = await call('GET', '/api/xero', { token: S.F });
+    const read = await call('GET', '/api/xero', { token: S.A });
     expect(!JSON.stringify(read.json).includes('audit-secret-value'), 'the Xero client secret came back to the client');
     return 'secret not echoed';
   });
 
   await check('a connection test against bad keys fails with a sentence, not a stack', async () => {
-    const r = await call('POST', '/api/xero/test', { token: S.F });
+    const r = await call('POST', '/api/xero/test', { token: S.A });
     expect(r.status >= 400 && r.status < 600, `test returned ${r.status}`);
     expect(typeof r.json.error === 'string' && !/at \w+ \(/.test(r.json.error), `a stack trace reached the client: ${String(r.json.error).slice(0, 80)}`);
     return `${r.status}: ${String(r.json.error).slice(0, 44)}`;
   });
 
   await check('GET /api/xero/tenants answers when nothing is connected', async () => {
-    expectStatus(await call('GET', '/api/xero/tenants', { token: S.F }), [200, 400, 404], 'tenants');
+    expectStatus(await call('GET', '/api/xero/tenants', { token: S.A }), [200, 400, 404], 'tenants');
   });
 
   await check('GET /api/xero/accounts fails gracefully when nothing is connected', async () => {
-    const r = await call('GET', '/api/xero/accounts', { token: S.F });
+    const r = await call('GET', '/api/xero/accounts', { token: S.A });
     expect(r.status !== 500 || typeof r.json.error === 'string', 'accounts threw a bare 500');
     return `${r.status}`;
   });
 
   await check('the OAuth start returns a URL or a clear refusal', async () => {
-    const r = await call('GET', '/api/xero/oauth/connect', { token: S.F, raw: true });
+    const r = await call('GET', '/api/xero/oauth/connect', { token: S.A, raw: true });
     expect([200, 302, 400, 409].includes(r.status), `oauth connect returned ${r.status}`);
     return `${r.status}`;
   });
@@ -840,16 +827,16 @@ function expectStatus(r, want, what) {
   });
 
   await check('completing OAuth with a bad state is refused', async () => {
-    const r = await call('POST', '/api/xero/oauth/complete', { token: S.F, body: { code: 'x', state: 'never-issued' } });
+    const r = await call('POST', '/api/xero/oauth/complete', { token: S.A, body: { code: 'x', state: 'never-issued' } });
     expect(r.status >= 400 && r.status < 500, `bad state returned ${r.status}`);
   });
 
   await check('DELETE /api/xero/oauth/disconnect is safe when not connected', async () => {
-    expectStatus(await call('DELETE', '/api/xero/oauth/disconnect', { token: S.F }), [200, 204, 400, 404], 'disconnect');
+    expectStatus(await call('DELETE', '/api/xero/oauth/disconnect', { token: S.A }), [200, 204, 400, 404], 'disconnect');
   });
 
   await check('POST /api/reports/:id/post?dryRun=1 shows the bill without sending it', async () => {
-    const r = await call('POST', `/api/reports/${S.report.id}/post?dryRun=1`, { token: S.F });
+    const r = await call('POST', `/api/reports/${S.report.id}/post?dryRun=1`, { token: S.A });
     expectStatus(r, 200, 'dry run');
     const bill = r.json.bill || r.json.invoice || r.json.dryRun || r.json;
     const s = JSON.stringify(bill);

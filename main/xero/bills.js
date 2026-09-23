@@ -10,7 +10,7 @@ const { withRetry, xeroErrMsg } = require('./xero-utils');
 const { _fmtDate: fmtDate } = require('../reports/expense-doc');
 const logger  = require('../utils/logger');
 
-// An approved report becomes ONE draft bill in Xero, payable to the claimant,
+// A claimed case becomes ONE draft bill in Xero, payable to the claimant,
 // in the company's base currency: one line per report line at its base
 // amount, so the bill equals the printed report to the cent. The original
 // currency, amount and rate ride in each line's description.
@@ -63,7 +63,7 @@ function buildBill(payload, { accounts = [], defaultAccountCode = null, taxRates
     });
   }
 
-  const date = (report.approvedAt || report.submittedAt || new Date().toISOString()).slice(0, 10);
+  const date = (report.claimedAt || new Date().toISOString()).slice(0, 10);
   return {
     contact: { name: owner.name || owner.email || 'Claimant', email: owner.email || '' },
     invoice: {
@@ -80,7 +80,7 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
   const r = reports.getReport(reportId);
   if (!r) throw new Error('Report not found');
   if (r.xeroInvoiceId) throw new Error(`This report is already in Xero as bill ${r.xeroInvoiceId}`);
-  if (!['approved', 'claimed'].includes(r.status)) throw new Error('Only an approved report can be posted to Xero');
+  if (r.status !== 'claimed') throw new Error('Only a claimed case can be posted to Xero');
 
   const payload = await reportPayload(reportId, { withReceipts: false });
   const company = payload.company;
@@ -143,7 +143,8 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
     }
   }
 
-  reports.setState(reportId, { status: r.status === 'claimed' ? 'claimed' : 'posted', xeroInvoiceId: created.invoiceID, xeroError: warnings.length ? `Attachments: ${warnings.join('; ')}` : null });
+  // The status stays claimed: xero_invoice_id is what records the posting.
+  reports.setState(reportId, { xeroInvoiceId: created.invoiceID, xeroError: warnings.length ? `Attachments: ${warnings.join('; ')}` : null });
   reports.addEvent(reportId, actor.id, 'posted', `Xero bill ${created.invoiceID}`);
   logger.info('Report posted to Xero', { reportId, number: r.number, invoiceID: created.invoiceID, lines: bill.invoice.lineItems.length, by: actor.email });
   return { dryRun: false, tenantId: tenant.tenantId, tenantName: tenant.tenantName, xeroInvoiceId: created.invoiceID, warnings, bill };

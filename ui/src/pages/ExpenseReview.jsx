@@ -144,7 +144,7 @@ export default function ExpenseReview() {
         <div style={{ display: 'flex', gap: 8 }}>
           {prev && <button className="btn btn-outline btn-sm" onClick={() => navigate(`/expenses/${prev.id}`)}>← Prev</button>}
           {next && <button className="btn btn-outline btn-sm" onClick={() => navigate(`/expenses/${next.id}`)}>Next →</button>}
-          <button className="btn btn-outline btn-sm" disabled={locked} title={locked ? 'The report it is in has been submitted' : ''} onClick={() => setConfirm('delete')}>Delete</button>
+          <button className="btn btn-outline btn-sm" disabled={locked} title={locked ? 'The case it is in has been claimed' : ''} onClick={() => setConfirm('delete')}>Delete</button>
         </div>
       </div>
 
@@ -155,7 +155,7 @@ export default function ExpenseReview() {
       </datalist>
 
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
-      {locked && <div className="alert alert-info">This expense is in a report that has been submitted. It can be changed again if the report is sent back.</div>}
+      {locked && <div className="alert alert-info">This receipt is in a case that has been claimed. Reopen the case to change it.</div>}
       {exp.errorMsg && <div className="alert alert-warning"><span className="alert-icon">!</span><span>{exp.errorMsg}{exp.duplicateOf && <> · <Link to={`/expenses/${exp.duplicateOf}`}>see the other one</Link></>}</span></div>}
       {group?.split && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>{group.groupType === 'batch' ? 'Batch import' : 'Split from one file'} · {group.index} of {group.total}</div>}
 

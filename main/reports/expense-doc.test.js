@@ -3,9 +3,8 @@ const doc = require('./expense-doc');
 const payload = {
   company: { name: 'Solv Pte Ltd', baseCurrency: 'SGD', timezone: 'Asia/Singapore', fxPolicy: 'receipt_date', reportColumns: ['Air & Transport', 'Lodging', 'Meals', 'Entertainment', 'Phone', 'Fuel/Mileage', 'Other'] },
   report: { number: 'EXP-2026-0007', kind: 'trip', title: 'India trip', purpose: 'Client site visits, India', periodFrom: '2026-08-31', periodTo: '2026-09-04', destination: 'Mumbai and Pune, India', nights: 4,
-            status: 'approved', submittedAt: '2026-09-05T02:00:00Z', approvedAt: '2026-09-10T06:02:00Z', advances: 0, notes: null },
+            status: 'claimed', claimedAt: '2026-09-10T06:02:00Z', advances: 0, notes: null },
   owner: { name: 'Elaine Xin Yu Khoo', employeeId: 'S0042', department: 'Sales', email: 'elaine@solv.sg' },
-  manager: { name: 'Henry Bennett' }, approver: { name: 'Henry Bennett' },
   lines: [
     { ref: 'R1', date: '2026-09-01', merchant: 'JW Marriott Mumbai Sahar', purpose: 'Client visit', description: 'Rooms', category: 'Lodging', currency: 'INR', amount: 20738.5, fxRate: 0.01341, fxRateDate: '2026-09-01', fxSource: 'frankfurter', fxFetchedAt: '2026-09-18T03:58:00Z', baseAmount: 278.1, onBehalfOf: null, tax: 3379.5 },
     { ref: 'R1', date: '2026-09-01', merchant: 'JW Marriott Mumbai Sahar', purpose: 'Client visit', description: 'Rooms', category: 'Lodging', currency: 'INR', amount: 20737.5, fxRate: 0.01341, fxRateDate: '2026-09-01', fxSource: 'frankfurter', fxFetchedAt: '2026-09-18T03:58:00Z', baseAmount: 278.09, onBehalfOf: 'Tan Suan Kuan', tax: null },
@@ -47,7 +46,9 @@ describe('reports/expense-doc', () => {
     expect(text).toContain('Elaine Xin Yu Khoo');
     expect(text).toContain('Mumbai and Pune, India');
     expect(text).toContain('SGD 661.35');
-    expect(text).toContain('Approved by');
+    expect(text).toContain('Claimed 10 Sep 2026');
+    expect(text).not.toContain('Approved by');
+    expect(text).not.toContain('Manager');
     expect(text).toContain('R2');
     expect(text).toContain('rounded to the cent');
     const table = d.content.find(c => c.table && c.table.headerRows === 1).table;

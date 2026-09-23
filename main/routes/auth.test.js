@@ -44,7 +44,7 @@ describe('routes/auth', () => {
     process.env.ALLOW_REGISTRATION = 'true';
     const r = await request(serverFor(app)).post('/api/auth/register').send({ email: 'b@solv.sg', password: 'password123' }).expect(201);
     delete process.env.ALLOW_REGISTRATION;
-    expect(r.body.user.role).toBe('employee');
+    expect(r.body.user.role).toBe('user');
   });
 
   test('login works with the right password and fails with the wrong one', async () => {

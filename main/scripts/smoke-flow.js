@@ -1,6 +1,6 @@
 // Drives the whole flow through the HTTP API against a freshly started
 // production server: register, add staff, upload a scanned folio, wait for
-// the read, review it, create and file a report, submit, approve, export the
+// the read, review it, create and file a case, claim it, export the
 // PDF through the signed link, and dry-run the Xero bill. Needs a reader key
 // in main/.env. Prints one line per step; exits non-zero on the first failure.
 //   node main/scripts/smoke-flow.js
@@ -32,13 +32,11 @@ const step = (n, msg) => console.log(`${String(n).padStart(2)}. ${msg}`);
   const admin = await call('POST', '/api/auth/register', { body: { email: 'admin@solv.sg', password: 'password123', name: 'Wei Kang' } });
   step(2, `registered admin ${admin.user.email} (company created, role ${admin.user.role})`);
   const A = admin.token;
-  const henry = (await call('POST', '/api/users', { token: A, body: { email: 'henry@solv.sg', password: 'password123', name: 'Henry Bennett', role: 'manager' } })).user;
-  const elaine = (await call('POST', '/api/users', { token: A, body: { email: 'elaine@solv.sg', password: 'password123', name: 'Elaine Xin Yu Khoo', department: 'Sales', employeeId: 'S0042', managerId: henry.id } })).user;
-  const fin = (await call('POST', '/api/users', { token: A, body: { email: 'finance@solv.sg', password: 'password123', name: 'Finance', role: 'finance' } })).user;
-  step(3, `staff added: ${henry.name} (manager), ${elaine.name} (employee, reports to Henry), ${fin.name} (finance)`);
+  const elaine = (await call('POST', '/api/users', { token: A, body: { email: 'elaine@solv.sg', password: 'password123', name: 'Elaine Xin Yu Khoo', department: 'Sales', employeeId: 'S0042' } })).user;
+  const marcus = (await call('POST', '/api/users', { token: A, body: { email: 'marcus@solv.sg', password: 'password123', name: 'Marcus Tan' } })).user;
+  step(3, `staff added: ${elaine.name} (${elaine.role}), ${marcus.name} (${marcus.role}) — everyone does the same job`);
   const E = (await call('POST', '/api/auth/login', { body: { email: 'elaine@solv.sg', password: 'password123' } })).token;
-  const H = (await call('POST', '/api/auth/login', { body: { email: 'henry@solv.sg', password: 'password123' } })).token;
-  const F = (await call('POST', '/api/auth/login', { body: { email: 'finance@solv.sg', password: 'password123' } })).token;
+  const M = (await call('POST', '/api/auth/login', { body: { email: 'marcus@solv.sg', password: 'password123' } })).token;
 
   const pdf = fs.readFileSync(path.join(ROOT, 'samples/receipts/jw-marriott-mumbai.pdf'));
   const up = await call('POST', '/api/receipts', { token: E, body: { mime: 'application/pdf', data: pdf.toString('base64'), filename: 'jw marriott mumbai.pdf' } });
@@ -60,27 +58,27 @@ const step = (n, msg) => console.log(`${String(n).padStart(2)}. ${msg}`);
 
   const report = (await call('POST', '/api/reports', { token: E, body: { title: 'India trip, Sep 2026', purpose: 'Client site visits, India', periodFrom: '2026-08-31', periodTo: '2026-09-04', destination: 'Mumbai and Pune, India', nights: 4 } })).report;
   const filed = await call('POST', `/api/reports/${report.id}/expenses`, { token: E, body: { expenseIds: [exp.id] } });
-  step(7, `report ${report.number} created and filed: ${filed.report.expenses.length} expense, total SGD ${filed.report.totals.totalBase}`);
+  step(7, `case ${report.number} created and filed: ${filed.report.expenses.length} receipt, total SGD ${filed.report.totals.totalBase}, status ${filed.report.status}`);
 
-  try { await call('POST', `/api/reports/${report.id}/approve`, { token: E }); throw new Error('the claimant approved her own report'); } catch (e) { if (!/403|own/.test(e.message)) throw e; }
-  const submitted = await call('POST', `/api/reports/${report.id}/submit`, { token: E });
-  step(8, `submitted: ${submitted.report.status}; Elaine cannot approve it herself (refused)`);
+  try { await call('POST', `/api/reports/${report.id}/claimed`, { token: M }); throw new Error("a colleague claimed Elaine's case"); } catch (e) { if (!/403|404|claimant/.test(e.message)) throw e; }
+  const claimed = await call('POST', `/api/reports/${report.id}/claimed`, { token: E });
+  step(8, `Elaine marked it claimed: ${claimed.report.status}; Marcus could not (refused)`);
   try { await call('PATCH', `/api/expenses/${exp.id}`, { token: E, body: { purpose: 'x' } }); throw new Error('a locked expense was edited'); } catch (e) { if (!/409/.test(e.message)) throw e; }
-  const queue = await call('GET', '/api/reports/queue', { token: H });
-  const approved = await call('POST', `/api/reports/${report.id}/approve`, { token: H });
-  step(9, `Henry's queue had ${queue.reports.length}; approved: ${approved.report.status} by ${approved.report.approvedBy === henry.id}`);
+  const reopened = await call('POST', `/api/reports/${report.id}/reopen`, { token: E });
+  const again = await call('POST', `/api/reports/${report.id}/claimed`, { token: E });
+  step(9, `a claimed case locks its receipts; reopened (${reopened.report.status}) and claimed again (${again.report.status})`);
 
-  const link = await call('GET', `/api/reports/${report.id}/export-url?format=pdf`, { token: F });
+  const link = await call('GET', `/api/reports/${report.id}/export-url?format=pdf`, { token: A });
   const res = await call('GET', link.url, { raw: true });
   const buf = Buffer.from(await res.arrayBuffer());
   const pages = (buf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
-  step(10, `finance exported the PDF through the signed link: ${res.status} ${res.headers.get('content-type')} · ${buf.length} bytes · ${pages} pages (report + 2 receipt pages)`);
+  step(10, `the admin exported the PDF through the signed link: ${res.status} ${res.headers.get('content-type')} · ${buf.length} bytes · ${pages} pages (report + 2 receipt pages)`);
   if (!buf.toString('latin1').startsWith('%PDF') || pages !== 3) throw new Error('unexpected PDF');
 
-  const dry = await call('POST', `/api/reports/${report.id}/post?dryRun=1`, { token: F });
+  const dry = await call('POST', `/api/reports/${report.id}/post?dryRun=1`, { token: A });
   step(11, `Xero dry run: ${dry.bill.invoice.lineItems.length} lines, ${dry.bill.invoice.currencyCode} ${dry.bill.total}, contact ${dry.bill.contact.name}, org ${dry.tenantName || 'none connected'}`);
-  const claimed = await call('POST', `/api/reports/${report.id}/claimed`, { token: E });
-  step(12, `the claimant marked it claimed: ${claimed.report.status}; history: ${claimed.report.events.map(e => e.action).join(' → ')}`);
+  const hist = (await call('GET', `/api/reports/${report.id}/events`, { token: E })).events.map(e => e.action).join(' → ');
+  step(12, `history: ${hist}`);
 
   const errors = (log.match(/error/gi) || []).length;
   step(13, `server log: ${errors} error lines`);

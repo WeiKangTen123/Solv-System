@@ -133,10 +133,10 @@ describe('fx checks', () => {
     await apply.applyFx(filed.id);
     expect(store.getExpense(stranded.id).fxPending).toBe(true);
 
-    // the second one goes into a report and is submitted, so it is off limits
+    // the second one goes into a case that is claimed, so it is off limits
     const rep = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'Trip' });
     reports.addExpense(rep.id, filed.id);
-    db.prepare("UPDATE expense_reports SET status = 'submitted' WHERE id = ?").run(rep.id);
+    db.prepare("UPDATE expense_reports SET status = 'claimed' WHERE id = ?").run(rep.id);
     expect(wf.isLocked(store.getExpense(filed.id))).toBe(true);
 
     providers.frankfurter.mockResolvedValue(ecb(0.0134, '2026-09-04'));   // the provider comes back

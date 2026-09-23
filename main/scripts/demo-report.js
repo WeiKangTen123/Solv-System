@@ -1,6 +1,6 @@
 // Builds the real expense report from the two Marriott folios, end to end, in
-// a throwaway data directory: Elaine files both expenses, submits, Henry
-// approves, and the PDF, XLSX and CSV land in docs/acceptance/exports/.
+// a throwaway data directory: Elaine files both expenses and claims the case,
+// and the PDF, XLSX and CSV land in docs/acceptance/exports/.
 //   node main/scripts/demo-report.js
 // Expenses come from the saved reader output (samples/reads/*.json) so no
 // model call is needed; the exchange rate is fetched live.
@@ -37,8 +37,7 @@ const SAMPLES = [
 (async () => {
   const admin = await users.createUser({ email: 'admin@solv.sg', password: 'password123', name: 'Wei Kang' });
   users.updateCompany(admin.companyId, { name: 'Solv Pte Ltd' });
-  const henry = await users.createUser({ email: 'henry@solv.sg', password: 'password123', companyId: admin.companyId, role: 'manager', name: 'Henry Bennett', department: 'Sales' });
-  const elaine = await users.createUser({ email: 'elaine@solv.sg', password: 'password123', companyId: admin.companyId, name: 'Elaine Xin Yu Khoo', department: 'Sales', employeeId: 'S0042', managerId: henry.id });
+  const elaine = await users.createUser({ email: 'elaine@solv.sg', password: 'password123', companyId: admin.companyId, name: 'Elaine Xin Yu Khoo', department: 'Sales', employeeId: 'S0042' });
 
   const report = reports.createReport({ companyId: admin.companyId, userId: elaine.id, title: 'India trip, Sep 2026', purpose: 'Client site visits, India', periodFrom: '2026-08-31', periodTo: '2026-09-04', destination: 'Mumbai and Pune, India', nights: 4 });
 
@@ -59,8 +58,7 @@ const SAMPLES = [
     reports.addExpense(report.id, e.id);
   }
 
-  wf.submit(report.id, elaine);
-  wf.approve(report.id, henry);
+  wf.markClaimed(report.id, elaine);
 
   // --xero-dry-run: the bill that WOULD be posted, against Xero's default
   // Singapore chart of accounts and tax rates, with a pretend connected org.
@@ -76,8 +74,7 @@ const SAMPLES = [
     catAcc.getTaxRates = async () => [{ name: 'GST on Expenses', taxType: 'INPUT', status: 'ACTIVE', displayTaxRate: 9, canApplyToExpenses: true }, { name: 'No Tax', taxType: 'NONE', status: 'ACTIVE', displayTaxRate: 0, canApplyToExpenses: true }];
     require('../db').prepare("INSERT INTO xero_tenants (company_id, tenant_id, tenant_name, connected_at) VALUES (?, 'demo-tenant', 'Solv Pte Ltd (demo)', ?)").run(admin.companyId, new Date().toISOString());
     users.saveCompanyConfig(admin.companyId, { DEFAULT_ACCOUNT_CODE: '429' });
-    const finance = await users.createUser({ email: 'finance@solv.sg', password: 'password123', companyId: admin.companyId, role: 'finance', name: 'Finance' });
-    const dry = await require('../xero/bills').postReport(report.id, finance, { dryRun: true });
+    const dry = await require('../xero/bills').postReport(report.id, admin, { dryRun: true });
     console.log(JSON.stringify({ xeroDryRun: { tenant: dry.tenantName, contact: dry.bill.contact, invoice: { ...dry.bill.invoice, lineItems: undefined }, total: dry.bill.total, attachments: dry.bill.attachments,
       lines: dry.bill.invoice.lineItems.map(l => ({ description: l.description, amount: l.unitAmount, account: l.accountCode, tax: l.taxType })) } }, null, 1));
     fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
