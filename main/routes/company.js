@@ -14,7 +14,7 @@ router.get('/', requireAuth, (req, res) => {
   res.json({ company: users.getCompany(me.companyId), categories: CATEGORY_NAMES, currencies: CURRENCIES });
 });
 
-router.patch('/', requireAuth, requireRole('admin', 'finance'), (req, res) => {
+router.patch('/', requireAuth, requireRole('admin'), (req, res) => {
   try {
     const me = users.findById(req.user.id);
     const b = req.body || {};
@@ -25,7 +25,7 @@ router.patch('/', requireAuth, requireRole('admin', 'finance'), (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-router.get('/llm-keys', requireAuth, requireRole('admin', 'finance'), (req, res) => {
+router.get('/llm-keys', requireAuth, requireRole('admin'), (req, res) => {
   const me = users.findById(req.user.id);
   res.json({ keys: users.getGeminiKeys(me.companyId).map(k => ({
     id: k.id, label: k.label, createdAt: k.createdAt,
@@ -33,7 +33,7 @@ router.get('/llm-keys', requireAuth, requireRole('admin', 'finance'), (req, res)
   })) });
 });
 
-router.post('/llm-keys', requireAuth, requireRole('admin', 'finance'), (req, res) => {
+router.post('/llm-keys', requireAuth, requireRole('admin'), (req, res) => {
   try {
     const me = users.findById(req.user.id);
     const { apiKey, label } = req.body || {};
@@ -41,7 +41,7 @@ router.post('/llm-keys', requireAuth, requireRole('admin', 'finance'), (req, res
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-router.delete('/llm-keys/:id', requireAuth, requireRole('admin', 'finance'), (req, res) => {
+router.delete('/llm-keys/:id', requireAuth, requireRole('admin'), (req, res) => {
   const me = users.findById(req.user.id);
   if (!users.removeGeminiKey(me.companyId, Number(req.params.id))) return res.status(404).json({ error: 'Key not found' });
   res.json({ success: true });

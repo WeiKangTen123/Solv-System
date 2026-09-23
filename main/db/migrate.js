@@ -114,6 +114,59 @@ function run() {
       if (on) db.pragma('foreign_keys = ON');
     }
   });
+
+  // 5. Two roles and two states. The system records claims; it does not route
+  // them through anybody, so there is nobody for a manager or finance role to
+  // be, and nothing for a report to be between open and claimed.
+  //
+  // Everyone who was not an admin becomes a user; nobody reports to anybody.
+  // A report that was draft, submitted, approved or rejected is open — it had
+  // not been claimed. Claimed stays claimed, and posted becomes claimed: it was
+  // in Xero, which is further along than claimed, and xero_invoice_id still
+  // says so. The columns the old chain wrote to are not carried; the events
+  // table keeps that history for anyone who wants it.
+  _step(5, 'two roles, two states', () => {
+    const users = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").get();
+    if (users && /'manager'/.test(users.sql)) {
+      _rebuild('users', { role: "CASE role WHEN 'admin' THEN 'admin' ELSE 'user' END" });
+    }
+    const reports = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'expense_reports'").get();
+    if (reports && !/'open'/.test(reports.sql)) {
+      _rebuild('expense_reports', { status: "CASE status WHEN 'claimed' THEN 'claimed' WHEN 'posted' THEN 'claimed' ELSE 'open' END" });
+    }
+  });
+}
+
+// Rebuilds one table to the shape schema.sql now gives it, carrying every row
+// across. SQLite cannot alter a CHECK constraint or drop a column that one
+// mentions, so the third time this was needed it became a function.
+//
+// The new table is created from schema.sql's own DDL, so there is exactly one
+// definition of the shape. Rows are copied column by column over the
+// intersection of old and new: a column schema.sql has dropped is simply not
+// carried, and `translate` supplies a SQL expression for any column whose old
+// values the new CHECK would refuse.
+function _rebuild(table, translate = {}) {
+  const ddl = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8')
+    .match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\([\\s\\S]*?\\n\\);`));
+  if (!ddl) throw new Error(`schema.sql has no CREATE TABLE for ${table}`);
+  const on = db.pragma('foreign_keys', { simple: true });
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.transaction(() => {
+      db.exec(ddl[0].replace(`CREATE TABLE IF NOT EXISTS ${table} (`, `CREATE TABLE ${table}_rebuilt (`));
+      const oldCols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+      const newCols = db.prepare(`PRAGMA table_info(${table}_rebuilt)`).all().map(c => c.name);
+      const cols = newCols.filter(c => oldCols.includes(c));
+      const select = cols.map(c => translate[c] || `"${c}"`).join(', ');
+      db.exec(`INSERT INTO ${table}_rebuilt (${cols.map(c => `"${c}"`).join(', ')}) SELECT ${select} FROM ${table}`);
+      db.exec(`DROP TABLE ${table}`);
+      db.exec(`ALTER TABLE ${table}_rebuilt RENAME TO ${table}`);
+      db.exec(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));   // the indexes DROP TABLE took with it
+    })();
+  } finally {
+    if (on) db.pragma('foreign_keys = ON');
+  }
 }
 
 // Re-exported for callers that already have migrate loaded. Anything that only

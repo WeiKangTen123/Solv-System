@@ -52,7 +52,6 @@ export default function ReportDetail() {
   const [cover, setCover] = useState({});
   const [unfiled, setUnfiled] = useState([]);
   const [picked, setPicked] = useState([]);
-  const [rejecting, setRejecting] = useState(null);
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState(null);
   const [confirm, setConfirm] = useState(null);
@@ -103,17 +102,18 @@ export default function ReportDetail() {
   }
 
   if (!view) return <div style={{ color: 'var(--text-muted)' }}>{msg?.text || 'Loading…'}</div>;
-  const { report: r, editable, isOwner, canDecide, xero } = view;
+  const { report: r, editable, isOwner, xero } = view;
   const canEdit = editable && (isOwner || user?.role === 'admin');
   const rates = [...new Map(r.expenses.flatMap(e => e.lines).filter(l => l.fxRate && l.fxSource !== 'base').map(l => [`${l.currency}|${l.fxRate}|${l.fxRateDate}|${l.fxSource}`, l])).values()];
   const cats = Object.entries(r.totals.byCategory);
-  const isFinance = user?.role === 'finance' || user?.role === 'admin';
+  const isAdmin = user?.role === 'admin';
+  const mayAct = isOwner || isAdmin;
 
   return (
     <div>
       <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><Link to="/reports" style={{ color: 'inherit' }}>← Reports</Link></div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><Link to="/reports" style={{ color: 'inherit' }}>← Cases</Link></div>
           <h1 style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)',
                            border: '1px solid var(--border)', borderRadius: 100, padding: '2px 9px' }}>
@@ -130,9 +130,7 @@ export default function ReportDetail() {
       </div>
 
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
-      {r.status === 'rejected' && <div className="alert alert-warning"><span className="alert-icon">!</span><span>Sent back: {r.rejectedReason}. Fix what was asked, then submit again.</span></div>}
       {r.xeroError && <div className="alert alert-warning"><span className="alert-icon">!</span><span>Xero: {r.xeroError}</span></div>}
-      {r.status === 'submitted' && isOwner && <div className="alert alert-info">Submitted {formatDateTime(r.submittedAt, user?.timezone)}. Waiting for approval; nothing can be changed until it is decided.</div>}
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 320px', gap: 18, alignItems: 'start' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
@@ -243,21 +241,22 @@ export default function ReportDetail() {
           <div className="card">
             <div className="card-title">Actions</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {isOwner && editable && <button className="btn btn-primary" disabled={!!busy} onClick={() => act('submit', () => api.post(`/reports/${id}/submit`, {}))}>{busy === 'submit' ? 'Submitting…' : 'Submit for approval'}</button>}
-              {canDecide && r.status === 'submitted' && <button className="btn btn-primary" disabled={!!busy} onClick={() => act('approve', () => api.post(`/reports/${id}/approve`, {}))}>Approve</button>}
-              {canDecide && (r.status === 'submitted' || (r.status === 'approved' && isFinance)) && <button className="btn btn-outline" disabled={!!busy} onClick={() => setRejecting({ reason: '' })}>Send back…</button>}
-              {isOwner && r.status === 'approved' && <button className="btn btn-primary" disabled={!!busy} onClick={() => act('claimed', () => api.post(`/reports/${id}/claimed`, {}))}>{busy === 'claimed' ? 'Marking…' : 'I have claimed this'}</button>}
-              {isFinance && ['approved', 'claimed'].includes(r.status) && !r.xeroInvoiceId && (
+              {/* Two states, one button each way. Claiming carries the checks
+                  submitting used to: every receipt checked, every line priced. */}
+              {mayAct && r.status === 'open' && <button className="btn btn-primary" disabled={!!busy} onClick={() => act('claimed', () => api.post(`/reports/${id}/claimed`, {}))}>{busy === 'claimed' ? 'Marking…' : 'I have claimed this'}</button>}
+              {mayAct && r.status === 'claimed' && <button className="btn btn-outline" disabled={!!busy} onClick={() => act('reopen', () => api.post(`/reports/${id}/reopen`, {}))}>{busy === 'reopen' ? 'Reopening…' : 'Reopen'}</button>}
+              {isAdmin && r.status === 'claimed' && !r.xeroInvoiceId && (
                 xero?.connected ? (
                   <>
                     <button className="btn btn-outline" disabled={!!busy} onClick={() => act('preview', async () => { setPreview(await api.post(`/reports/${id}/post?dryRun=1`, {})); })}>Preview Xero bill</button>
                     <button className="btn btn-primary" disabled={!!busy} onClick={() => setConfirm('post')}>Post to Xero</button>
                   </>
-                ) : <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Connect Xero in Settings to post this report as a bill.</div>
+                ) : <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Connect Xero in Settings to post this case as a bill.</div>
               )}
               {r.xeroInvoiceId && <div style={{ fontSize: 12.5, color: 'var(--success)' }}>In Xero as draft bill {r.xeroInvoiceId}{xero?.tenantName ? ` (${xero.tenantName})` : ''}.</div>}
-              {!isOwner && !canDecide && !(isFinance && ['approved', 'claimed'].includes(r.status)) && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Nothing for you to do on this report right now.</div>}
-              {isOwner && !editable && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{r.status === 'submitted' ? 'Waiting for your manager.' : r.status === 'approved' ? 'Approved. Put it through, then mark it claimed.' : r.status === 'claimed' ? `Claimed ${formatDateTime(r.claimedAt, user?.timezone)}.` : ''}</div>}
+              {r.status === 'open' && mayAct && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Check every receipt, then put the claim through however your company reimburses you and mark it claimed.</div>}
+              {r.status === 'claimed' && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Claimed {formatDateTime(r.claimedAt, user?.timezone)}.</div>}
+              {!mayAct && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>This is {r.ownerName || 'someone else'}&rsquo;s case. You can read and export it.</div>}
             </div>
             {preview && (
               <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10, fontSize: 12 }}>
@@ -271,15 +270,6 @@ export default function ReportDetail() {
                 <div style={{ color: 'var(--text-muted)', marginTop: 6 }}>Attachments: {preview.bill.attachments.join(', ') || 'none'}</div>
                 <button className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setPreview(null)}>Close preview</button>
               </div>
-            )}
-            {rejecting && (
-              <form onSubmit={e => { e.preventDefault(); act('reject', () => api.post(`/reports/${id}/reject`, { reason: rejecting.reason })).then(() => setRejecting(null)); }} style={{ marginTop: 10 }}>
-                <input id="reject-reason" className="form-input" placeholder="Tell the claimant what to fix" required value={rejecting.reason} onChange={e => setRejecting({ reason: e.target.value })} />
-                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                  <button className="btn btn-danger btn-sm" type="submit" disabled={!!busy}>Send back</button>
-                  <button className="btn btn-ghost btn-sm" type="button" onClick={() => setRejecting(null)}>Cancel</button>
-                </div>
-              </form>
             )}
           </div>
 
@@ -297,7 +287,7 @@ export default function ReportDetail() {
         </div>
       </div>
 
-      {confirm === 'post' && <ConfirmDialog title={`Post ${r.number} to Xero?`} message={`A draft bill payable to ${r.ownerName || 'the claimant'} for ${fmtMoney(r.totals.totalBase, base)} will be created in ${xero?.tenantName || 'Xero'}, with the receipts attached. Finance approves it in Xero as usual.`} confirmLabel="Post to Xero"
+      {confirm === 'post' && <ConfirmDialog title={`Post ${r.number} to Xero?`} message={`A draft bill payable to ${r.ownerName || 'the claimant'} for ${fmtMoney(r.totals.totalBase, base)} will be created in ${xero?.tenantName || 'Xero'}, with the receipts attached. It is approved in Xero as usual.`} confirmLabel="Post to Xero"
                                    onConfirm={() => { setConfirm(null); act('post', () => api.post(`/reports/${id}/post`, {})); }} onCancel={() => setConfirm(null)} />}
       {confirm === 'delete' && <ConfirmDialog title="Delete this report?" message="The expenses stay in My expenses; only the report goes." confirmLabel="Delete" danger onConfirm={() => api.delete(`/reports/${id}`).then(() => navigate('/reports')).catch(e => { setConfirm(null); setMsg({ tone: 'error', text: e.message }); })} onCancel={() => setConfirm(null)} />}
     </div>

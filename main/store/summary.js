@@ -16,16 +16,11 @@ const { toDollars } = require('./expenses');
 
 const MONTHS = 6;
 
-// Which people's expenses this person may see totalled. An employee sees their
-// own; a manager their direct reports and themselves; finance and admin the
-// company. Returned as an explicit id list except for the company case, which
-// is a column filter — a company of any size should not become an IN list.
-function _scope(me, allUsers) {
-  if (me.role === 'finance' || me.role === 'admin') return { kind: 'company', companyId: me.companyId };
-  if (me.role === 'manager') {
-    const ids = allUsers.filter(u => u.managerId === me.id).map(u => u.id);
-    return { kind: 'team', userIds: [...new Set([me.id, ...ids])] };
-  }
+// Which people's expenses this person may see totalled: their own, or the
+// company for an admin. The company case is a column filter rather than an id
+// list, because a company of any size should not become an IN list.
+function _scope(me) {
+  if (me.role === 'admin') return { kind: 'company', companyId: me.companyId };
   return { kind: 'own', userIds: [me.id] };
 }
 
@@ -68,8 +63,8 @@ function _monthKeys(now = new Date(), tz = 'UTC') {
 const DATED = "COALESCE(NULLIF(e.receipt_date, ''), e.created_at)";
 const LIVE = "e.status NOT IN ('duplicate', 'rejected')";
 
-function summary(me, allUsers, { now = new Date(), timezone = 'UTC' } = {}) {
-  const scope = _scope(me, allUsers);
+function summary(me, { now = new Date(), timezone = 'UTC' } = {}) {
+  const scope = _scope(me);
   const w = _where(scope);
   const months = _monthKeys(now, timezone);
   const from = `${months[0]}-01`;
@@ -104,20 +99,19 @@ function summary(me, allUsers, { now = new Date(), timezone = 'UTC' } = {}) {
     WHERE ${w.sql} AND ${LIVE} AND l.base_cents IS NULL AND ${DATED} >= ?`).get(...w.args, from);
 
   const rw = _where(scope, 'r');
-  // How long each hop actually takes, in days, over reports that completed it.
-  // julianday subtracts two timestamps directly; AVG over an empty set is NULL,
-  // which is reported as null rather than 0 — "no data" and "instant" are not
-  // the same answer.
+  // How long a case stays open before it is claimed, in days, over cases that
+  // have been. julianday subtracts two timestamps directly; AVG over an empty
+  // set is NULL, which is reported as null rather than 0 — "no data" and
+  // "instant" are not the same answer.
   const cycle = db.prepare(`
-    SELECT AVG(julianday(r.approved_at) - julianday(r.submitted_at)) AS to_approve,
-           COUNT(r.approved_at) AS approved_n,
-           AVG(julianday(r.claimed_at) - julianday(r.approved_at)) AS to_claim,
-           COUNT(r.claimed_at) AS claimed_n
-    FROM expense_reports r WHERE ${rw.sql} AND r.submitted_at IS NOT NULL`).get(...rw.args);
+    SELECT AVG(julianday(r.claimed_at) - julianday(r.created_at)) AS open_days,
+           COUNT(r.claimed_at) AS claimed_n,
+           SUM(CASE WHEN r.status = 'open' THEN 1 ELSE 0 END) AS open_n
+    FROM expense_reports r WHERE ${rw.sql}`).get(...rw.args);
 
   const totalCents = db.prepare(`
     SELECT SUM(CASE WHEN r.status = 'claimed' OR e.claimed_at IS NOT NULL THEN l.base_cents ELSE 0 END) AS claimed,
-           SUM(CASE WHEN r.status = 'approved' AND e.claimed_at IS NULL THEN l.base_cents ELSE 0 END) AS awaiting
+           SUM(CASE WHEN (r.status = 'open' OR r.id IS NULL) AND e.claimed_at IS NULL THEN l.base_cents ELSE 0 END) AS open_cents
     FROM expenses e JOIN expense_lines l ON l.expense_id = e.id
     LEFT JOIN expense_reports r ON r.id = e.report_id
     WHERE ${w.sql} AND ${LIVE} AND l.base_cents IS NOT NULL AND ${DATED} >= ?`).get(...w.args, from);
@@ -137,12 +131,9 @@ function summary(me, allUsers, { now = new Date(), timezone = 'UTC' } = {}) {
     byCategory: byCategory.map(r => ({ category: r.category, base: toDollars(r.cents) ?? 0, lines: r.n, share: share(r.cents) })),
     byCurrency: byCurrency.map(r => ({ currency: r.currency, base: toDollars(r.cents) ?? 0, receipts: r.n, share: share(r.cents) })),
     unpricedLines: unpriced?.n ?? 0,
-    cycle: {
-      submitToApprove: round1(cycle?.to_approve ?? null), approvedCount: cycle?.approved_n ?? 0,
-      approveToClaim: round1(cycle?.to_claim ?? null), claimedCount: cycle?.claimed_n ?? 0,
-    },
+    cycle: { openToClaimed: round1(cycle?.open_days ?? null), claimedCount: cycle?.claimed_n ?? 0, openCount: cycle?.open_n ?? 0 },
     claimed: toDollars(totalCents?.claimed) ?? 0,
-    awaitingClaim: toDollars(totalCents?.awaiting) ?? 0,
+    open: toDollars(totalCents?.open_cents) ?? 0,
     monthsCovered: MONTHS,
   };
 }

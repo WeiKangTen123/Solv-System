@@ -23,8 +23,7 @@ export default function Reports() {
   const [creating, setCreating] = useState(false);
   const [msg, setMsg] = useState(null);
   const base = user?.baseCurrency || 'SGD';
-  const canTeam = user?.role === 'manager';
-  const canAll = user?.role === 'finance' || user?.role === 'admin';
+  const canAll = user?.role === 'admin';
 
   const load = useCallback(() => api.get(`/reports?scope=${scope}`).then(d => setReports(d.reports)).catch(e => setMsg({ tone: 'error', text: e.message })), [scope]);
   useEffect(() => { load(); }, [load]);
@@ -39,14 +38,14 @@ export default function Reports() {
   return (
     <div>
       <div className="page-header" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-        <div><h1>Reports</h1><p>File reviewed expenses into a report, submit it, and export it once approved.</p></div>
-        <button className="btn btn-primary" onClick={() => setCreating(c => !c)}>{creating ? 'Close' : '+ New report'}</button>
+        <div><h1>Cases</h1><p>A case is a bundle of receipts claimed as one thing. Open while receipts go in, claimed once you have put it through.</p></div>
+        <button className="btn btn-primary" onClick={() => setCreating(c => !c)}>{creating ? 'Close' : '+ New case'}</button>
       </div>
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
 
       {creating && (
         <form className="card" onSubmit={create} style={{ marginBottom: 18 }}>
-          <div className="card-title">New report</div>
+          <div className="card-title">New case</div>
           <div className="card-subtitle">A trip has dates and a destination; a period is a month of local claims.</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0 12px' }}>
             <div className="form-group" style={{ gridColumn: '1 / -1' }}><label className="form-label" htmlFor="r-title">Title</label><input id="r-title" className="form-input" required placeholder="India trip, Sep 2026" value={form.title} onChange={e => set('title', e.target.value)} /></div>
@@ -56,13 +55,13 @@ export default function Reports() {
             <div className="form-group"><label className="form-label" htmlFor="r-to">To</label><input id="r-to" className="form-input" type="date" value={form.periodTo} onChange={e => set('periodTo', e.target.value)} /></div>
             {form.kind === 'trip' && <div className="form-group"><label className="form-label" htmlFor="r-dest">Destination</label><input id="r-dest" className="form-input" placeholder="Mumbai and Pune, India" value={form.destination} onChange={e => set('destination', e.target.value)} /></div>}
           </div>
-          <button className="btn btn-primary" type="submit">Create report</button>
+          <button className="btn btn-primary" type="submit">Create case</button>
         </form>
       )}
 
-      {(canTeam || canAll) && (
+      {canAll && (
         <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
-          {[['mine', 'Mine'], canTeam && ['team', 'My team'], canAll && ['all', 'Everyone']].filter(Boolean).map(([k, label]) => (
+          {[['mine', 'Mine'], ['all', 'Everyone']].map(([k, label]) => (
             <button key={k} className={`btn btn-sm ${scope === k ? 'btn-primary' : 'btn-outline'}`} onClick={() => setScope(k)}>{label}</button>
           ))}
         </div>

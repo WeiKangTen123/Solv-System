@@ -20,8 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
   name         TEXT,
   employee_id  TEXT,
   department   TEXT,
-  role         TEXT NOT NULL DEFAULT 'employee' CHECK (role IN ('employee', 'manager', 'finance', 'admin')),
-  manager_id   TEXT REFERENCES users(id) ON DELETE SET NULL,
+  role         TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   created_at   TEXT NOT NULL,
   last_seen_at TEXT
 );
@@ -89,11 +88,7 @@ CREATE TABLE IF NOT EXISTS expense_reports (
   period_to       TEXT,
   destination     TEXT,
   nights          INTEGER,
-  status          TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'approved', 'rejected', 'claimed', 'posted')),
-  submitted_at    TEXT,
-  approved_by     TEXT,
-  approved_at     TEXT,
-  rejected_reason TEXT,
+  status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'claimed')),
   advances_cents  INTEGER NOT NULL DEFAULT 0,
   claimed_at      TEXT,
   xero_invoice_id TEXT,

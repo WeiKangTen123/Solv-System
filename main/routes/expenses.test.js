@@ -12,18 +12,17 @@ jest.mock('../pdf/render', () => ({ renderPdfPages: jest.fn().mockResolvedValue(
 jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 0.0134, rateDate: '2026-09-04', providerDate: '2026-09-04', source: 'frankfurter', fetchedAt: 'x' }) }));
 
 describe('routes/expenses', () => {
-  let app, users, store, admin, emp, mgr, fin, tokens, parser;
+  let app, users, store, admin, emp, other, tokens, parser;
   beforeEach(async () => {
     jest.resetModules();
     require('../db/migrate').run();
     users = require('../store/users'); store = require('../store/expenses'); parser = require('../receipts/receipt-parser');
     parser.parseReceiptImage.mockReset(); parser.parseReceiptImage.mockResolvedValue(null);
     admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
-    mgr = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: admin.companyId, role: 'manager' });
-    fin = await users.createUser({ email: 'f@solv.sg', password: 'password123', companyId: admin.companyId, role: 'finance' });
-    emp = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId, managerId: mgr.id });
+    emp = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId });
+    other = await users.createUser({ email: 'o@solv.sg', password: 'password123', companyId: admin.companyId });
     const secret = require('../middleware/auth-middleware').jwtSecret();
-    tokens = Object.fromEntries([admin, mgr, fin, emp].map(u => [u.email, jwt.sign({ id: u.id, email: u.email, role: u.role }, secret)]));
+    tokens = Object.fromEntries([admin, emp, other].map(u => [u.email, jwt.sign({ id: u.id, email: u.email, role: u.role }, secret)]));
     app = express(); app.use(express.json()); app.use('/api/expenses', require('./expenses'));
   });
   const as = u => ({ Authorization: `Bearer ${tokens[u.email]}` });
@@ -33,15 +32,17 @@ describe('routes/expenses', () => {
       lines: [{ category: 'Lodging', amount: 100 }], ...extra });
   };
 
-  test('an employee lists and reads only their own; a manager sees a direct report; finance sees all', async () => {
+  test('a user lists and reads only their own; an admin sees all, and only an admin', async () => {
     const mine = seed(emp); const theirs = seed(admin);
     const list = await request(serverFor(app)).get('/api/expenses').set(as(emp)).expect(200);
     expect(list.body.expenses.map(e => e.id)).toEqual([mine.id]);
     await request(serverFor(app)).get(`/api/expenses/${theirs.id}`).set(as(emp)).expect(404);
-    await request(serverFor(app)).get(`/api/expenses/${mine.id}`).set(as(mgr)).expect(200);
-    await request(serverFor(app)).get(`/api/expenses/${theirs.id}`).set(as(mgr)).expect(404);
-    const all = await request(serverFor(app)).get('/api/expenses?all=1').set(as(fin)).expect(200);
+    await request(serverFor(app)).get(`/api/expenses/${mine.id}`).set(as(other)).expect(404);
+    await request(serverFor(app)).get(`/api/expenses/${mine.id}`).set(as(admin)).expect(200);
+    const all = await request(serverFor(app)).get('/api/expenses?all=1').set(as(admin)).expect(200);
     expect(all.body.expenses).toHaveLength(2);
+    const notWidened = await request(serverFor(app)).get('/api/expenses?all=1').set(as(emp)).expect(200);
+    expect(notWidened.body.expenses.map(e => e.id)).toEqual([mine.id]);
     const detail = await request(serverFor(app)).get(`/api/expenses/${mine.id}`).set(as(emp)).expect(200);
     expect(detail.body.expense.lines).toHaveLength(1);
     expect(detail.body.imageToken).toBeTruthy();
@@ -113,11 +114,11 @@ describe('routes/expenses', () => {
     expect(r.body.expense.lines[0]).toMatchObject({ fxRate: 0.02, baseAmount: 4 });   // an override survives an edit
   });
 
-  test('an expense in a submitted report cannot be edited', async () => {
+  test('an expense in a claimed case cannot be edited', async () => {
     const reports = require('../store/reports'); const wf = require('../reports/workflow');
     const e = seed(emp, { status: 'reviewed', lines: [{ category: 'Lodging', amount: 100, baseAmount: 1.34, fxRate: 0.0134, fxRateDate: '2026-09-04', fxSource: 'frankfurter', fxFetchedAt: 'x' }] });
     const r = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'T' });
-    reports.addExpense(r.id, e.id); wf.submit(r.id, emp);
+    reports.addExpense(r.id, e.id); wf.markClaimed(r.id, emp);
     await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ purpose: 'x' }).expect(409);
     await request(serverFor(app)).get(`/api/expenses/${e.id}`).set(as(emp)).expect(200);
   });

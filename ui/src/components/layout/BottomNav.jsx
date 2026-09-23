@@ -2,22 +2,17 @@ import { NavLink } from 'react-router-dom';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 
-// Four tabs, chosen for the role. Settings used to be here for everyone, and
-// the route behind it is admin and finance only, so two roles out of four
-// tapped it and were bounced back to Home with no explanation. Approvals was
-// missing entirely, which left a manager on a phone with no way to reach the
-// queue except the drawer.
+// The same three tabs for everyone; an admin gets Settings as a fourth. It
+// used to be shown to everyone while the route behind it refused most of them,
+// which bounced people back to Home with no explanation.
 const ALL = {
   home:      { to: '/',          label: 'Home',      icon: '▦', end: true },
-  expenses:  { to: '/expenses',  label: 'Expenses',  icon: '◧' },
-  reports:   { to: '/reports',   label: 'Reports',   icon: '▤' },
-  approvals: { to: '/approvals', label: 'Approvals', icon: '✓' },
+  expenses:  { to: '/expenses',  label: 'Receipts',  icon: '◧' },
+  reports:   { to: '/reports',   label: 'Cases',     icon: '▤' },
   settings:  { to: '/settings',  label: 'Settings',  icon: '◈' },
 };
 function itemsFor(role) {
-  if (role === 'admin' || role === 'finance') return [ALL.home, ALL.expenses, ALL.approvals, ALL.settings];
-  if (role === 'manager') return [ALL.home, ALL.expenses, ALL.reports, ALL.approvals];
-  return [ALL.home, ALL.expenses, ALL.reports];
+  return role === 'admin' ? [ALL.home, ALL.expenses, ALL.reports, ALL.settings] : [ALL.home, ALL.expenses, ALL.reports];
 }
 
 export default function BottomNav() {

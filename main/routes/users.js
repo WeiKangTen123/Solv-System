@@ -7,20 +7,21 @@ const logger  = require('../utils/logger');
 const asyncHandler = require('../middleware/async-handler');
 
 // Staff directory. Everyone signed in may list names (to pick a colleague for
-// "paid on behalf of"); only admins create, change roles or delete.
+// "paid on behalf of"); only an admin sees the full rows, creates, changes
+// roles or deletes.
 router.get('/', requireAuth, (req, res) => {
   const me = users.findById(req.user.id);
   const list = users.getAllUsers(me.companyId);
-  const full = req.user.role === 'admin' || req.user.role === 'finance';
+  const full = req.user.role === 'admin';
   res.json({ users: full ? list : list.map(u => ({ id: u.id, name: u.name, email: u.email, department: u.department, role: u.role })) });
 });
 
 router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const me = users.findById(req.user.id);
-    const { email, password, name, role, employeeId, department, managerId } = req.body || {};
+    const { email, password, name, role, employeeId, department } = req.body || {};
     if (!password || password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
-    const user = await users.createUser({ email, password, name, role: role || 'employee', companyId: me.companyId, employeeId, department, managerId: managerId || null });
+    const user = await users.createUser({ email, password, name, role: role || 'user', companyId: me.companyId, employeeId, department });
     logger.info('User created', { by: req.user.email, email: user.email, role: user.role });
     res.status(201).json({ user });
   } catch (err) {
@@ -39,7 +40,7 @@ router.patch('/:id', requireAuth, (req, res) => {
     if (!isAdmin && !self) return res.status(403).json({ error: 'You can only edit your own profile' });
     const body = req.body || {};
     const patch = { name: body.name, employeeId: body.employeeId, department: body.department };
-    if (isAdmin) { patch.role = body.role; patch.managerId = body.managerId; }
+    if (isAdmin) patch.role = body.role;
     const user = users.updateUser(target.id, patch);
     res.json({ user });
   } catch (err) {

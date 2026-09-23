@@ -9,12 +9,12 @@ jest.mock('../receipts/receipt-parser', () => ({
 jest.mock('../pdf/render', () => ({ renderPdfPages: jest.fn().mockResolvedValue(null) }));
 jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 0.0134, rateDate: '2026-09-04', providerDate: '2026-09-04', source: 'frankfurter', fetchedAt: 'x' }) }));
 
-// The approval workflow is only worth anything if every road into a report
-// obeys it. Each test here is a road that did not: one that crashed the server,
-// two that changed a report after it was approved, one that read a colleague's
-// receipt, and one that let a finance user pay themselves.
-describe('guards that the approval workflow depends on', () => {
-  let app, users, store, reports, wf, admin, emp, mgr, fin, tokens;
+// A claimed case is only worth anything if every road into it obeys the lock.
+// Each test here is a road that did not: one that crashed the server, two that
+// changed a case after it was claimed, one that read a colleague's receipt,
+// and one that let the wrong person declare a claim.
+describe('guards that the case lock depends on', () => {
+  let app, users, store, reports, wf, admin, emp, other, tokens;
 
   beforeEach(async () => {
     jest.resetModules();
@@ -22,11 +22,10 @@ describe('guards that the approval workflow depends on', () => {
     users = require('../store/users'); store = require('../store/expenses');
     reports = require('../store/reports'); wf = require('../reports/workflow');
     admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
-    mgr   = await users.createUser({ email: 'm@solv.sg', password: 'password123', companyId: admin.companyId, role: 'manager' });
-    fin   = await users.createUser({ email: 'f@solv.sg', password: 'password123', companyId: admin.companyId, role: 'finance' });
-    emp   = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId, managerId: mgr.id });
+    emp   = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId });
+    other = await users.createUser({ email: 'o@solv.sg', password: 'password123', companyId: admin.companyId });
     const secret = require('../middleware/auth-middleware').jwtSecret();
-    tokens = Object.fromEntries([admin, mgr, fin, emp].map(u => [u.email, jwt.sign({ id: u.id, email: u.email, role: u.role }, secret)]));
+    tokens = Object.fromEntries([admin, emp, other].map(u => [u.email, jwt.sign({ id: u.id, email: u.email, role: u.role }, secret)]));
     app = express();
     app.use(express.json());
     app.use('/api/expenses', require('./expenses'));
@@ -42,15 +41,14 @@ describe('guards that the approval workflow depends on', () => {
     // a group is a property of the receipt, which is what an import creates
     const r = store.createReceipt({ companyId: owner.companyId, userId: owner.id, file: 'r.jpg', mime: 'image/jpeg', sha256: `h${Math.random()}`, groupId });
     return store.createExpense({ companyId: owner.companyId, userId: owner.id, receiptId: r.id, status: 'reviewed', merchant: 'Courtyard', currency: 'SGD', total: 100, receiptDate: '2026-09-04',
-      // priced already, so submit() is not blocked by a pending rate
+      // priced already, so markClaimed() is not blocked by a pending rate
       lines: [{ category: 'Lodging', amount: extra.total ?? 100, baseAmount: extra.total ?? 100, fxRate: 1, fxSource: 'base', fxRateDate: '2026-09-04' }], ...extra });
   };
-  const approvedReport = async () => {
+  const claimedCase = async () => {
     const r = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'Trip' });
     const e = seed(emp);
     reports.addExpense(r.id, e.id);
-    wf.submit(r.id, emp);
-    wf.approve(r.id, mgr);
+    wf.markClaimed(r.id, emp);
     return { report: reports.getReport(r.id), expense: e };
   };
 
@@ -72,8 +70,8 @@ describe('guards that the approval workflow depends on', () => {
   });
 
   // ── filing has to obey the same rules everywhere ────────────────────────
-  test('an expense cannot be filed into a report that is already approved', async () => {
-    const { report } = await approvedReport();
+  test('an expense cannot be filed into a case that is already claimed', async () => {
+    const { report } = await claimedCase();
     const late = seed(emp, { total: 5000, status: 'review-needed' });
     const res = await request(serverFor(app)).patch(`/api/expenses/${late.id}`).set(as(emp)).send({ reportId: report.id });
     expect(res.status).toBe(409);
@@ -82,7 +80,7 @@ describe('guards that the approval workflow depends on', () => {
     expect(after.totals.totalBase).toBe(100);
   });
 
-  test('an expense cannot be filed into someone else\'s report', async () => {
+  test('an expense cannot be filed into someone else\'s case', async () => {
     const theirs = reports.createReport({ companyId: admin.companyId, userId: admin.id, title: 'Not yours' });
     const mine = seed(emp);
     const res = await request(serverFor(app)).patch(`/api/expenses/${mine.id}`).set(as(emp)).send({ reportId: theirs.id });
@@ -90,7 +88,7 @@ describe('guards that the approval workflow depends on', () => {
     expect(reports.getReport(theirs.id).expenses).toHaveLength(0);
   });
 
-  test('filing into and out of your own draft still works', async () => {
+  test('filing into and out of your own open case still works', async () => {
     const draft = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'Mine' });
     const e = seed(emp);
     await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ reportId: draft.id }).expect(200);
@@ -99,14 +97,14 @@ describe('guards that the approval workflow depends on', () => {
     expect(reports.getReport(draft.id).expenses).toHaveLength(0);
   });
 
-  // ── undoing an import must not reach into an approved report ────────────
-  test('undoing a claim import leaves the expenses that are in a submitted report', async () => {
+  // ── undoing an import must not reach into a claimed case ────────────────
+  test('undoing a claim import leaves the expenses that are in a claimed case', async () => {
     const groupId = 'grp-1';
     const loose = seed(emp, { groupId, status: 'review-needed' });
     const filed = seed(emp, { groupId });
     const r = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'Trip' });
     reports.addExpense(r.id, filed.id);
-    wf.submit(r.id, emp);
+    wf.markClaimed(r.id, emp);
 
     const res = await request(serverFor(app)).delete(`/api/claims/group/${groupId}`).set(as(emp)).expect(200);
     expect(res.body.removed).toBe(1);
@@ -122,27 +120,24 @@ describe('guards that the approval workflow depends on', () => {
     const theirs = seed(admin);
     await request(serverFor(app)).get(`/api/receipts/${mine.receiptId || mine.receipt.id}/token`).set(as(emp)).expect(200);
     await request(serverFor(app)).get(`/api/receipts/${theirs.receipt.id}/token`).set(as(emp)).expect(404);
-    await request(serverFor(app)).get(`/api/receipts/${mine.receipt.id}/token`).set(as(mgr)).expect(200);
-    await request(serverFor(app)).get(`/api/receipts/${mine.receipt.id}/token`).set(as(fin)).expect(200);
+    await request(serverFor(app)).get(`/api/receipts/${mine.receipt.id}/token`).set(as(other)).expect(404);
+    await request(serverFor(app)).get(`/api/receipts/${mine.receipt.id}/token`).set(as(admin)).expect(200);
   });
 
-  // ── who owns the last step ──────────────────────────────────────────────
-  // It used to be finance marking a report paid, and the guard worth pinning
-  // was that they could not pay themselves. The last step is now the claimant
-  // saying they put an approved claim through, so the guard inverts: nobody
-  // may declare that on somebody else's behalf. An admin still may, to tidy up
-  // after someone who has left.
-  test('only the claimant, or an admin, can mark a report claimed', async () => {
-    const { report } = await approvedReport();
-    const owner = { id: report.userId, role: 'employee' };
-    expect(() => wf.markClaimed(report.id, fin)).toThrow(/claimant/i);
-    expect(() => wf.markClaimed(report.id, mgr)).toThrow(/claimant/i);
-    expect(wf.markClaimed(report.id, owner).status).toBe('claimed');
+  // ── who owns the only step ──────────────────────────────────────────────
+  // Claiming is the claimant saying they put it through, so nobody may declare
+  // that on somebody else's behalf. An admin still may, to tidy up after
+  // someone who has left.
+  test('only the claimant, or an admin, can mark a case claimed or reopen it', async () => {
+    const r = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'Trip' });
+    reports.addExpense(r.id, seed(emp).id);
+    expect(() => wf.markClaimed(r.id, other)).toThrow(/claimant/i);
+    expect(wf.markClaimed(r.id, emp).status).toBe('claimed');
+    expect(() => wf.reopen(r.id, other)).toThrow(/claimant/i);
+    expect(wf.reopen(r.id, admin).status).toBe('open');
 
-    const own = reports.createReport({ companyId: fin.companyId, userId: fin.id, title: 'Finance trip' });
-    reports.addExpense(own.id, seed(fin).id);
-    wf.submit(own.id, fin);
-    wf.approve(own.id, admin);   // fin reports to nobody, so an admin decides
-    expect(wf.markClaimed(own.id, admin).status).toBe('claimed');
+    const theirs = reports.createReport({ companyId: other.companyId, userId: other.id, title: 'Theirs' });
+    reports.addExpense(theirs.id, seed(other).id);
+    expect(wf.markClaimed(theirs.id, admin).status).toBe('claimed');
   });
 });

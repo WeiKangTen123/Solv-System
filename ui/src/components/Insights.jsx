@@ -139,11 +139,10 @@ export default function Insights({ refresh = 0 }) {
 
         <div className="card">
           <div className="card-title">How long it takes</div>
-          <div className="card-subtitle">Averages over reports that got that far.</div>
+          <div className="card-subtitle">From a case being opened to it being claimed.</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
             {[
-              ['Submitted → approved', cyc.submitToApprove, cyc.approvedCount],
-              ['Approved → claimed', cyc.approveToClaim, cyc.claimedCount],
+              ['Open → claimed', cyc.openToClaimed, cyc.claimedCount],
             ].map(([label, days, n]) => (
               <div key={label} style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 13 }}>
                 <span style={{ flex: 1 }}>{label}</span>
@@ -156,8 +155,8 @@ export default function Insights({ refresh = 0 }) {
               </div>
             ))}
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: 9, display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 13 }}>
-              <span style={{ flex: 1 }}>Approved, not yet claimed</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{fmtMoney(d.awaitingClaim, base)}</span>
+              <span style={{ flex: 1 }}>Still open{cyc.openCount ? ` · ${cyc.openCount} case${cyc.openCount === 1 ? '' : 's'}` : ''}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{fmtMoney(d.open, base)}</span>
             </div>
           </div>
         </div>

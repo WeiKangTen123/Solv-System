@@ -7,4 +7,4 @@
 // run under sudo, one owned by root that the application could then not write.
 //
 // migrate.test.js holds this to the highest step declared in migrate.js.
-module.exports = { LATEST: 4 };
+module.exports = { LATEST: 5 };

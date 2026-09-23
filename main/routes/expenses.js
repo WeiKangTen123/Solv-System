@@ -64,7 +64,7 @@ function _out(e) { return { expense: e, locked: isLocked(e), imageToken: e.recei
 
 router.get('/', requireAuth, (req, res) => {
   const me = users.findById(req.user.id);
-  const wide = req.query.all === '1' && (req.user.role === 'finance' || req.user.role === 'admin');
+  const wide = req.query.all === '1' && req.user.role === 'admin';
   const filter = { status: req.query.status || undefined, reportId: req.query.reportId || undefined, unfiled: req.query.unfiled === '1',
                    from: req.query.from || undefined, to: req.query.to || undefined };
   let list;

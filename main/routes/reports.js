@@ -13,22 +13,21 @@ const exporter = require('../reports/expense-export');
 const doc     = require('../reports/expense-doc');
 const logger  = require('../utils/logger');
 
-// Expense reports: the cover, the expenses filed under it, the workflow, and
-// the exports. Access: the owner, the owner's manager, finance and admin.
+// Cases: the cover, the receipts filed under it, open or claimed, and the
+// exports. Access: the owner, and an admin.
 function _load(req, res) {
   const r = reports.getReport(req.params.id);
   if (!r || !canAccessUser(req.user, r.userId)) { res.status(404).json({ error: 'Report not found' }); return null; }
   return r;
 }
-// canDecide means "can act on it now": the right person, and a report awaiting a decision.
 function _view(r, req) {
   const tenant = require('../xero/token-cache').getPersistedTenants(r.companyId)[0] || null;
-  return { report: r, canDecide: ['submitted', 'approved'].includes(r.status) && wf.canDecide(r.id, req.user), editable: wf.isEditable(r), isOwner: r.userId === req.user.id,
+  return { report: r, editable: wf.isEditable(r), isOwner: r.userId === req.user.id,
            xero: { connected: !!tenant, tenantName: tenant ? tenant.tenantName : null } };
 }
 // A workflow error about WHO may act is a 403; anything else is a 400.
 function _fail(res, err) {
-  const who = /\bonly\b|cannot decide|own report/i.test(err.message);
+  const who = /\bonly the claimant\b/i.test(err.message);
   res.status(who ? 403 : 400).json({ error: err.message });
 }
 const COVER = ['kind', 'title', 'purpose', 'periodFrom', 'periodTo', 'destination', 'nights', 'advances', 'notes'];
@@ -48,10 +47,10 @@ router.get('/', requireAuth, (req, res) => {
   const me = users.findById(req.user.id);
   const scope = String(req.query.scope || 'mine');
   const status = req.query.status || undefined;
-  let list;
-  if (scope === 'all' && (me.role === 'finance' || me.role === 'admin')) list = reports.listReports({ companyId: me.companyId, status });
-  else if (scope === 'team' && me.role === 'manager') list = reports.listReports({ userIds: users.getAllUsers(me.companyId).filter(u => u.managerId === me.id).map(u => u.id), status });
-  else list = reports.listReports({ userId: me.id, status });
+  // 'all' is the admin's monitoring view; anyone else asking for it gets their own.
+  const list = scope === 'all' && me.role === 'admin'
+    ? reports.listReports({ companyId: me.companyId, status })
+    : reports.listReports({ userId: me.id, status });
   res.json({ reports: list });
 });
 
@@ -62,15 +61,6 @@ router.post('/', requireAuth, (req, res) => {
     const r = reports.createReport({ companyId: me.companyId, userId: me.id, ...patch, advances: patch.advances || 0 });
     res.status(201).json(_view(r, req));
   } catch (err) { res.status(400).json({ error: err.message }); }
-});
-
-// What is waiting on this person: a manager's direct reports' submitted
-// reports; for finance and admin, everything submitted or approved.
-router.get('/queue', requireAuth, (req, res) => {
-  const me = users.findById(req.user.id);
-  if (me.role === 'finance' || me.role === 'admin') return res.json({ reports: reports.listReports({ companyId: me.companyId, status: 'submitted,approved' }).filter(r => r.userId !== me.id) });
-  if (me.role === 'manager') return res.json({ reports: reports.listReports({ userIds: users.getAllUsers(me.companyId).filter(u => u.managerId === me.id).map(u => u.id), status: 'submitted' }) });
-  res.json({ reports: [] });
 });
 
 router.get('/:id', requireAuth, (req, res) => { const r = _load(req, res); if (r) res.json(_view(r, req)); });
@@ -127,21 +117,19 @@ function _transition(action, fn) {
     catch (err) { _fail(res, err); }
   };
 }
-router.post('/:id/submit',  requireAuth, _transition('submitted', (r, req) => wf.submit(r.id, req.user)));
-router.post('/:id/approve', requireAuth, _transition('approved',  (r, req) => wf.approve(r.id, req.user)));
-router.post('/:id/reject',  requireAuth, _transition('rejected',  (r, req) => wf.reject(r.id, req.user, (req.body || {}).reason)));
-router.post('/:id/claimed', requireAuth, _transition('claimed',   (r, req) => wf.markClaimed(r.id, req.user)));
+router.post('/:id/claimed', requireAuth, _transition('claimed',  (r, req) => wf.markClaimed(r.id, req.user)));
+router.post('/:id/reopen',  requireAuth, _transition('reopened', (r, req) => wf.reopen(r.id, req.user)));
 
-// POST /:id/post — finance sends the approved report to Xero as one draft bill.
+// POST /:id/post — an admin sends a claimed case to Xero as one draft bill.
 // ?dryRun=1 answers with the bill that would be sent and sends nothing.
 router.post('/:id/post', requireAuth, asyncHandler(async (req, res) => {
   const r = _load(req, res); if (!r) return;
-  if (!(req.user.role === 'finance' || req.user.role === 'admin')) return res.status(403).json({ error: 'Only finance can post a report to Xero' });
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Only an admin can post a case to Xero' });
   try {
     const out = await require('../xero/bills').postReport(r.id, req.user, { dryRun: req.query.dryRun === '1' });
     res.json({ ...out, ...(_view(reports.getReport(r.id), req)) });
   } catch (err) {
-    const status = /not connected|approved|already in Xero/i.test(err.message) ? 400 : 502;
+    const status = /not connected|claimed|already in Xero/i.test(err.message) ? 400 : 502;
     res.status(status).json({ error: err.message, ...(_view(reports.getReport(r.id), req)) });
   }
 }));

@@ -129,15 +129,15 @@ describe('routes/receipts — uploading into a case', () => {
     expect(after.totals.unreviewed).toBe(1);
   });
 
-  test('and the case still cannot be submitted until it has been checked', async () => {
+  test('and the case still cannot be claimed until it has been checked', async () => {
     const c = newCase();
     await request(serverFor(app)).post('/api/receipts').set(as(ownerTok))
       .send({ mime: 'image/jpeg', data: jpeg(), reportId: c.id }).expect(201);
     await routes._drain();
-    expect(() => wf.submit(c.id, owner)).toThrow(/not marked reviewed/);
+    expect(() => wf.markClaimed(c.id, owner)).toThrow(/not checked/);
   });
 
-  test('a case belonging to someone else, or already submitted, or absent, refuses the receipt', async () => {
+  test('a case belonging to someone else, or already claimed, or absent, refuses the receipt', async () => {
     const theirs = newCase(other);
     await request(serverFor(app)).post('/api/receipts').set(as(ownerTok))
       .send({ mime: 'image/jpeg', data: jpeg(), reportId: theirs.id }).expect(403);
@@ -146,7 +146,7 @@ describe('routes/receipts — uploading into a case', () => {
     const e = store.createExpense({ companyId: owner.companyId, userId: owner.id, status: 'reviewed', currency: 'SGD', total: 10,
       lines: [{ category: 'Other', amount: 10, baseAmount: 10, fxRate: 1, fxSource: 'base', fxRateDate: '2026-09-01' }] });
     reports.addExpense(mine.id, e.id);
-    wf.submit(mine.id, owner);
+    wf.markClaimed(mine.id, owner);
     await request(serverFor(app)).post('/api/receipts').set(as(ownerTok))
       .send({ mime: 'image/jpeg', data: jpeg(), reportId: mine.id }).expect(409);
 

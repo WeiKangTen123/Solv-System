@@ -15,7 +15,6 @@ const Settings      = lazy(() => import('./pages/Settings'));
 const Reports       = lazy(() => import('./pages/Reports'));
 const ReportDetail  = lazy(() => import('./pages/ReportDetail'));
 const CaseCheck     = lazy(() => import('./pages/CaseCheck'));
-const Approvals     = lazy(() => import('./pages/Approvals'));
 
 const Loading = <div style={{ padding: 32, color: 'var(--text-muted)' }}>Loading…</div>;
 
@@ -43,8 +42,7 @@ function AppRoutes() {
           <Route path="reports" element={<Reports />} />
           <Route path="reports/:id" element={<ReportDetail />} />
           <Route path="reports/:id/check" element={<CaseCheck />} />
-          <Route path="approvals" element={<Private roles={['manager', 'finance', 'admin']}><Approvals /></Private>} />
-          <Route path="settings" element={<Private roles={['admin', 'finance']}><Settings /></Private>} />
+          <Route path="settings" element={<Private roles={['admin']}><Settings /></Private>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

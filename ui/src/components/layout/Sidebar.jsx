@@ -3,12 +3,13 @@ import { useAuth } from '../../context/AuthContext';
 import { useViewMode } from '../../context/ViewModeContext';
 
 const NAV = [
-  { to: '/',         label: 'Home',        desc: 'Add and file expenses', end: true },
-  { to: '/expenses', label: 'My expenses', desc: 'Everything you claimed' },
-  { to: '/reports',  label: 'Reports',     desc: 'File, submit, export' },
+  { to: '/',         label: 'Home',        desc: 'Your cases and where the money goes', end: true },
+  { to: '/expenses', label: 'My receipts', desc: 'Every receipt you recorded' },
+  { to: '/reports',  label: 'Cases',       desc: 'Open, claim, export' },
 ];
-const APPROVER_NAV = [{ to: '/approvals', label: 'Approvals', desc: 'Waiting for your decision' }];
-const ADMIN_NAV = [{ to: '/settings', label: 'Settings', desc: 'Company, staff, reader' }];
+// The admin's seat is for running the company and watching it work, not for
+// approving anything: settings and staff, and every case there is.
+const ADMIN_NAV = [{ to: '/settings', label: 'Settings', desc: 'Company, staff, reader, Xero' }];
 
 function Item({ to, label, desc, end, onClick }) {
   return (
@@ -29,8 +30,7 @@ export default function Sidebar() {
   const { isMobile, mobileDrawerOpen, setMobileDrawerOpen } = useViewMode();
   const navigate = useNavigate();
   const close = () => { if (isMobile) setMobileDrawerOpen(false); };
-  const canAdmin = user?.role === 'admin' || user?.role === 'finance';
-  const canApprove = canAdmin || user?.role === 'manager';
+  const canAdmin = user?.role === 'admin';
 
   return (
     <aside style={{
@@ -48,7 +48,6 @@ export default function Sidebar() {
       </div>
       <nav style={{ flex: 1, padding: '0 8px', overflow: 'auto' }}>
         {NAV.map(i => <Item key={i.to} {...i} onClick={close} />)}
-        {canApprove && APPROVER_NAV.map(i => <Item key={i.to} {...i} onClick={close} />)}
         {canAdmin && ADMIN_NAV.map(i => <Item key={i.to} {...i} onClick={close} />)}
       </nav>
       <div style={{ margin: '8px 8px 12px', padding: '12px 14px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>

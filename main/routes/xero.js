@@ -11,7 +11,7 @@ const logger     = require('../utils/logger');
 // The company's Xero connection: Custom Connection (client id + secret) or
 // the OAuth web-app flow, exactly as in the Xero automation but owned by the
 // company rather than by each user. Finance and admin manage it.
-const FINANCE = requireRole('finance', 'admin');
+const FINANCE = requireRole('admin');   // the name stays: it is the accounting seat, and an admin holds it
 const me = req => users.findById(req.user.id);
 
 function _frontendSettingsUrl() {

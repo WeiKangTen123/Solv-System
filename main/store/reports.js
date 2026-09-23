@@ -12,7 +12,6 @@ function _row(r) {
   return {
     id: r.id, companyId: r.company_id, userId: r.user_id, number: r.number, kind: r.kind, title: r.title, purpose: r.purpose,
     periodFrom: r.period_from, periodTo: r.period_to, destination: r.destination, nights: r.nights, status: r.status,
-    submittedAt: r.submitted_at, approvedBy: r.approved_by, approvedAt: r.approved_at, rejectedReason: r.rejected_reason,
     advances: toDollars(r.advances_cents) ?? 0, claimedAt: r.claimed_at, xeroInvoiceId: r.xero_invoice_id, xeroError: r.xero_error, notes: r.notes,
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
@@ -32,12 +31,12 @@ const COVER = { kind: 'kind', title: 'title', purpose: 'purpose', periodFrom: 'p
 // bundle of receipts that arrived together and is neither.
 const KINDS = new Set(['trip', 'period', 'case']);
 
-const STATE = { status: 'status', submittedAt: 'submitted_at', approvedBy: 'approved_by', approvedAt: 'approved_at', rejectedReason: 'rejected_reason', claimedAt: 'claimed_at', xeroInvoiceId: 'xero_invoice_id', xeroError: 'xero_error' };
+const STATE = { status: 'status', claimedAt: 'claimed_at', xeroInvoiceId: 'xero_invoice_id', xeroError: 'xero_error' };
 
 function createReport({ id = newId(), companyId, userId, kind = 'trip', title = null, purpose = null, periodFrom = null, periodTo = null, destination = null, nights = null, advances = 0, notes = null }) {
   const number = nextNumber(companyId);
   db.prepare(`INSERT INTO expense_reports (id, company_id, user_id, number, kind, title, purpose, period_from, period_to, destination, nights, status, advances_cents, notes, created_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)`)
     .run(id, companyId, userId, number, KINDS.has(kind) ? kind : 'trip', title, purpose, periodFrom, periodTo, destination, nights, toCents(advances) || 0, notes, now());
   addEvent(id, userId, 'created', null);
   return getReport(id);
@@ -88,10 +87,11 @@ function listReports({ companyId, userId, userIds, status } = {}) {
     SELECT r.*, u.name AS owner_name, u.email AS owner_email,
       (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id) AS expense_count,
       (SELECT SUM(l.base_cents) FROM expense_lines l JOIN expenses e ON e.id = l.expense_id WHERE e.report_id = r.id) AS base_cents,
-      (SELECT COUNT(*) FROM expense_lines l JOIN expenses e ON e.id = l.expense_id WHERE e.report_id = r.id AND l.base_cents IS NULL) AS pending_lines
+      (SELECT COUNT(*) FROM expense_lines l JOIN expenses e ON e.id = l.expense_id WHERE e.report_id = r.id AND l.base_cents IS NULL) AS pending_lines,
+      (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id AND e.status != 'reviewed') AS unreviewed
     FROM expense_reports r JOIN users u ON u.id = r.user_id
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY r.created_at DESC`).all(...args);
-  return rows.map(x => ({ ..._row(x), ownerName: x.owner_name, ownerEmail: x.owner_email, expenseCount: x.expense_count, totalBase: toDollars(x.base_cents) ?? 0, pendingRates: x.pending_lines }));
+  return rows.map(x => ({ ..._row(x), ownerName: x.owner_name, ownerEmail: x.owner_email, expenseCount: x.expense_count, totalBase: toDollars(x.base_cents) ?? 0, pendingRates: x.pending_lines, unreviewed: x.unreviewed }));
 }
 
 function updateReport(id, patch) {

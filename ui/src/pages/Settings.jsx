@@ -7,7 +7,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
 
 const POLICIES = [['receipt_date', 'Rate on the receipt date'], ['submission_date', 'Rate on the submission date'], ['monthly_fixed', 'Monthly fixed table (finance enters rates)']];
-const ROLES = ['employee', 'manager', 'finance', 'admin'];
+const ROLES = ['user', 'admin'];
 
 export default function Settings() {
   const { user, refreshUser } = useAuth();
@@ -20,7 +20,7 @@ export default function Settings() {
   const [xeroForm, setXeroForm] = useState({ XERO_CLIENT_ID: '', XERO_CLIENT_SECRET: '', XERO_OAUTH_CLIENT_ID: '', XERO_OAUTH_CLIENT_SECRET: '', DEFAULT_ACCOUNT_CODE: '' });
   const [params, setParams] = useSearchParams();
   const [newRate, setNewRate] = useState({ from: '', date: new Date().toISOString().slice(0, 10), rate: '' });
-  const [newUser, setNewUser] = useState({ email: '', password: '', name: '', role: 'employee', department: '', employeeId: '', managerId: '' });
+  const [newUser, setNewUser] = useState({ email: '', password: '', name: '', role: 'user', department: '', employeeId: '' });
   const [newKey, setNewKey] = useState({ apiKey: '', label: '' });
   const [currencies, setCurrencies] = useState([]);
   const [msg, setMsg] = useState(null);
@@ -58,7 +58,7 @@ export default function Settings() {
   }
   async function addUser(e) {
     e.preventDefault();
-    try { await api.post('/users', { ...newUser, managerId: newUser.managerId || null }); setNewUser({ email: '', password: '', name: '', role: 'employee', department: '', employeeId: '', managerId: '' }); await loadAll(); ok('Staff member added.'); }
+    try { await api.post('/users', newUser); setNewUser({ email: '', password: '', name: '', role: 'user', department: '', employeeId: '' }); await loadAll(); ok('Staff member added.'); }
     catch (err) { fail(err); }
   }
   async function patchUser(id, patch) { try { await api.patch(`/users/${id}`, patch); await loadAll(); } catch (err) { fail(err); } }
@@ -82,7 +82,6 @@ export default function Settings() {
   }
 
   if (!company) return <div style={{ color: 'var(--text-muted)' }}>{msg?.text || 'Loading…'}</div>;
-  const managers = users.filter(u => u.role === 'manager' || u.role === 'admin' || u.role === 'finance');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 900 }}>
@@ -105,16 +104,15 @@ export default function Settings() {
 
       <div className="card">
         <div className="card-title">Staff</div>
-        <div className="card-subtitle">Who can claim, who approves, who pays. A manager approves their direct reports.</div>
+        <div className="card-subtitle">Everyone records and claims their own receipts. An admin also runs these settings and can see every case.</div>
         <div style={{ overflowX: 'auto' }}>
           <table className="data-table">
-            <thead><tr><th>Name</th><th>Email</th><th>Department</th><th>Role</th><th>Manager</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Email</th><th>Department</th><th>Role</th><th></th></tr></thead>
             <tbody>{users.map(u => (
               <tr key={u.id}>
                 <td>{u.name || '—'}{u.employeeId ? <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{u.employeeId}</div> : null}</td>
                 <td>{u.email}</td><td>{u.department || '—'}</td>
                 <td>{isAdmin ? <select className="form-input" style={{ padding: '4px 8px' }} value={u.role} onChange={e => patchUser(u.id, { role: e.target.value })}>{ROLES.map(r => <option key={r}>{r}</option>)}</select> : u.role}</td>
-                <td>{isAdmin ? <select className="form-input" style={{ padding: '4px 8px' }} value={u.managerId || ''} onChange={e => patchUser(u.id, { managerId: e.target.value || null })}><option value="">—</option>{managers.filter(m => m.id !== u.id).map(m => <option key={m.id} value={m.id}>{m.name || m.email}</option>)}</select> : (managers.find(m => m.id === u.managerId)?.name || '—')}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {(isAdmin || u.id === user.id) && <button className="btn btn-ghost btn-sm" onClick={() => setPwFor(u)}>Password</button>}
                   {isAdmin && u.id !== user.id && <button className="btn btn-ghost btn-sm" onClick={() => setConfirm(u)}>Remove</button>}
@@ -130,7 +128,6 @@ export default function Settings() {
             <input className="form-input" placeholder="Department" value={newUser.department} onChange={e => setNewUser({ ...newUser, department: e.target.value })} aria-label="Department" />
             <input className="form-input" placeholder="Employee ID" value={newUser.employeeId} onChange={e => setNewUser({ ...newUser, employeeId: e.target.value })} aria-label="Employee ID" />
             <select className="form-input" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })} aria-label="Role">{ROLES.map(r => <option key={r}>{r}</option>)}</select>
-            <select className="form-input" value={newUser.managerId} onChange={e => setNewUser({ ...newUser, managerId: e.target.value })} aria-label="Manager"><option value="">No manager</option>{managers.map(m => <option key={m.id} value={m.id}>{m.name || m.email}</option>)}</select>
             <button className="btn btn-primary" type="submit">Add staff</button>
           </form>
         )}

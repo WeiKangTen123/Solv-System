@@ -95,12 +95,12 @@ function buildModel(payload) {
 }
 
 function statusLine(report) {
-  if (['approved', 'claimed', 'posted'].includes(report.status)) return `Approved ${fmtDate(report.approvedAt)}`;
-  return report.status.charAt(0).toUpperCase() + report.status.slice(1);
+  if (report.status === 'claimed') return `Claimed ${fmtDate(report.claimedAt)}`;
+  return 'Open';
 }
 
 function expenseReportDoc(payload) {
-  const { company, report, owner = {}, manager = {}, approver = {}, receipts = [], generatedAt = Date.now() } = payload;
+  const { company, report, owner = {}, receipts = [], generatedAt = Date.now() } = payload;
   const m = buildModel(payload);
   const L = latin1;
   const period = report.kind === 'period' ? 'Period' : report.kind === 'case' ? 'Case' : 'Trip';
@@ -111,7 +111,7 @@ function expenseReportDoc(payload) {
     ['Department', owner.department || '—',
       report.kind === 'trip' ? 'Destination' : 'Reference',
       report.kind === 'trip' ? (report.destination || '—') : report.number],
-    ['Manager', manager.name || '—', 'Status', statusLine(report)],
+    ['Reference', report.number, 'Status', statusLine(report)],
   ];
   const head = ['#', 'Date', 'Description', 'Ccy', 'Amount', 'Rate', ...m.columns, `Total ${m.base}`]
     .map((t, i) => ({ text: L(t), style: 'colHead', alignment: i >= 4 ? 'right' : 'left' }));
@@ -146,8 +146,7 @@ function expenseReportDoc(payload) {
     ...(m.rateNotes.length ? m.rateNotes.map(t => ({ text: L(t), style: 'note' })) : [{ text: `All amounts in ${m.base}.`, style: 'note' }]),
     ...m.notes.map(t => ({ text: L(t), style: 'note' })),
     { columns: [
-      { width: '*', stack: [{ text: 'Claimant', style: 'label', margin: [0, 16, 0, 2] }, { text: L(owner.name || owner.email || ''), style: 'value' }, { text: report.submittedAt ? `submitted ${fmtDate(report.submittedAt)}` : 'not yet submitted', style: 'note' }] },
-      { width: '*', stack: [{ text: 'Approved by', style: 'label', margin: [0, 16, 0, 2] }, { text: L(approver.name || approver.email || '—'), style: 'value' }, { text: report.approvedAt ? fmtStamp(report.approvedAt, company.timezone) : 'pending', style: 'note' }] },
+      { width: '*', stack: [{ text: 'Claimant', style: 'label', margin: [0, 16, 0, 2] }, { text: L(owner.name || owner.email || ''), style: 'value' }, { text: report.claimedAt ? `claimed ${fmtStamp(report.claimedAt, company.timezone)}` : 'not yet claimed', style: 'note' }] },
       { width: '*', stack: [{ text: 'For office use', style: 'label', margin: [0, 16, 0, 2] }, { text: [report.claimedAt ? `Claimed ${fmtDate(report.claimedAt)}` : 'Not yet claimed', report.xeroInvoiceId ? `Xero ${report.xeroInvoiceId}` : null, `Receipts: ${receipts.length}${receipts.length ? ` (${receipts.map(r => r.ref).join(', ')})` : ''}`].filter(Boolean).join(' · '), style: 'note' }] },
     ] },
   ];
@@ -189,11 +188,11 @@ function expenseReportCsv(payload) {
 
 function workbookModel(payload) {
   const m = buildModel(payload);
-  const { company, report, owner = {}, manager = {}, approver = {}, lines = [], receipts = [] } = payload;
+  const { company, report, owner = {}, lines = [], receipts = [] } = payload;
   return { sheets: [
-    { name: 'Cover', rows: [['Report', report.number], ['Company', company.name], ['Employee', owner.name || owner.email], ['Employee ID', owner.employeeId], ['Department', owner.department], ['Manager', manager.name],
-      ['Purpose', report.purpose || report.title], ['From', report.periodFrom], ['To', report.periodTo], ['Destination', report.destination], ['Status', report.status], ['Approved by', approver.name],
-      ['Approved at', report.approvedAt], ['Advances', m.advances], [`Total ${m.base}`, m.total], [`Reimbursement ${m.base}`, m.reimbursement]] },
+    { name: 'Cover', rows: [['Case', report.number], ['Company', company.name], ['Employee', owner.name || owner.email], ['Employee ID', owner.employeeId], ['Department', owner.department],
+      ['Purpose', report.purpose || report.title], ['From', report.periodFrom], ['To', report.periodTo], ['Destination', report.destination], ['Status', report.status],
+      ['Claimed at', report.claimedAt], ['Advances', m.advances], [`Total ${m.base}`, m.total], [`Reimbursement ${m.base}`, m.reimbursement]] },
     { name: 'Lines', header: ['#', 'Date', 'Merchant', 'Description', 'Purpose', 'On behalf of', 'Category', 'Currency', 'Amount', 'Rate', 'Rate date', 'Rate source', m.base, 'Receipt'],
       rows: lines.map((l, i) => [i + 1, l.date, l.merchant, l.description, l.purpose, l.onBehalfOf, l.category, l.currency, Number(l.amount), l.fxRate === null || l.fxRate === undefined ? '' : Number(fmtRate(l.fxRate)), l.fxRateDate, l.fxSource, l.baseAmount, l.ref]),
       money: [9, 13], totalLabel: `Total ${m.base}`, total: m.total },

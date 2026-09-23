@@ -34,8 +34,6 @@ async function reportPayload(reportId, { withReceipts = true } = {}) {
   if (!report) return null;
   const company = users.getCompany(report.companyId);
   const owner = users.findById(report.userId) || {};
-  const manager = owner.managerId ? (users.findById(owner.managerId) || {}) : {};
-  const approver = report.approvedBy ? (users.findById(report.approvedBy) || {}) : {};
 
   const refs = new Map(); const receipts = []; const lines = [];
   for (const e of report.expenses) {
@@ -72,7 +70,7 @@ async function reportPayload(reportId, { withReceipts = true } = {}) {
   }
   if (withReceipts) for (const r of receipts) r.pages = await _pagesFor(r.receipt);
   for (const r of receipts) delete r.receipt;
-  return { company, report, owner, manager, approver, lines, receipts, generatedAt: Date.now() };
+  return { company, report, owner, lines, receipts, generatedAt: Date.now() };
 }
 
 module.exports = { reportPayload };

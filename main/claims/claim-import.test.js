@@ -343,7 +343,7 @@ describe('claims/claim-import — everything that arrives together becomes a cas
     const c = reports.getReport(job.result.caseId);
     expect(c.kind).toBe('case');
     expect(c.title).toBe('September receipts');      // the extension is not part of the name
-    expect(c.status).toBe('draft');
+    expect(c.status).toBe('open');
     expect(c.number).toMatch(/^EXP-\d{4}-\d{4}$/);
     expect(c.expenses).toHaveLength(3);
     expect(c.expenses.map(e => e.merchant).sort()).toEqual(['CDG', 'Gojek', 'Grab']);

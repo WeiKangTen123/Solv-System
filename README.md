@@ -1,6 +1,6 @@
 # Solv Expenses
 
-Expense claims for a company that pays its staff back in SGD for receipts in any currency. Staff add receipts (drag-drop, phone camera by QR code, or a ZIP with the claim-form spreadsheet); the reader extracts merchant, date, invoice number, currency, total, tax and category lines, including from scanned multi-page hotel folios; every foreign line is converted at a live exchange rate that is frozen on the line and can be edited with a reason; reviewed expenses are filed into an expense report with a cover; the claimant submits, the manager approves, the claimant marks it claimed once it has gone through, and finance posts it to Xero as a draft bill with the receipts attached; the report exports as PDF, XLSX or CSV with the rate footnote and the receipts appended.
+Expense claims for a company that pays its staff back in SGD for receipts in any currency. Staff add receipts (drag-drop, phone camera by QR code, or a ZIP with the claim-form spreadsheet); the reader extracts merchant, date, invoice number, currency, total, tax and category lines, including from scanned multi-page hotel folios; every foreign line is converted at a live exchange rate that is frozen on the line and can be edited with a reason; receipts are bundled into a case with a cover; the claimant marks the case claimed once they have put it through, and an admin can post it to Xero as a draft bill with the receipts attached; the case exports as PDF, XLSX or CSV with the rate footnote and the receipts appended.
 
 Built on the same stack as `xero-invoice-app-master`, with its proven modules ported (reader, duplicate detection, job queue, phone capture, batch import, Xero connection) and five things added: scanned-PDF rendering, multi-page single-document reads, the exchange-rate service, expense reports with approval, and the exports.
 
@@ -22,22 +22,24 @@ A case is a bundle of receipts that belong together: a trip, a job, a month of f
 
 There are two ways to start one. Drop a zip of receipts and the import creates a case named after the file, reads every receipt in it and files them all in. Or create one by hand and add receipts to it as they happen, by dropping files on the case, by importing a zip into it, or by scanning its QR code and photographing them on a phone, in which case every photograph taken while that session is open lands in that case.
 
-Unlike the bulk filing route, a receipt uploaded into a case joins it before anyone has checked it, which is the point of working case-first. Submitting still refuses until every receipt in the case has been checked and priced.
+Unlike the bulk filing route, a receipt uploaded into a case joins it before anyone has checked it, which is the point of working case-first. Claiming still refuses until every receipt in the case has been checked and priced.
 
 Checking happens in one table at `/reports/:id/check`: a row per receipt, the fields editable in place, the receipt beside the row you are on, and one button to check them all. Anything that cannot be checked says why.
 
 ## Roles and flow
 
+Two roles, because everyone here does the same job.
+
 | Role | Does |
 |---|---|
-| employee | adds receipts, reviews the reader's fields and lines, files them into reports, submits |
-| manager | approves or sends back direct reports' submitted reports |
-| finance | everything a manager can, plus manual exchange rates, Xero, exports for anyone |
-| admin | finance plus staff and company settings |
+| user | adds receipts, checks the reader's fields and lines, keeps them in cases, marks a case claimed, exports it |
+| admin | everything a user does on their own cases, and the company's seat: sees every case, staff, settings, manual exchange rates, the reader key, Xero |
 
-`draft → submitted → approved → claimed → posted`; `submitted/approved → rejected → submitted`. An expense inside a submitted report is locked until the report is sent back.
+There are no managers and nobody approves anything. Solv records claims; it does not route them.
 
-The last step belongs to the claimant, not to finance. Solv records claims; it does not move money, so it cannot know that anybody was paid — what it can know is that the person put an approved claim through, so they are the one who says so. Marking a report claimed marks every receipt in it; a receipt can also be claimed on its own, for a one-off put through outside any report, and claiming one receipt inside a case says nothing about the case.
+`open → claimed`, and back again with **Reopen**. A case is open while receipts go in and claimed once its owner has put it through whatever actually reimburses them; claimed locks it and every receipt in it. Claiming refuses until every receipt in the case has been checked and priced.
+
+The step belongs to the claimant. Solv does not move money, so it cannot know that anybody was paid — what it can know is that the person put the claim through, so they are the one who says so. An admin may claim or reopen anybody's case, to tidy up after someone who has left. A receipt can also be claimed on its own, for a one-off put through outside any case, and claiming one receipt inside a case says nothing about the case.
 
 ## Where things are
 
@@ -65,8 +67,8 @@ main/
   db/            schema.sql, migrations, backups     middleware/  auth, roles, rate limit
   utils/         the generic helpers only: base64, crypto, ids, logger, paths
   scripts/       read-sample.js, fx-sample.js, demo-report.js, smoke-flow.js, jest setup
-ui/src/          pages: Login, Home, MyExpenses, ExpenseReview, Reports, ReportDetail, Approvals,
-                 Settings, Capture, CaseCheck; components/Insights.jsx draws the home dashboard
+ui/src/          pages: Login, Home, MyExpenses, ExpenseReview, Reports, ReportDetail, Settings,
+                 Capture, CaseCheck; components/Insights.jsx draws the home dashboard
 docs/            specs/, plans/, acceptance/ (+ exports/), reference/ — see docs/README.md
 samples/         receipts/ (the two Marriott folios), reads/ (the reader's saved output for each)
 ```
@@ -104,15 +106,15 @@ Inter Tight carries the interface and IBM Plex Mono every figure, so amounts lin
 
 ## Exchange rates, stated
 
-A rate is how much of the base currency one unit of the foreign currency is worth, fetched for the receipt date (company policy; submission-date and monthly-fixed are the alternatives). The European Central Bank's reference rates come first, through Frankfurter, which publishes about thirty currencies with history by date. ExchangeRate-API covers the rest, around 160 in total, but only for today, so a currency the ECB does not publish is priced at the day's rate and the report says so. After both, whatever finance types in.
+A rate is how much of the base currency one unit of the foreign currency is worth, fetched for the receipt date (company policy; submission-date and monthly-fixed are the alternatives). The European Central Bank's reference rates come first, through Frankfurter, which publishes about thirty currencies with history by date. ExchangeRate-API covers the rest, around 160 in total, but only for today, so a currency the ECB does not publish is priced at the day's rate and the report says so. After both, whatever an admin types in.
 
 Thirty-two currencies are offered by name in the claim screen and the rates page, from [main/intake/currencies.js](main/intake/currencies.js). That is a convenience, not a limit: any three-letter code can be typed, and the reader accepts whatever it reads off the receipt.
 
 Below a rate of 0.1 the provider is asked the other way round and the answer inverted. Both providers round to decimal places rather than significant figures, so one Indonesian rupiah comes back as 0.000072 Singapore dollars, which is two figures and puts a ten-million-rupiah hotel bill SGD 2.69 out. Asked as "how many rupiah to the dollar" the same provider gives 13,941.2, and inverting that keeps the precision. Rates are printed to six significant figures and stored with every digit.
 
-Four checks stand between a provider's number and a figure somebody is paid. The two providers are fetched together when both can answer for the day, and a disagreement over 1% is recorded on the rate and shown. A rate more than 10% from the last one known for that pair is refused rather than frozen onto a line: the line says why and finance settles it by entering the rate, which is never blocked. A rate priced after the receipt date, which happens for the currencies with no published history, marks the expense and the report footnote rather than passing quietly. And a sweeper re-prices every quarter of an hour anything left without a rate because a provider was unreachable, skipping locked expenses and anything somebody typed a rate onto.
+Four checks stand between a provider's number and a figure somebody is paid. The two providers are fetched together when both can answer for the day, and a disagreement over 1% is recorded on the rate and shown. A rate more than 10% from the last one known for that pair is refused rather than frozen onto a line: the line says why and an admin settles it by entering the rate, which is never blocked. A rate priced after the receipt date, which happens for the currencies with no published history, marks the expense and the report footnote rather than passing quietly. And a sweeper re-prices every quarter of an hour anything left without a rate because a provider was unreachable, skipping locked expenses and anything somebody typed a rate onto.
 
-The rate, its date, its source and the moment it was fetched are stored on every line and printed on the report. Each line is converted and rounded to the cent; the report total is the sum of the lines. A rate finance or the claimant types in is kept with the person and the reason until someone asks for a refresh.
+The rate, its date, its source and the moment it was fetched are stored on every line and printed on the report. Each line is converted and rounded to the cent; the report total is the sum of the lines. A rate an admin or the claimant types in is kept with the person and the reason until someone asks for a refresh.
 
 ## Not yet
 

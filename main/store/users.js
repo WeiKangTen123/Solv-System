@@ -8,7 +8,10 @@ const DEFAULT_COMPANY  = { name: 'Solv', baseCurrency: 'SGD', fxPolicy: 'receipt
 // The report's column set, in column order. Matches intake/categories.js names
 // so a category on a line is also a column on paper.
 const DEFAULT_REPORT_COLUMNS = ['Air & Transport', 'Lodging', 'Meals', 'Entertainment', 'Phone', 'Fuel/Mileage', 'Other'];
-const ROLES = ['employee', 'manager', 'finance', 'admin'];
+// Two. An admin runs the company's settings and staff and can see every case;
+// a user works their own. Nobody is anybody's manager, because nothing here is
+// routed through one.
+const ROLES = ['user', 'admin'];
 const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
 
 function isOnline(lastSeenAt) { return !!lastSeenAt && Date.now() - new Date(lastSeenAt).getTime() < ONLINE_THRESHOLD_MS; }
@@ -17,7 +20,7 @@ function sanitize(u) {
   if (!u) return null;
   return {
     id: u.id, companyId: u.company_id, email: u.email, role: u.role, name: u.name || null,
-    employeeId: u.employee_id || null, department: u.department || null, managerId: u.manager_id || null,
+    employeeId: u.employee_id || null, department: u.department || null,
     createdAt: u.created_at, lastSeenAt: u.last_seen_at || null, online: isOnline(u.last_seen_at),
   };
 }
@@ -111,9 +114,9 @@ function touchLastSeen(userId) {
 }
 
 // The first account ever creates the company and is its admin. Every later
-// account must name a company (the admin's, in practice) and defaults to
-// employee unless a role is given.
-async function createUser({ email, password, name = null, role = null, companyId = null, employeeId = null, department = null, managerId = null }) {
+// account must name a company (the admin's, in practice) and is a user unless
+// a role is given.
+async function createUser({ email, password, name = null, role = null, companyId = null, employeeId = null, department = null }) {
   if (!email || !password) throw new Error('Email and password are required');
   if (role && !ROLES.includes(role)) throw new Error(`Unknown role "${role}"`);
   const hash = await bcrypt.hash(password, 10);
@@ -125,11 +128,11 @@ async function createUser({ email, password, name = null, role = null, companyId
     const user = {
       id: `${Date.now()}${crypto.randomBytes(4).toString('hex')}`,
       companyId: company.id, email: email.toLowerCase().trim(), password: hash,
-      role: role || (first ? 'admin' : 'employee'), name, employeeId, department, managerId,
+      role: role || (first ? 'admin' : 'user'), name, employeeId, department,
       createdAt: new Date().toISOString(),
     };
-    db.prepare(`INSERT INTO users (id, company_id, email, password, name, employee_id, department, role, manager_id, created_at)
-                VALUES (@id, @companyId, @email, @password, @name, @employeeId, @department, @role, @managerId, @createdAt)`).run(user);
+    db.prepare(`INSERT INTO users (id, company_id, email, password, name, employee_id, department, role, created_at)
+                VALUES (@id, @companyId, @email, @password, @name, @employeeId, @department, @role, @createdAt)`).run(user);
     return findById(user.id);
   });
   return create();
@@ -141,13 +144,9 @@ async function validatePassword(email, password) {
   return (await bcrypt.compare(password, raw.password)) ? sanitize(raw) : null;
 }
 
-const USER_COLUMNS = { name: 'name', employeeId: 'employee_id', department: 'department', managerId: 'manager_id', role: 'role' };
+const USER_COLUMNS = { name: 'name', employeeId: 'employee_id', department: 'department', role: 'role' };
 function updateUser(id, patch) {
   if (patch.role !== undefined && !ROLES.includes(patch.role)) throw new Error(`Unknown role "${patch.role}"`);
-  if (patch.managerId !== undefined && patch.managerId !== null && patch.managerId !== '') {
-    if (patch.managerId === id) throw new Error('A user cannot manage themselves');
-    if (!findById(patch.managerId)) throw new Error('Manager not found');
-  }
   const sets = [], args = [];
   for (const [k, col] of Object.entries(USER_COLUMNS)) {
     if (patch[k] === undefined) continue;
@@ -167,12 +166,6 @@ function getAllUsers(companyId) {
 }
 function deleteUser(id) { db.prepare('DELETE FROM users WHERE id = ?').run(id); }
 function readUsers() { return db.prepare('SELECT * FROM users ORDER BY created_at').all().map(sanitize); }
-
-// Does `userId` report to `managerId`, directly? One level, by decision.
-function reportsTo(userId, managerId) {
-  const u = findById(userId);
-  return !!u && !!managerId && u.managerId === managerId;
-}
 
 // ── Reader keys (company-wide) ──────────────────────────────────────────────
 function getGeminiKeys(companyId) {
@@ -205,7 +198,7 @@ function ensureUserDirectories() { /* nothing per user to provision yet; kept fo
 module.exports = {
   ROLES, DEFAULT_TIMEZONE, DEFAULT_REPORT_COLUMNS,
   hasUsers, findById, findByEmail, createUser, validatePassword, updateUser, setPassword, getAllUsers, deleteUser, readUsers,
-  reportsTo, touchLastSeen, isOnline, sanitize,
+  touchLastSeen, isOnline, sanitize,
   getCompany, createCompany, updateCompany, getCompanyConfig, saveCompanyConfig, ENCRYPTED_COLUMNS,
   getGeminiKeys, getGeminiKeysForUser, addGeminiKey, removeGeminiKey, getUserDefaults, ensureUserDirectories,
 };
