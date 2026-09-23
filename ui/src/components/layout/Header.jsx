@@ -4,11 +4,11 @@ import { useLocation, Link } from 'react-router-dom';
 
 function getBreadcrumbs(pathname) {
   if (pathname === '/')          return [{ label: 'Home' }];
-  if (pathname === '/expenses')  return [{ label: 'My expenses' }];
-  if (pathname.startsWith('/expenses/')) return [{ label: 'My expenses', to: '/expenses' }, { label: 'Review' }];
-  if (pathname === '/reports')   return [{ label: 'Reports' }];
-  if (pathname.startsWith('/reports/')) return [{ label: 'Reports', to: '/reports' }, { label: 'Report' }];
-  if (pathname === '/approvals') return [{ label: 'Approvals' }];
+  if (pathname === '/expenses')  return [{ label: 'My receipts' }];
+  if (pathname.startsWith('/expenses/')) return [{ label: 'My receipts', to: '/expenses' }, { label: 'Check' }];
+  if (pathname === '/reports')   return [{ label: 'Cases' }];
+  if (/^\/reports\/[^/]+\/check$/.test(pathname)) return [{ label: 'Cases', to: '/reports' }, { label: 'Case', to: pathname.replace(/\/check$/, '') }, { label: 'Check all' }];
+  if (pathname.startsWith('/reports/')) return [{ label: 'Cases', to: '/reports' }, { label: 'Case' }];
   if (pathname === '/settings')  return [{ label: 'Settings' }];
   return [];
 }

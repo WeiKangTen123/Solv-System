@@ -200,7 +200,7 @@ export default function ExpenseReview() {
               ))}
             </div>
             <div className="form-group">
-              <label className="form-label" htmlFor="f-report">Report</label>
+              <label className="form-label" htmlFor="f-report">Case</label>
               <select id="f-report" className="form-input" value={form.reportId || ''} onChange={e => set('reportId', e.target.value)} disabled={locked}>
                 <option value="">Not filed yet</option>
                 {drafts.map(r => <option key={r.id} value={r.id}>{r.number} {r.title || ''}</option>)}
@@ -220,7 +220,7 @@ export default function ExpenseReview() {
                     <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{exp.currency} → {baseCurrency} {fmtRate(fx.fxRate)}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
                       {fx.fxSource === 'manual'
-                        ? `Entered by ${fx.fxOverrideBy || 'finance'}${fx.fxOverrideReason ? `: ${fx.fxOverrideReason}` : ''}`
+                        ? `Entered by ${fx.fxOverrideBy || 'an admin'}${fx.fxOverrideReason ? `: ${fx.fxOverrideReason}` : ''}`
                         : `${SOURCE_LABEL[fx.fxSource] || fx.fxSource} for ${fx.fxRateDate}${fx.fxFetchedAt ? ` · fetched ${formatDateTime(fx.fxFetchedAt, user?.timezone)}` : ''}`}
                     </div>
                     <div style={{ fontSize: 13, marginTop: 8, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>= {fmtMoney(exp.baseTotal, baseCurrency)}</div>

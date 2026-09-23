@@ -4,8 +4,8 @@ import { fmtMoney, fmtMoneyShort } from '../utils/format';
 
 // Where the money goes. Every figure comes from GET /api/dashboard/summary,
 // which aggregates in SQL and scopes to what the caller may see — their own
-// expenses, a manager's team, the company for finance and admin. Nothing here
-// decides who sees what; it only draws what it was given.
+// expenses, or the company for an admin. Nothing here decides who sees what;
+// it only draws what it was given.
 //
 // The drawings are hand-written SVG and CSS bars. The content security policy
 // allows scripts from this origin only, so a charting library would have to be
