@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
 
-const POLICIES = [['receipt_date', 'Rate on the receipt date'], ['submission_date', 'Rate on the submission date'], ['monthly_fixed', 'Monthly fixed table (finance enters rates)']];
+const POLICIES = [['receipt_date', 'Rate on the receipt date'], ['submission_date', 'Rate on the submission date'], ['monthly_fixed', 'Monthly fixed table (an admin enters rates)']];
 const ROLES = ['user', 'admin'];
 
 export default function Settings() {

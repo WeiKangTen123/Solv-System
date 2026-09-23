@@ -5,9 +5,9 @@ import { useAuth } from '../context/AuthContext';
 import StatusBadge from '../components/StatusBadge';
 import { fmtMoney } from '../utils/format';
 
-// A report is a trip or a period: a cover, the expenses filed under it, and a
-// state. The list is the claimant's own; managers can see their team's,
-// finance everyone's.
+// A case is a bundle of receipts claimed as one thing: a cover, the receipts
+// filed under it, open or claimed. The list is the claimant's own; an admin can
+// see everyone's.
 // A case is the default: it is the one that asks nothing beyond a name, and it
 // is what a bundle of receipts is. A trip wants a destination, a period wants
 // its month.
