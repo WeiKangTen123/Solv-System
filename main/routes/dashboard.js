@@ -32,7 +32,10 @@ router.get('/health', health);
 router.get('/summary', requireAuth, (req, res) => {
   const me = users.findById(req.user.id);
   if (!me) return res.status(401).json({ error: 'Not signed in' });
-  res.json(summary(me, users.getAllUsers(me.companyId)));
+  // The company's own day decides which month is "this month": receipt dates
+  // are written where the claimant is, not in UTC.
+  const company = users.getCompany(me.companyId);
+  res.json(summary(me, users.getAllUsers(me.companyId), { timezone: company?.timezone || users.DEFAULT_TIMEZONE }));
 });
 
 module.exports        = router;

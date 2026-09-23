@@ -71,10 +71,14 @@ function Share({ rows, base, empty }) {
 
 const SCOPE = { own: 'your expenses', team: 'you and your team', company: 'the whole company' };
 
-export default function Insights() {
+// `refresh` changes when something on the page has actually altered the
+// figures. Deliberately not tied to the home page's polling: these are SQL
+// aggregates over the company, and re-running them every twenty seconds to
+// find nothing changed is a cost with no reader.
+export default function Insights({ refresh = 0 }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
-  useEffect(() => { api.get('/dashboard/summary').then(setD).catch(e => setErr(e.message)); }, []);
+  useEffect(() => { api.get('/dashboard/summary').then(setD).catch(e => setErr(e.message)); }, [refresh]);
 
   if (err) return <div className="card"><div className="card-title">Where the money goes</div><div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Could not load the figures: {err}</div></div>;
   if (!d) return null;

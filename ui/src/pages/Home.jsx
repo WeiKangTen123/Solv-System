@@ -41,6 +41,10 @@ export default function Home() {
   const [queue, setQueue] = useState([]);
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(null);
+  // Bumped only when something changed the figures, which is what Insights
+  // re-fetches on. Marking a claim used to leave the dashboard below showing
+  // the total from before the click.
+  const [changed, setChanged] = useState(0);
 
   const load = useCallback(() => Promise.all([
     api.get('/expenses').then(d => setExpenses(d.expenses)),
@@ -87,7 +91,7 @@ export default function Home() {
 
   async function act(key, fn, done) {
     setBusy(key);
-    try { await fn(); await load(); setMsg({ tone: 'success', text: done }); }
+    try { await fn(); await load(); setChanged(n => n + 1); setMsg({ tone: 'success', text: done }); }
     catch (e) { setMsg({ tone: 'error', text: e.message }); }
     finally { setBusy(null); }
   }
@@ -100,6 +104,7 @@ export default function Home() {
       const r = await api.post(`/reports/${reportId}/expenses`, { expenseIds: [expenseId] });
       await load();
       const why = (r.skipped || []).find(s => s.id === expenseId);
+      if (!why) setChanged(n => n + 1);
       setMsg(why ? { tone: 'warning', text: `Not filed: ${why.why}.` } : { tone: 'success', text: 'Filed into the report.' });
     } catch (e) { setMsg({ tone: 'error', text: e.message }); }
   }
@@ -239,7 +244,7 @@ export default function Home() {
         </div>
       </div>
 
-      <Insights />
+      <Insights refresh={changed} />
 
       <div className="card">
         <div className="card-title">Needs your check ({needing.length})</div>
