@@ -7,12 +7,12 @@ import { useAuth } from '../../context/AuthContext';
 // which bounced people back to Home with no explanation.
 const ALL = {
   home:      { to: '/',          label: 'Home',      icon: '▦', end: true },
-  expenses:  { to: '/expenses',  label: 'Receipts',  icon: '◧' },
   reports:   { to: '/reports',   label: 'Cases',     icon: '▤' },
+  expenses:  { to: '/expenses',  label: 'Receipts',  icon: '◧' },
   settings:  { to: '/settings',  label: 'Settings',  icon: '◈' },
 };
 function itemsFor(role) {
-  return role === 'admin' ? [ALL.home, ALL.expenses, ALL.reports, ALL.settings] : [ALL.home, ALL.expenses, ALL.reports];
+  return role === 'admin' ? [ALL.home, ALL.reports, ALL.expenses, ALL.settings] : [ALL.home, ALL.reports, ALL.expenses];
 }
 
 export default function BottomNav() {

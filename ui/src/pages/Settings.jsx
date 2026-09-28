@@ -20,7 +20,6 @@ export default function Settings() {
   const [xeroForm, setXeroForm] = useState({ XERO_CLIENT_ID: '', XERO_CLIENT_SECRET: '', XERO_OAUTH_CLIENT_ID: '', XERO_OAUTH_CLIENT_SECRET: '', DEFAULT_ACCOUNT_CODE: '' });
   const [params, setParams] = useSearchParams();
   const [newRate, setNewRate] = useState({ from: '', date: new Date().toISOString().slice(0, 10), rate: '' });
-  const [newUser, setNewUser] = useState({ email: '', password: '', name: '', role: 'user', department: '', employeeId: '' });
   const [newKey, setNewKey] = useState({ apiKey: '', label: '' });
   const [currencies, setCurrencies] = useState([]);
   const [msg, setMsg] = useState(null);
@@ -56,11 +55,6 @@ export default function Settings() {
       await loadAll(); await refreshUser(); ok('Company settings saved.');
     } catch (err) { fail(err); }
   }
-  async function addUser(e) {
-    e.preventDefault();
-    try { await api.post('/users', newUser); setNewUser({ email: '', password: '', name: '', role: 'user', department: '', employeeId: '' }); await loadAll(); ok('Staff member added.'); }
-    catch (err) { fail(err); }
-  }
   async function patchUser(id, patch) { try { await api.patch(`/users/${id}`, patch); await loadAll(); } catch (err) { fail(err); } }
   async function addRate(e) {
     e.preventDefault();
@@ -85,7 +79,7 @@ export default function Settings() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 900 }}>
-      <div className="page-header"><h1>Settings</h1><p>Company, staff and the receipt reader.</p></div>
+      <div className="page-header"><h1>Settings</h1><p>Company, users & usage monitoring, and receipt reader.</p></div>
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
 
       <form className="card" onSubmit={saveCompany}>
@@ -103,34 +97,130 @@ export default function Settings() {
       </form>
 
       <div className="card">
-        <div className="card-title">Staff</div>
-        <div className="card-subtitle">Everyone records and claims their own receipts. An admin also runs these settings and can see every case.</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <div className="card-title">Users & Usage Monitoring</div>
+            <div className="card-subtitle">Real-time overview of user activity, receipts uploaded, and expense claims.</div>
+          </div>
+        </div>
+
+        {/* Aggregated Usage Overview Metrics */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+          gap: 12,
+          marginTop: 14,
+          marginBottom: 16,
+        }}>
+          <div style={{ background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Accounts</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', marginTop: 2 }}>{users.length}</div>
+          </div>
+          <div style={{ background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Online Now</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--success, #10b981)', marginTop: 2 }}>
+              {users.filter(u => u.online).length}
+            </div>
+          </div>
+          <div style={{ background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Receipts Recorded</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', marginTop: 2 }}>
+              {users.reduce((acc, u) => acc + (u.receiptCount || 0), 0)}
+            </div>
+          </div>
+          <div style={{ background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Cases Claimed</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', marginTop: 2 }}>
+              {users.reduce((acc, u) => acc + (u.claimedCaseCount || 0), 0)}
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400 }}> / {users.reduce((acc, u) => acc + (u.caseCount || 0), 0)}</span>
+            </div>
+          </div>
+          <div style={{ background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Claimed</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--accent, #6366f1)', marginTop: 2 }}>
+              {company.baseCurrency} {(users.reduce((acc, u) => acc + (u.claimedCents || 0), 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+        </div>
+
         <div style={{ overflowX: 'auto' }}>
           <table className="data-table">
-            <thead><tr><th>Name</th><th>Email</th><th>Department</th><th>Role</th><th></th></tr></thead>
-            <tbody>{users.map(u => (
-              <tr key={u.id}>
-                <td>{u.name || '—'}{u.employeeId ? <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{u.employeeId}</div> : null}</td>
-                <td>{u.email}</td><td>{u.department || '—'}</td>
-                <td>{isAdmin ? <select className="form-input" style={{ padding: '4px 8px' }} value={u.role} onChange={e => patchUser(u.id, { role: e.target.value })}>{ROLES.map(r => <option key={r}>{r}</option>)}</select> : u.role}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>
-                  {(isAdmin || u.id === user.id) && <button className="btn btn-ghost btn-sm" onClick={() => setPwFor(u)}>Password</button>}
-                  {isAdmin && u.id !== user.id && <button className="btn btn-ghost btn-sm" onClick={() => setConfirm(u)}>Remove</button>}
-                </td>
-              </tr>))}</tbody>
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Role</th>
+                <th style={{ textAlign: 'center' }}>Receipts</th>
+                <th style={{ textAlign: 'center' }}>Cases (Claimed / Total)</th>
+                <th style={{ textAlign: 'right' }}>Total Claimed</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map(u => (
+                <tr key={u.id}>
+                  <td>
+                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{u.email}</div>
+                    {u.name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{u.name}</div>}
+                  </td>
+                  <td>
+                    {isAdmin ? (
+                      <select
+                        className="form-input"
+                        style={{ padding: '3px 8px', fontSize: 12, width: 'auto' }}
+                        value={u.role}
+                        onChange={e => patchUser(u.id, { role: e.target.value })}
+                        disabled={u.id === user.id}
+                      >
+                        {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                    ) : (
+                      <span className={`badge badge-${u.role === 'admin' ? 'primary' : 'muted'}`} style={{ textTransform: 'capitalize' }}>
+                        {u.role}
+                      </span>
+                    )}
+                  </td>
+                  <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+                    {u.receiptCount || 0}
+                  </td>
+                  <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+                    <span style={{ fontWeight: 600, color: (u.claimedCaseCount || 0) > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                      {u.claimedCaseCount || 0}
+                    </span>
+                    <span style={{ color: 'var(--text-muted)' }}> / {u.caseCount || 0}</span>
+                  </td>
+                  <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>
+                    {company.baseCurrency} {((u.claimedCents || 0) / 100).toFixed(2)}
+                  </td>
+                  <td>
+                    {u.online ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: 'var(--success, #10b981)', fontWeight: 600 }}>
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--success, #10b981)' }} />
+                        Online
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                        {u.lastSeenAt ? `Seen ${new Date(u.lastSeenAt).toLocaleDateString()}` : 'Offline'}
+                      </span>
+                    )}
+                  </td>
+                  <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    {(isAdmin || u.id === user.id) && (
+                      <button className="btn btn-ghost btn-sm" onClick={() => setPwFor(u)} title="Set or reset password">
+                        Password
+                      </button>
+                    )}
+                    {isAdmin && u.id !== user.id && (
+                      <button className="btn btn-ghost btn-sm" onClick={() => setConfirm(u)} style={{ color: 'var(--danger, #ef4444)' }} title="Remove user account">
+                        Remove
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
           </table>
         </div>
-        {isAdmin && (
-          <form onSubmit={addUser} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, marginTop: 14, alignItems: 'end' }}>
-            <input className="form-input" placeholder="Name" value={newUser.name} onChange={e => setNewUser({ ...newUser, name: e.target.value })} aria-label="Name" />
-            <input className="form-input" placeholder="Email" type="email" required value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} aria-label="Email" />
-            <input className="form-input" placeholder="Password (8+)" type="password" required minLength={8} value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} aria-label="Password" />
-            <input className="form-input" placeholder="Department" value={newUser.department} onChange={e => setNewUser({ ...newUser, department: e.target.value })} aria-label="Department" />
-            <input className="form-input" placeholder="Employee ID" value={newUser.employeeId} onChange={e => setNewUser({ ...newUser, employeeId: e.target.value })} aria-label="Employee ID" />
-            <select className="form-input" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })} aria-label="Role">{ROLES.map(r => <option key={r}>{r}</option>)}</select>
-            <button className="btn btn-primary" type="submit">Add staff</button>
-          </form>
-        )}
       </div>
 
       {xero && (
