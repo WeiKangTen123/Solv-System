@@ -29,7 +29,7 @@ router.post('/register', authLimiter, async (req, res) => {
   try {
     const { email, password, name } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
-    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
     if (!registrationOpen()) {
       return res.status(403).json({ error: 'Registration is closed. Ask your administrator to add you.' });
     }
