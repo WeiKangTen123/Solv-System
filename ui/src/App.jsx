@@ -42,7 +42,7 @@ function AppRoutes() {
           <Route path="reports" element={<Reports />} />
           <Route path="reports/:id" element={<ReportDetail />} />
           <Route path="reports/:id/check" element={<CaseCheck />} />
-          <Route path="settings" element={<Private roles={['admin']}><Settings /></Private>} />
+          <Route path="settings" element={<Settings />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

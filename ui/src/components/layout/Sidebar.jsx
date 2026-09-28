@@ -6,10 +6,8 @@ const NAV = [
   { to: '/',         label: 'Home',        desc: 'Your cases and where the money goes', end: true },
   { to: '/reports',  label: 'Cases',       desc: 'Open, claim, export' },
   { to: '/expenses', label: 'My receipts', desc: 'Every receipt you recorded' },
+  { to: '/settings', label: 'Settings',    desc: 'Profile, preferences & controls' },
 ];
-// The admin's seat is for running the company and watching it work, not for
-// approving anything: settings and staff, and every case there is.
-const ADMIN_NAV = [{ to: '/settings', label: 'Settings', desc: 'Company, users & usage, reader, Xero' }];
 
 function Item({ to, label, desc, end, onClick }) {
   return (
@@ -48,7 +46,6 @@ export default function Sidebar() {
       </div>
       <nav style={{ flex: 1, padding: '0 8px', overflow: 'auto' }}>
         {NAV.map(i => <Item key={i.to} {...i} onClick={close} />)}
-        {canAdmin && ADMIN_NAV.map(i => <Item key={i.to} {...i} onClick={close} />)}
       </nav>
       <div style={{ margin: '8px 8px 12px', padding: '12px 14px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.name || user?.email}</div>

@@ -5,21 +5,18 @@ import { useAuth } from '../../context/AuthContext';
 // The same three tabs for everyone; an admin gets Settings as a fourth. It
 // used to be shown to everyone while the route behind it refused most of them,
 // which bounced people back to Home with no explanation.
-const ALL = {
-  home:      { to: '/',          label: 'Home',      icon: '▦', end: true },
-  reports:   { to: '/reports',   label: 'Cases',     icon: '▤' },
-  expenses:  { to: '/expenses',  label: 'Receipts',  icon: '◧' },
-  settings:  { to: '/settings',  label: 'Settings',  icon: '◈' },
-};
-function itemsFor(role) {
-  return role === 'admin' ? [ALL.home, ALL.reports, ALL.expenses, ALL.settings] : [ALL.home, ALL.reports, ALL.expenses];
-}
+const ALL = [
+  { to: '/',         label: 'Home',      icon: '▦', end: true },
+  { to: '/reports',  label: 'Cases',     icon: '▤' },
+  { to: '/expenses', label: 'Receipts',  icon: '◧' },
+  { to: '/settings', label: 'Settings',  icon: '◈' },
+];
 
 export default function BottomNav() {
   const { theme } = useTheme();
   const { user } = useAuth();
   const isDark = theme === 'dark';
-  const NAV_ITEMS = itemsFor(user?.role);
+  const NAV_ITEMS = ALL;
   return (
     <nav style={{
       position: 'fixed', bottom: 0, left: 0, right: 0, height: 'var(--bottom-nav-total)',
