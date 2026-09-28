@@ -10,6 +10,9 @@ async function main() {
   }
   console.log('Company found:', company.name, `(${company.id})`);
 
+  // Clean up any temporary e2e test users
+  db.prepare('DELETE FROM users WHERE email LIKE ?').run('tester_e2e_%');
+
   const demoEmail = 'demo@flovon.ai';
   const existing = users.findByEmail(demoEmail);
 
