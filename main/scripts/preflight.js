@@ -166,8 +166,14 @@ check('disk space', () => {
   // execFileSync, not execSync: the path is interpolated into no shell at all.
   // Quoting it with JSON.stringify produced double quotes, inside which a
   // DATA_DIR holding $(...) was executed by the shell rather than measured.
-  const out = require('child_process').execFileSync('df', ['-Pk', DATA_DIR], { encoding: 'utf8' }).trim().split('\n').pop().split(/\s+/);
-  const freeGb = Number(out[3]) / 1048576;
+  let freeGb;
+  if (typeof fs.statfsSync === 'function') {
+    const stats = fs.statfsSync(DATA_DIR);
+    freeGb = (Number(stats.bsize) * Number(stats.bavail)) / (1024 * 1024 * 1024);
+  } else {
+    const out = require('child_process').execFileSync('df', ['-Pk', DATA_DIR], { encoding: 'utf8' }).trim().split('\n').pop().split(/\s+/);
+    freeGb = Number(out[3]) / 1048576;
+  }
   const line = `${freeGb.toFixed(1)} GB free on the volume holding DATA_DIR`;
   if (freeGb < 1) return fail('disk space', line);
   if (freeGb < 5) return warn('disk space', line);
