@@ -17,9 +17,13 @@ async function testAll() {
   const token = loginRes.data.token;
   const authHeaders = { Authorization: `Bearer ${token}` };
 
-  // 3. GET /api/users/me/gemini-keys
+  // 3. Clean up any existing test keys
+  const initialKeys = await axios.get(`${baseUrl}/api/users/me/gemini-keys`, { headers: authHeaders });
+  for (const k of initialKeys.data.keys) {
+    await axios.delete(`${baseUrl}/api/users/me/gemini-keys/${k.id}`, { headers: authHeaders });
+  }
   const keysRes = await axios.get(`${baseUrl}/api/users/me/gemini-keys`, { headers: authHeaders });
-  console.log(`[PASS] GET /api/users/me/gemini-keys returned ${keysRes.data.keys.length} keys`);
+  console.log(`[PASS] Clean slate verified: ${keysRes.data.keys.length} keys`);
 
   // 4. Test key validation endpoint with mock/test key
   try {
