@@ -185,6 +185,27 @@ function getAllUsers(companyId) {
     totalCents: u.total_cents || 0,
   }));
 }
+
+function getUserMetrics(userId) {
+  const row = db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM receipts r WHERE r.user_id = ?) AS receipt_count,
+      (SELECT COUNT(*) FROM expenses e WHERE e.user_id = ?) AS expense_count,
+      (SELECT COUNT(*) FROM expense_reports rep WHERE rep.user_id = ?) AS case_count,
+      (SELECT COUNT(*) FROM expense_reports rep WHERE rep.user_id = ? AND rep.status = 'claimed') AS claimed_case_count,
+      (SELECT COALESCE(SUM(l.base_cents), 0) FROM expenses e JOIN expense_lines l ON l.expense_id = e.id WHERE e.user_id = ? AND e.claimed_at IS NOT NULL) AS claimed_cents,
+      (SELECT COALESCE(SUM(l.base_cents), 0) FROM expenses e JOIN expense_lines l ON l.expense_id = e.id WHERE e.user_id = ?) AS total_cents
+  `).get(userId, userId, userId, userId, userId, userId);
+  return {
+    receiptCount: row ? row.receipt_count : 0,
+    expenseCount: row ? row.expense_count : 0,
+    caseCount: row ? row.case_count : 0,
+    claimedCaseCount: row ? row.claimed_case_count : 0,
+    claimedCents: row ? row.claimed_cents : 0,
+    totalCents: row ? row.total_cents : 0,
+  };
+}
+
 function deleteUser(id) { db.prepare('DELETE FROM users WHERE id = ?').run(id); }
 function readUsers() { return db.prepare('SELECT * FROM users ORDER BY created_at').all().map(sanitize); }
 
@@ -218,7 +239,7 @@ function ensureUserDirectories() { /* nothing per user to provision yet; kept fo
 
 module.exports = {
   ROLES, DEFAULT_TIMEZONE, DEFAULT_REPORT_COLUMNS,
-  hasUsers, findById, findByEmail, createUser, validatePassword, updateUser, setPassword, getAllUsers, deleteUser, readUsers,
+  hasUsers, findById, findByEmail, createUser, validatePassword, updateUser, setPassword, getAllUsers, getUserMetrics, deleteUser, readUsers,
   touchLastSeen, isOnline, sanitize,
   getCompany, createCompany, updateCompany, getCompanyConfig, saveCompanyConfig, ENCRYPTED_COLUMNS,
   getGeminiKeys, getGeminiKeysForUser, addGeminiKey, removeGeminiKey, getUserDefaults, ensureUserDirectories,

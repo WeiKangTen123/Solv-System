@@ -63,7 +63,8 @@ router.post('/logout', requireAuth, (_req, res) => res.json({ ok: true }));
 router.get('/me', requireAuth, (req, res) => {
   const user = users.findById(req.user.id);
   const company = users.getCompany(user.companyId);
-  res.json({ user: { ...user, timezone: company.timezone, baseCurrency: company.baseCurrency, companyName: company.name } });
+  const metrics = users.getUserMetrics(req.user.id);
+  res.json({ user: { ...user, ...metrics, timezone: company.timezone, baseCurrency: company.baseCurrency, companyName: company.name } });
 });
 
 module.exports = router;
