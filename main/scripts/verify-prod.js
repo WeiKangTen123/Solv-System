@@ -39,19 +39,20 @@ async function testAll() {
     { apiKey: 'AIzaSyTestKeyEncryptedStorage987654321', label: 'Test Production Key' },
     { headers: authHeaders }
   );
-  console.log(`[PASS] POST /api/users/me/gemini-keys created key ID: ${addRes.data.id}`);
+  const createdId = Number(addRes.data.id);
+  console.log(`[PASS] POST /api/users/me/gemini-keys created key ID: ${createdId}`);
 
   // 6. Verify key is masked
   const verifyKeysRes = await axios.get(`${baseUrl}/api/users/me/gemini-keys`, { headers: authHeaders });
-  const savedKey = verifyKeysRes.data.keys.find(k => k.id === addRes.data.id);
+  const savedKey = verifyKeysRes.data.keys.find(k => k.id === createdId);
   if (!savedKey || !savedKey.keyMasked.includes('••••')) {
     throw new Error('Key was not masked properly in output: ' + JSON.stringify(savedKey));
   }
   console.log(`[PASS] Key masked properly: ${savedKey.keyMasked} (label: ${savedKey.label})`);
 
   // 7. Delete the test key
-  const delRes = await axios.delete(`${baseUrl}/api/users/me/gemini-keys/${addRes.data.id}`, { headers: authHeaders });
-  console.log(`[PASS] DELETE /api/users/me/gemini-keys/${addRes.data.id} returned success`);
+  const delRes = await axios.delete(`${baseUrl}/api/users/me/gemini-keys/${createdId}`, { headers: authHeaders });
+  console.log(`[PASS] DELETE /api/users/me/gemini-keys/${createdId} returned success`);
 
   // 8. Verify other running apps (ZERO TOUCH constraint)
   const xeroRes = await axios.get('http://127.0.0.1:3000');

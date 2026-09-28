@@ -23,10 +23,9 @@ router.get('/me/gemini-keys', requireAuth, (req, res) => {
 router.post('/me/gemini-keys', requireAuth, async (req, res) => {
   try {
     const { apiKey, label } = req.body || {};
-    if (!apiKey || !apiKey.trim()) return res.status(400).json({ error: 'API key is required' });
-    const id = users.addUserGeminiKey(req.user.id, apiKey.trim(), label ? label.trim() : null);
+    const result = users.addUserGeminiKey(req.user.id, apiKey.trim(), label ? label.trim() : null);
     logger.info('User added personal Gemini key', { userId: req.user.id, email: req.user.email });
-    res.status(201).json({ success: true, id });
+    res.status(201).json({ success: true, id: result.id });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
