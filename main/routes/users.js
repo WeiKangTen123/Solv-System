@@ -5,6 +5,56 @@ const { requireAuth } = require('../middleware/auth-middleware');
 const { requireRole } = require('../middleware/roles');
 const logger  = require('../utils/logger');
 const asyncHandler = require('../middleware/async-handler');
+const { testGeminiKey } = require('../llm/gemini-client');
+
+// Personal Gemini keys for any signed-in user (user or admin)
+router.get('/me/gemini-keys', requireAuth, (req, res) => {
+  const list = users.getUserGeminiKeys(req.user.id);
+  res.json({
+    keys: list.map(k => ({
+      id: k.id,
+      label: k.label,
+      createdAt: k.createdAt,
+      keyMasked: k.apiKey.length > 8 ? `${k.apiKey.slice(0, 4)}••••••••••••••••${k.apiKey.slice(-4)}` : '••••',
+    }))
+  });
+});
+
+router.post('/me/gemini-keys', requireAuth, async (req, res) => {
+  try {
+    const { apiKey, label } = req.body || {};
+    if (!apiKey || !apiKey.trim()) return res.status(400).json({ error: 'API key is required' });
+    const id = users.addUserGeminiKey(req.user.id, apiKey.trim(), label ? label.trim() : null);
+    logger.info('User added personal Gemini key', { userId: req.user.id, email: req.user.email });
+    res.status(201).json({ success: true, id });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/me/gemini-keys/test', requireAuth, async (req, res) => {
+  try {
+    const { apiKey, keyId } = req.body || {};
+    let keyToTest = apiKey;
+    if (!keyToTest && keyId) {
+      const userKeys = users.getUserGeminiKeys(req.user.id);
+      const found = userKeys.find(k => k.id === Number(keyId));
+      if (found) keyToTest = found.apiKey;
+    }
+    if (!keyToTest) return res.status(400).json({ error: 'No API key provided to test' });
+    const result = await testGeminiKey(keyToTest);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.delete('/me/gemini-keys/:id', requireAuth, (req, res) => {
+  const success = users.removeUserGeminiKey(req.user.id, Number(req.params.id));
+  if (!success) return res.status(404).json({ error: 'Key not found' });
+  logger.info('User removed personal Gemini key', { userId: req.user.id, keyId: req.params.id });
+  res.json({ success: true });
+});
 
 // Staff directory. Everyone signed in may list names (to pick a colleague for
 // "paid on behalf of"); only an admin sees the full rows, creates, changes

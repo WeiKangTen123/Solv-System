@@ -47,6 +47,15 @@ CREATE TABLE IF NOT EXISTS company_gemini_keys (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS user_gemini_keys (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  api_key    TEXT NOT NULL,
+  label      TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_user_gemini_keys ON user_gemini_keys(user_id);
+
 CREATE TABLE IF NOT EXISTS xero_tenants (
   company_id   TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   tenant_id    TEXT NOT NULL,
