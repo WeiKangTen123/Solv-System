@@ -209,6 +209,23 @@ function getUserMetrics(userId) {
 function deleteUser(id) { db.prepare('DELETE FROM users WHERE id = ?').run(id); }
 function readUsers() { return db.prepare('SELECT * FROM users ORDER BY created_at').all().map(sanitize); }
 
+// ── Reader keys (per-user personal keys) ──────────────────────────────────
+function getUserGeminiKeys(userId) {
+  try {
+    return db.prepare('SELECT id, api_key, label, created_at FROM user_gemini_keys WHERE user_id = ? ORDER BY id').all(userId)
+      .map(r => ({ id: r.id, apiKey: decrypt(r.api_key), label: r.label, createdAt: r.created_at }));
+  } catch { return []; }
+}
+function addUserGeminiKey(userId, apiKey, label) {
+  if (!apiKey || !apiKey.trim()) throw new Error('API key is required');
+  const info = db.prepare('INSERT INTO user_gemini_keys (user_id, api_key, label, created_at) VALUES (?, ?, ?, ?)')
+    .run(userId, encrypt(apiKey.trim()), label ? label.trim().slice(0, 60) : null, new Date().toISOString());
+  return { id: info.lastInsertRowid };
+}
+function removeUserGeminiKey(userId, keyId) {
+  return db.prepare('DELETE FROM user_gemini_keys WHERE id = ? AND user_id = ?').run(keyId, userId).changes > 0;
+}
+
 // ── Reader keys (company-wide) ──────────────────────────────────────────────
 function getGeminiKeys(companyId) {
   return db.prepare('SELECT id, api_key, label, created_at FROM company_gemini_keys WHERE company_id = ? ORDER BY id').all(companyId)
@@ -216,7 +233,10 @@ function getGeminiKeys(companyId) {
 }
 function getGeminiKeysForUser(userId) {
   const u = findById(userId);
-  return u ? getGeminiKeys(u.companyId) : [];
+  if (!u) return [];
+  const userKeys = getUserGeminiKeys(userId);
+  const companyKeys = getGeminiKeys(u.companyId);
+  return [...userKeys, ...companyKeys];
 }
 function addGeminiKey(companyId, apiKey, label) {
   if (!apiKey || !apiKey.trim()) throw new Error('API key is required');
@@ -242,5 +262,6 @@ module.exports = {
   hasUsers, findById, findByEmail, createUser, validatePassword, updateUser, setPassword, getAllUsers, getUserMetrics, deleteUser, readUsers,
   touchLastSeen, isOnline, sanitize,
   getCompany, createCompany, updateCompany, getCompanyConfig, saveCompanyConfig, ENCRYPTED_COLUMNS,
+  getUserGeminiKeys, addUserGeminiKey, removeUserGeminiKey,
   getGeminiKeys, getGeminiKeysForUser, addGeminiKey, removeGeminiKey, getUserDefaults, ensureUserDirectories,
 };

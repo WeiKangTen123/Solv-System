@@ -209,6 +209,7 @@ export default function Settings() {
           nameInput={nameInput}
           setNameInput={setNameInput}
           onSaveProfile={saveProfile}
+          onNotify={setMsg}
         />
       )}
 
@@ -378,10 +379,23 @@ export default function Settings() {
       {/* Admin Tab 4: Receipt Reader Keys */}
       {isAdmin && adminTab === 'keys' && (
         <div className="card">
-          <div className="card-title">Receipt Reader Keys</div>
-          <div className="card-subtitle">Gemini API keys, shared by the company. Keys rotate when one runs out of quota.</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+            <div>
+              <div className="card-title">Receipt Reader Keys (Company Pool)</div>
+              <div className="card-subtitle">Shared Gemini API keys for the company. Individual user keys in Profile settings take priority; company keys rotate automatically if one runs out of quota.</div>
+            </div>
+            <a
+              href="https://aistudio.google.com/app/apikey"
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-outline btn-sm"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none' }}
+            >
+              <span>Google AI Studio ↗</span>
+            </a>
+          </div>
           {keys.map(k => (
-            <div key={k.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderTop: '1px solid var(--border)', fontSize: 13 }}>
+            <div key={k.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderTop: '1px solid var(--border)', fontSize: 13 }}>
               <span><code>{k.keyMasked}</code> {k.label && <span style={{ color: 'var(--text-muted)' }}>· {k.label}</span>}</span>
               <button className="btn btn-ghost btn-sm" onClick={() => api.delete(`/company/llm-keys/${k.id}`).then(loadAll).catch(fail)}>Remove</button>
             </div>
@@ -389,7 +403,7 @@ export default function Settings() {
           <form onSubmit={addKey} style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
             <input className="form-input" style={{ flex: 2, minWidth: 220 }} placeholder="AIza…" required value={newKey.apiKey} onChange={e => setNewKey({ ...newKey, apiKey: e.target.value })} aria-label="API key" />
             <input className="form-input" style={{ flex: 1, minWidth: 120 }} placeholder="Label" value={newKey.label} onChange={e => setNewKey({ ...newKey, label: e.target.value })} aria-label="Label" />
-            <button className="btn btn-primary" type="submit">Add key</button>
+            <button className="btn btn-primary" type="submit">Add company key</button>
           </form>
         </div>
       )}
@@ -455,7 +469,7 @@ export default function Settings() {
 }
 
 // ── Personal Settings Sub-Component ──────────────────────────────────────────
-function PersonalSettings({ user, company, theme, toggleTheme, onOpenPassword, nameInput, setNameInput, onSaveProfile }) {
+function PersonalSettings({ user, company, theme, toggleTheme, onOpenPassword, nameInput, setNameInput, onSaveProfile, onNotify }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* 1. Account & Profile Card */}
@@ -491,7 +505,10 @@ function PersonalSettings({ user, company, theme, toggleTheme, onOpenPassword, n
         </form>
       </div>
 
-      {/* 2. My Claims & Activity Stats Card */}
+      {/* 2. Personal Google Gemini API Keys */}
+      <UserGeminiSection onNotify={onNotify} />
+
+      {/* 3. My Claims & Activity Stats Card */}
       <div className="card">
         <div className="card-title">My Claims & Activity</div>
         <div className="card-subtitle">Overview of your submitted receipts and claim cases.</div>
@@ -600,5 +617,315 @@ function PasswordDialog({ target, self, onDone, onCancel }) {
         </div>
       </form>
     </Modal>
+  );
+}
+
+// ── Personal Gemini Keys Component ──────────────────────────────────────────
+function UserGeminiSection({ onNotify }) {
+  const [keys, setKeys] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newKey, setNewKey] = useState({ apiKey: '', label: '' });
+  const [showKey, setShowKey] = useState(false);
+  const [testingNew, setTestingNew] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [testingKeyId, setTestingKeyId] = useState(null);
+  const [existingKeyResults, setExistingKeyResults] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    loadKeys();
+  }, []);
+
+  async function loadKeys() {
+    try {
+      setLoading(true);
+      const res = await api.get('/users/me/gemini-keys');
+      setKeys(res.keys || []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function testRawKey() {
+    if (!newKey.apiKey.trim()) {
+      setTestResult({ tone: 'error', text: 'Please enter a Gemini API key first.' });
+      return;
+    }
+    setTestingNew(true);
+    setTestResult(null);
+    try {
+      const res = await api.post('/users/me/gemini-keys/test', { apiKey: newKey.apiKey.trim() });
+      setTestResult({ tone: 'success', text: `✓ Verified! Model: ${res.model} (${res.latencyMs}ms)` });
+    } catch (err) {
+      setTestResult({ tone: 'error', text: `✗ Verification failed: ${err.message}` });
+    } finally {
+      setTestingNew(false);
+    }
+  }
+
+  async function testExistingKey(keyId) {
+    setTestingKeyId(keyId);
+    try {
+      const res = await api.post('/users/me/gemini-keys/test', { keyId });
+      setExistingKeyResults(prev => ({
+        ...prev,
+        [keyId]: { tone: 'success', text: `✓ Operational (${res.model}, ${res.latencyMs}ms)` }
+      }));
+    } catch (err) {
+      setExistingKeyResults(prev => ({
+        ...prev,
+        [keyId]: { tone: 'error', text: `✗ Failed: ${err.message}` }
+      }));
+    } finally {
+      setTestingKeyId(null);
+    }
+  }
+
+  async function saveKey(e) {
+    e.preventDefault();
+    if (!newKey.apiKey.trim()) return;
+    setSaving(true);
+    try {
+      await api.post('/users/me/gemini-keys', {
+        apiKey: newKey.apiKey.trim(),
+        label: newKey.label.trim()
+      });
+      setNewKey({ apiKey: '', label: '' });
+      setTestResult(null);
+      await loadKeys();
+      if (onNotify) onNotify({ tone: 'success', text: 'Gemini API key saved securely.' });
+    } catch (err) {
+      if (onNotify) onNotify({ tone: 'error', text: err.message });
+      else setTestResult({ tone: 'error', text: err.message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeKey(id) {
+    try {
+      await api.delete(`/users/me/gemini-keys/${id}`);
+      await loadKeys();
+      if (onNotify) onNotify({ tone: 'success', text: 'Gemini API key removed.' });
+    } catch (err) {
+      if (onNotify) onNotify({ tone: 'error', text: err.message });
+    }
+  }
+
+  return (
+    <div className="card">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>🔑</span>
+            <span>Google Gemini API Key (Receipt Reader)</span>
+          </div>
+          <div className="card-subtitle">
+            Configure your personal Google Gemini API key to parse uploaded receipts and invoices.
+          </div>
+        </div>
+        <a
+          href="https://aistudio.google.com/app/apikey"
+          target="_blank"
+          rel="noreferrer"
+          className="btn btn-outline btn-sm"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none' }}
+        >
+          <span>Get Free Key at Google AI Studio</span>
+          <span>↗</span>
+        </a>
+      </div>
+
+      {/* Info Callout */}
+      <div style={{
+        marginTop: 12,
+        marginBottom: 16,
+        padding: '10px 14px',
+        borderRadius: 8,
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        fontSize: 12.5,
+        lineHeight: 1.5,
+        color: 'var(--text-secondary)'
+      }}>
+        <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>
+          💡 How Receipt Processing Works:
+        </div>
+        When you upload or import receipts, our AI extraction pipeline parses dates, merchants, totals, line items, and taxes using your personal Gemini key. If no personal key is added, it safely falls back to the company pool. Stored keys are encrypted at rest with AES-256-GCM.
+      </div>
+
+      {/* Active Keys List */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>
+          Your Saved Gemini Keys {keys.length > 0 && `(${keys.length})`}
+        </div>
+
+        {loading ? (
+          <div style={{ fontSize: 12.5, color: 'var(--text-muted)', padding: '8px 0' }}>Loading keys…</div>
+        ) : keys.length === 0 ? (
+          <div style={{
+            fontSize: 12.5,
+            color: 'var(--text-muted)',
+            padding: '12px 14px',
+            background: 'var(--bg-secondary)',
+            borderRadius: 8,
+            border: '1px dashed var(--border)'
+          }}>
+            No personal key configured yet. Add your Google Gemini API key below to use your own quota.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {keys.map(k => (
+              <div
+                key={k.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: 10,
+                  padding: '10px 14px',
+                  borderRadius: 8,
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border)'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <code style={{ fontSize: 13, fontWeight: 600 }}>{k.keyMasked}</code>
+                  {k.label ? (
+                    <span className="badge badge-blue" style={{ fontSize: 11 }}>{k.label}</span>
+                  ) : (
+                    <span className="badge badge-gray" style={{ fontSize: 11 }}>Personal Key</span>
+                  )}
+                  <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                    Added {new Date(k.createdAt).toLocaleDateString()}
+                  </span>
+                  {existingKeyResults[k.id] && (
+                    <span style={{
+                      fontSize: 11.5,
+                      fontWeight: 500,
+                      color: existingKeyResults[k.id].tone === 'success' ? 'var(--success, #10b981)' : 'var(--danger, #ef4444)'
+                    }}>
+                      {existingKeyResults[k.id].text}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    disabled={testingKeyId === k.id}
+                    onClick={() => testExistingKey(k.id)}
+                    title="Ping Google AI Studio to verify key validity"
+                  >
+                    {testingKeyId === k.id ? 'Testing…' : '⚡ Test Key'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    style={{ color: 'var(--danger, #ef4444)' }}
+                    onClick={() => removeKey(k.id)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Add New Key Form */}
+      <form onSubmit={saveKey} style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>
+          Add New Gemini API Key
+        </div>
+
+        {testResult && (
+          <div
+            className={`alert alert-${testResult.tone}`}
+            style={{ marginBottom: 12, fontSize: 12.5, padding: '8px 12px' }}
+          >
+            {testResult.text}
+          </div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0 12px' }}>
+          <div className="form-group" style={{ marginBottom: 10 }}>
+            <label className="form-label" htmlFor="user-gemini-key">
+              API Key (Google AI Studio)
+            </label>
+            <div style={{ position: 'relative' }}>
+              <input
+                id="user-gemini-key"
+                className="form-input"
+                type={showKey ? 'text' : 'password'}
+                placeholder="AIzaSy..."
+                required
+                value={newKey.apiKey}
+                onChange={e => {
+                  setNewKey({ ...newKey, apiKey: e.target.value });
+                  setTestResult(null);
+                }}
+                style={{ paddingRight: 40, fontFamily: showKey ? 'var(--font-mono)' : 'inherit' }}
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                onClick={() => setShowKey(!showKey)}
+                style={{
+                  position: 'absolute',
+                  right: 8,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: 'var(--text-muted)',
+                  fontSize: 13,
+                  padding: 4
+                }}
+                title={showKey ? 'Hide key' : 'Show key'}
+              >
+                {showKey ? '🙈' : '👁️'}
+              </button>
+            </div>
+          </div>
+          <div className="form-group" style={{ marginBottom: 10 }}>
+            <label className="form-label" htmlFor="user-gemini-label">
+              Label (Optional)
+            </label>
+            <input
+              id="user-gemini-label"
+              className="form-input"
+              placeholder="e.g. My AI Studio, Work Key"
+              value={newKey.label}
+              onChange={e => setNewKey({ ...newKey, label: e.target.value })}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 4, flexWrap: 'wrap' }}>
+          <button
+            className="btn btn-primary"
+            type="submit"
+            disabled={saving || !newKey.apiKey.trim()}
+          >
+            {saving ? 'Saving Key…' : 'Save Gemini Key'}
+          </button>
+          <button
+            className="btn btn-outline"
+            type="button"
+            onClick={testRawKey}
+            disabled={testingNew || !newKey.apiKey.trim()}
+            title="Send a lightweight ping to Google AI Studio to check if this key works"
+          >
+            {testingNew ? 'Testing Key…' : '⚡ Test Connection'}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }

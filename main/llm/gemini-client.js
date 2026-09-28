@@ -142,4 +142,41 @@ async function callGemini(userId, messages, opts = {}) {
   });
 }
 
-module.exports = { callGemini, GEMINI_MODELS };
+async function testGeminiKey(apiKey) {
+  if (!apiKey || !apiKey.trim()) throw new Error('API key is required');
+  const key = apiKey.trim();
+  const testModels = [...GEMINI_MODELS, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  let lastErr = null;
+  for (const model of testModels) {
+    try {
+      const response = await axios.post(
+        GEMINI_URL,
+        {
+          model,
+          messages: [{ role: 'user', content: 'Ping' }],
+          max_tokens: 5,
+        },
+        {
+          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+          timeout: 15_000,
+        }
+      );
+      if (response.data?.choices?.[0]?.message) {
+        return { ok: true, model };
+      }
+    } catch (err) {
+      lastErr = err;
+      const status = err.response?.status;
+      if (status === 401 || status === 403) {
+        throw new Error('Invalid Gemini API key. Please check the key from Google AI Studio.');
+      }
+      if (status === 429) {
+        throw new Error('Gemini API key quota exceeded or rate limited.');
+      }
+    }
+  }
+  const msg = lastErr?.response?.data?.error?.message || lastErr?.message || 'Could not verify Gemini API key';
+  throw new Error(`Gemini test failed: ${msg}`);
+}
+
+module.exports = { callGemini, GEMINI_MODELS, testGeminiKey };
