@@ -20,7 +20,7 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const me = users.findById(req.user.id);
     const { email, password, name, role, employeeId, department } = req.body || {};
-    if (!password || password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
     const user = await users.createUser({ email, password, name, role: role || 'user', companyId: me.companyId, employeeId, department });
     logger.info('User created', { by: req.user.email, email: user.email, role: user.role });
     res.status(201).json({ user });

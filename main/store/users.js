@@ -157,7 +157,7 @@ function updateUser(id, patch) {
 }
 
 async function setPassword(id, password) {
-  if (!password || password.length < 8) throw new Error('Password must be at least 8 characters');
+  if (!password || password.length < 6) throw new Error('Password must be at least 6 characters');
   db.prepare('UPDATE users SET password = ? WHERE id = ?').run(await bcrypt.hash(password, 10), id);
 }
 

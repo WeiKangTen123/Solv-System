@@ -340,7 +340,7 @@ function PasswordDialog({ target, self, onDone, onCancel }) {
         )}
         <div className="form-group" style={{ marginBottom: 0 }}>
           <label className="form-label" htmlFor="pw-new">New password</label>
-          <input id="pw-new" className="form-input" type="password" required minLength={8} value={password} onChange={e => setNext(e.target.value)} placeholder="At least 8 characters" autoComplete="new-password" />
+          <input id="pw-new" className="form-input" type="password" required minLength={6} value={password} onChange={e => setNext(e.target.value)} placeholder="At least 6 characters" autoComplete="new-password" />
         </div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button className="btn btn-ghost" type="button" onClick={onCancel}>Cancel</button>
