@@ -4,12 +4,12 @@ import { useViewMode } from '../../context/ViewModeContext';
 
 const NAV = [
   { to: '/',         label: 'Home',        desc: 'Your cases and where the money goes', end: true },
-  { to: '/expenses', label: 'My receipts', desc: 'Every receipt you recorded' },
   { to: '/reports',  label: 'Cases',       desc: 'Open, claim, export' },
+  { to: '/expenses', label: 'My receipts', desc: 'Every receipt you recorded' },
 ];
 // The admin's seat is for running the company and watching it work, not for
 // approving anything: settings and staff, and every case there is.
-const ADMIN_NAV = [{ to: '/settings', label: 'Settings', desc: 'Company, staff, reader, Xero' }];
+const ADMIN_NAV = [{ to: '/settings', label: 'Settings', desc: 'Company, users & usage, reader, Xero' }];
 
 function Item({ to, label, desc, end, onClick }) {
   return (
@@ -52,7 +52,7 @@ export default function Sidebar() {
       </nav>
       <div style={{ margin: '8px 8px 12px', padding: '12px 14px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.name || user?.email}</div>
-        <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginBottom: 8 }}>{user?.role}{user?.department ? ` · ${user.department}` : ''}</div>
+        <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'capitalize' }}>{user?.role}</div>
         <button className="btn btn-outline btn-sm" style={{ width: '100%' }} onClick={() => { close(); logout(); navigate('/login'); }}>Sign out</button>
       </div>
     </aside>

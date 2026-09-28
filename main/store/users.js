@@ -162,7 +162,28 @@ async function setPassword(id, password) {
 }
 
 function getAllUsers(companyId) {
-  return db.prepare('SELECT * FROM users WHERE company_id = ? ORDER BY created_at').all(companyId).map(sanitize);
+  const rows = db.prepare(`
+    SELECT u.*,
+      (SELECT COUNT(*) FROM receipts r WHERE r.user_id = u.id) AS receipt_count,
+      (SELECT COUNT(*) FROM expenses e WHERE e.user_id = u.id) AS expense_count,
+      (SELECT COUNT(*) FROM expense_reports rep WHERE rep.user_id = u.id) AS case_count,
+      (SELECT COUNT(*) FROM expense_reports rep WHERE rep.user_id = u.id AND rep.status = 'claimed') AS claimed_case_count,
+      (SELECT COALESCE(SUM(l.base_cents), 0) FROM expenses e JOIN expense_lines l ON l.expense_id = e.id WHERE e.user_id = u.id AND e.claimed_at IS NOT NULL) AS claimed_cents,
+      (SELECT COALESCE(SUM(l.base_cents), 0) FROM expenses e JOIN expense_lines l ON l.expense_id = e.id) AS total_cents
+    FROM users u
+    WHERE u.company_id = ?
+    ORDER BY u.created_at
+  `).all(companyId);
+
+  return rows.map(u => ({
+    ...sanitize(u),
+    receiptCount: u.receipt_count || 0,
+    expenseCount: u.expense_count || 0,
+    caseCount: u.case_count || 0,
+    claimedCaseCount: u.claimed_case_count || 0,
+    claimedCents: u.claimed_cents || 0,
+    totalCents: u.total_cents || 0,
+  }));
 }
 function deleteUser(id) { db.prepare('DELETE FROM users WHERE id = ?').run(id); }
 function readUsers() { return db.prepare('SELECT * FROM users ORDER BY created_at').all().map(sanitize); }
