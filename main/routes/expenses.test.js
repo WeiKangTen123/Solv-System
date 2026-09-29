@@ -134,4 +134,28 @@ describe('routes/expenses', () => {
     expect(files.exists(name)).toBe(false);
     expect(store.getReceipt(r.id)).toBeNull();
   });
+
+  test('correcting the currency drops a typed rate, which was typed for the other currency', async () => {
+    const e = seed(emp);
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}/fx`).set(as(emp)).send({ rate: 0.02, reason: 'card statement' }).expect(200);
+    const r = await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ currency: 'USD' }).expect(200);
+    expect(r.body.expense.currency).toBe('USD');
+    expect(r.body.expense.lines[0]).toMatchObject({ currency: 'USD', fxSource: 'frankfurter', fxRate: 0.0134, fxOverrideBy: null, baseAmount: 1.34 });
+    // The same currency sent again — every save sends it — is not a change.
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}/fx`).set(as(emp)).send({ rate: 0.02, reason: 'card statement' }).expect(200);
+    const same = await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ currency: 'USD', purpose: 'x' }).expect(200);
+    expect(same.body.expense.lines[0]).toMatchObject({ fxSource: 'manual', fxRate: 0.02 });
+  });
+
+  test('the note that a currency was assumed goes when the currency is set, or the receipt is marked reviewed', async () => {
+    const { currencyNote } = require('../receipts/read-receipt');
+    const e = seed(emp, { currency: 'SGD', errorMsg: currencyNote('SGD') });
+    let r = await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ purpose: 'x', currency: 'SGD' }).expect(200);
+    expect(r.body.expense.errorMsg).toMatch(/SGD was assumed/);
+    r = await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ currency: 'MYR' }).expect(200);
+    expect(r.body.expense.errorMsg).toBeNull();
+    const e2 = seed(emp, { currency: 'SGD', errorMsg: currencyNote('SGD') });
+    r = await request(serverFor(app)).patch(`/api/expenses/${e2.id}/status`).set(as(emp)).send({ status: 'reviewed' }).expect(200);
+    expect(r.body.expense.errorMsg).toBeNull();
+  });
 });

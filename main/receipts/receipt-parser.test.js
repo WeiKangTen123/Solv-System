@@ -506,8 +506,10 @@ describe('receipt-parser — hotel folio details', () => {
     ];
     expect(parser.normalise({ merchant: 'JW', total: 22154.5, currency: 'INR', tax: 0, lineItems: items }).tax).toBe(3379.5);
     expect(parser.normalise({ merchant: 'JW', total: 22154.5, currency: 'INR', tax: null, lineItems: items }).tax).toBe(3379.5);
-    // A stated tax wins over the lines.
-    expect(parser.normalise({ merchant: 'JW', total: 22154.5, currency: 'INR', tax: 3000, lineItems: items }).tax).toBe(3000);
+    // A stated tax wins over the lines only while the itemisation is not
+    // complete; when every charge is there, the tax lines are the evidence.
+    expect(parser.normalise({ merchant: 'JW', total: 30000, currency: 'INR', tax: 3000, lineItems: items }).tax).toBe(3000);
+    expect(parser.normalise({ merchant: 'JW', total: 22154.5, currency: 'INR', tax: 3000, lineItems: items }).tax).toBe(3379.5);
     // A receipt that says no tax applies, with no tax lines, stays at 0.
     expect(parser.normalise({ merchant: 'Shop', total: 10, currency: 'SGD', tax: 0, lineItems: [{ description: 'Bun', unitAmount: 10 }] }).tax).toBe(0);
   });
@@ -548,5 +550,70 @@ describe('receipt-parser — a folio\'s payment line is not a charge', () => {
   test('a genuine charge that happens to equal the total is kept when it is the only line', () => {
     const r = parser.normalise({ merchant: 'Grab', total: 18.4, currency: 'SGD', lineItems: [{ description: 'Ride fare', unitAmount: 18.4 }] });
     expect(r.lineItems).toHaveLength(1);
+  });
+});
+
+describe('receipt-parser — output budgets and single scanned pages', () => {
+  const gemini = require('../llm/gemini-client');
+  const parser = require('./receipt-parser');
+
+  test('a reply cut off at max_tokens is asked for again with twice the room', async () => {
+    const cut = new Error('cut off'); cut.truncated = true;
+    gemini.callGemini.mockRejectedValueOnce(cut)
+      .mockResolvedValueOnce(JSON.stringify({ receipts: [{ merchant: 'Grab', total: 18.4, currency: 'SGD', confidence: 'high' }] }));
+    const out = await parser.parseReceiptText('u1', 'Grab receipt text');
+    expect(out.receipts[0].merchant).toBe('Grab');
+    expect(gemini.callGemini.mock.calls.map(c => c[2].maxTokens)).toEqual([parser.READ_MAX_TOKENS, parser.READ_MAX_TOKENS * 2]);
+  });
+
+  test('a single scanned page holding two clean receipts splits, as a photo would', async () => {
+    gemini.callGemini.mockResolvedValueOnce(JSON.stringify({ receipts: [
+      { merchant: 'A', total: 5, currency: 'SGD', confidence: 'high', box_2d: [0, 0, 480, 1000] },
+      { merchant: 'B', total: 7, currency: 'SGD', confidence: 'high', box_2d: [520, 0, 1000, 1000] },
+    ] }));
+    const out = await parser.parseReceiptPages('u1', [{ buffer: Buffer.from('p1'), mime: 'image/jpeg' }]);
+    expect(out.split).toBe(true);
+    expect(out.receipts.map(r => r.merchant)).toEqual(['A', 'B']);
+  });
+
+  test('the transfer text leaves the line description once the person is taken from it', () => {
+    const r = parser.normalise({ merchant: 'JW', total: 100, currency: 'INR', lineItems: [
+      { description: 'Accomodation Charges -[NA Room] Tan Suan Kuan #1155=>Khoo Elaine Xin Yu #1159', unitAmount: 50 },
+      { description: 'Standard Retail [NA Room] TAN SUAN KUAN #126=>Khoo Elaine Xin Yu #110', unitAmount: 30 },
+      { description: 'Tan Suan Kuan #1155=>Khoo Elaine Xin Yu #1159', unitAmount: 20 },
+    ] });
+    expect(r.lineItems.map(l => [l.description, l.onBehalfOf])).toEqual([
+      ['Accomodation Charges -[NA Room]', 'Tan Suan Kuan'],
+      ['Standard Retail [NA Room]', 'Tan Suan Kuan'],
+      ['Tan Suan Kuan #1155=>Khoo Elaine Xin Yu #1159', 'Tan Suan Kuan'],
+    ]);
+  });
+});
+
+describe('receipt-parser — the tax figure against the tax lines', () => {
+  const parser = require('./receipt-parser');
+  // The JW Marriott folio: twelve charges that account for the total to a
+  // rupee, eight of them tax lines summing to 6760.
+  const items = [
+    { description: 'Accomodation Charges', unitAmount: 17575 }, { description: 'CGST 9%- Rooms-(New)', unitAmount: 1581.75 }, { description: 'SGST 9%- Rooms-(New)', unitAmount: 1581.75 },
+    { description: 'Upsell Breakfast', unitAmount: 1200 }, { description: 'JW Cafe CGST 9%', unitAmount: 108 }, { description: 'JW Cafe SGST 9%', unitAmount: 108 },
+    { description: 'Accomodation Charges', unitAmount: 17575 }, { description: 'CGST 9%- Rooms-(New)', unitAmount: 1581.75 }, { description: 'SGST 9%- Rooms-(New)', unitAmount: 1581.75 },
+    { description: 'Upsell Breakfast', unitAmount: 1200 }, { description: 'JW Cafe CGST 9%', unitAmount: 108 }, { description: 'JW Cafe SGST 9%', unitAmount: 109 },
+  ];
+
+  test('a summary tax that disagrees with a complete itemisation gives way to the tax lines', () => {
+    expect(parser.normalise({ merchant: 'JW', total: 44309, currency: 'INR', tax: 3717, lineItems: items }).tax).toBe(6760);
+    expect(parser.normalise({ merchant: 'JW', total: 44309, currency: 'INR', tax: 0, lineItems: items }).tax).toBe(6760);
+    expect(parser.normalise({ merchant: 'JW', total: 44309, currency: 'INR', tax: null, lineItems: items }).tax).toBe(6760);
+  });
+
+  test('a summary tax that agrees, or an itemisation with something missing, is left as the model said', () => {
+    expect(parser.normalise({ merchant: 'JW', total: 44309, currency: 'INR', tax: 6760, lineItems: items }).tax).toBe(6760);
+    expect(parser.normalise({ merchant: 'JW', total: 44309, currency: 'INR', tax: 6759.5, lineItems: items }).tax).toBe(6759.5);
+    // Half the charges missing: the tax lines cannot be trusted to be all there.
+    expect(parser.normalise({ merchant: 'JW', total: 44309, currency: 'INR', tax: 3717, lineItems: items.slice(0, 6) }).tax).toBe(3717);
+    // A Singapore receipt whose GST is inside the prices and listed once more as a line: the items overshoot, so the model's figure stands.
+    const inclusive = [{ description: 'Kopi', unitAmount: 10 }, { description: 'Toast', unitAmount: 6.1 }, { description: 'GST 9% (included)', unitAmount: 1.33 }];
+    expect(parser.normalise({ merchant: 'Cafe', total: 16.1, currency: 'SGD', tax: 1.33, lineItems: inclusive }).tax).toBe(1.33);
   });
 });

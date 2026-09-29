@@ -20,6 +20,10 @@ module.exports = {
       // pm2 is evaluating this file in — so a reload can never carry the value
       // of a previous start. (`--update-env` did not replace it, and health
       // then reported the old commit for a process running the new code.)
+      //
+      // A plain `pm2 restart` does not evaluate this file at all and keeps the
+      // old environment, so routes/dashboard.js reads the checkout itself at
+      // boot and uses this only when it cannot (no .git on the box).
       DEPLOY_SHA: (() => {
         try { return require('child_process').execSync('git rev-parse HEAD', { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); }
         catch { return ''; }

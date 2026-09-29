@@ -141,4 +141,51 @@ describe('receipts/read-receipt', () => {
     expect(after.duplicateOf).toBe(first.e.id);
     expect(after.errorMsg).toMatch(/Possible duplicate/);
   });
+
+  test('a suspicion of a duplicate raised by one read does not outlive the next', async () => {
+    const first = seed();
+    const grab = { merchant: 'Grab', date: '2026-09-01', total: 18.4, currency: 'SGD', category: 'Air & Transport', confidence: 'high', lineItems: [] };
+    parser.parseReceiptImage.mockResolvedValue({ split: false, receipts: [grab] });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: first.r.id, expenseId: first.e.id, buffer: Buffer.from('a'), mime: 'image/jpeg' });
+    const r2 = store.createReceipt({ companyId: u.companyId, userId: u.id, file: 'g.jpg', mime: 'image/jpeg', sha256: 'h2' });
+    const e2 = store.createExpense({ companyId: u.companyId, userId: u.id, receiptId: r2.id });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r2.id, expenseId: e2.id, buffer: Buffer.from('b'), mime: 'image/jpeg' });
+    expect(store.getExpense(e2.id).duplicateOf).toBe(first.e.id);
+    await read.applyRead(e2.id, { ...grab, total: 25 }); read.flagIfSuspected(e2.id);
+    const after = store.getExpense(e2.id);
+    expect(after.duplicateOf).toBeNull();
+    expect(after.errorMsg).toBeNull();
+  });
+
+  test('a receipt that names no currency keeps the base currency, with a note saying so until the currency is read', async () => {
+    const { r, e } = seed();
+    parser.parseReceiptImage.mockResolvedValue({ split: false, receipts: [{ merchant: 'Corner Cafe', date: '2026-09-02', total: 18.4, currency: null, category: 'Meals', confidence: 'low', lineItems: [] }] });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('a'), mime: 'image/jpeg' });
+    let after = store.getExpense(e.id);
+    expect(after.currency).toBe('SGD');
+    expect(after.errorMsg).toMatch(/SGD was assumed/);
+    expect(read.withoutCurrencyNote(after.errorMsg)).toBeNull();
+    expect(read.withoutCurrencyNote(`${after.errorMsg} Possible duplicate of x — y. Check before submitting.`)).toBe('Possible duplicate of x — y. Check before submitting.');
+    // A re-read that makes the currency out clears the note.
+    await read.applyRead(e.id, { merchant: 'Corner Cafe', date: '2026-09-02', total: 18.4, currency: 'MYR', category: 'Meals', confidence: 'high', lineItems: [] });
+    after = store.getExpense(e.id);
+    expect(after.currency).toBe('MYR');
+    expect(after.errorMsg).toBeNull();
+  });
+
+  test('a scanned page holding two receipts splits like a photo', async () => {
+    const { r, e } = seed('application/pdf');
+    pdfPages.extractPages.mockResolvedValue({ pages: [''], numPages: 1, hasText: false, textPageCount: 0 });
+    render.renderPdfPages.mockResolvedValue({ numPages: 1, pages: [{ page: 1, buffer: Buffer.from('p1'), width: 1240, height: 1754 }] });
+    parser.parseReceiptPages.mockResolvedValue({ split: true, reason: null, receipts: [
+      { merchant: 'A', total: 5, currency: 'SGD', category: 'Meals', confidence: 'high', box: [0, 0, 500, 1000], lineItems: [] },
+      { merchant: 'B', total: 7, currency: 'SGD', category: 'Meals', confidence: 'high', box: [500, 0, 1000, 1000], lineItems: [] },
+    ] });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('%PDF'), mime: 'application/pdf' });
+    const all = store.listExpenses({ receiptId: r.id }).sort((a, b) => a.merchant.localeCompare(b.merchant));
+    expect(all.map(x => [x.merchant, x.box, x.status])).toEqual([['A', [0, 0, 500, 1000], 'review-needed'], ['B', [500, 0, 1000, 1000], 'review-needed']]);
+    // Re-reading the second one picks the receipt nearest its box.
+    const again = await read.readOne(u.id, Buffer.from('%PDF'), 'application/pdf', { box: [500, 0, 1000, 1000] });
+    expect(again.merchant).toBe('B');
+  });
 });

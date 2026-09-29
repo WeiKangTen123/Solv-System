@@ -6,7 +6,7 @@ const users   = require('../store/users');
 const store   = require('../store/expenses');
 const receiptStore = require('../receipts/receipt-store');
 const { issueImageToken } = require('./receipts');
-const { readOne, applyRead, flagIfSuspected } = require('../receipts/read-receipt');
+const { readOne, applyRead, flagIfSuspected, withoutCurrencyNote } = require('../receipts/read-receipt');
 const { applyFx, overrideFx } = require('../fx/apply');
 const wf      = require('../reports/workflow');
 const { isLocked } = wf;
@@ -15,16 +15,16 @@ const asyncHandler = require('../middleware/async-handler');
 const { canonicalCategory } = require('../intake/categories');
 const logger  = require('../utils/logger');
 
-// An expense is one claimable receipt after reading. Employees work on their
-// own; a manager sees direct reports; finance and admin see the company.
+// An expense is one claimable receipt after reading. A user works on their
+// own; an admin sees the company.
 // reportId is deliberately NOT here. It used to be, and it was passed straight
-// to the store, so filing an expense obeyed none of the rules the report route
-// enforces: an employee could attach an unreviewed expense to an already
-// approved report — or to a colleague's report — and change a total finance
-// had signed off. Filing now goes through _file() below, which asks the same
-// questions POST /api/reports/:id/expenses asks. An unknown id also used to
-// reach SQLite as a foreign-key violation inside an unwrapped async handler,
-// which took the whole server down with it.
+// to the store, so filing an expense obeyed none of the rules the case route
+// enforces: a user could attach an unchecked receipt to a case that had
+// already been claimed — or to a colleague's case — and change a total that
+// had been put through. Filing now goes through _file() below, which asks the
+// same questions POST /api/reports/:id/expenses asks. An unknown id also used
+// to reach SQLite as a foreign-key violation inside an unwrapped async
+// handler, which took the whole server down with it.
 const EDITABLE = ['merchant', 'receiptDate', 'receiptTime', 'invoiceNo', 'currency', 'total', 'tax', 'subTotal', 'purpose', 'description', 'category'];
 
 function _load(req, res) {
@@ -32,7 +32,7 @@ function _load(req, res) {
   if (!e || !canAccessUser(req.user, e.userId)) { res.status(404).json({ error: 'Expense not found' }); return null; }
   return e;
 }
-const LOCKED = 'This expense is in a report that has been submitted. Ask for it to be rejected to change it.';
+const LOCKED = 'This receipt is in a case that has been claimed. Reopen the case to change it.';
 function _loadEditable(req, res) {
   const e = _load(req, res);
   if (e && isLocked(e)) { res.status(409).json({ error: LOCKED }); return null; }
@@ -46,16 +46,16 @@ function _file(e, reportId, actor) {
   const leaving = () => {
     if (!e.reportId) return;
     const cur = reports.getReport(e.reportId);
-    if (cur && !wf.isEditable(cur)) fail(409, `A ${cur.status} report cannot be changed`);
+    if (cur && !wf.isEditable(cur)) fail(409, `A ${cur.status} case cannot be changed`);
     reports.removeExpense(e.reportId, e.id);
   };
   if (!reportId) { leaving(); return; }
   if (reportId === e.reportId) return;
   const r = reports.getReport(reportId);
-  if (!r || r.companyId !== e.companyId) fail(404, 'Report not found');
-  if (r.userId !== e.userId) fail(403, 'That report belongs to someone else');
-  if (r.userId !== actor.id && actor.role !== 'admin') fail(403, 'Only the report owner can file expenses');
-  if (!wf.isEditable(r)) fail(409, `A ${r.status} report cannot take more expenses`);
+  if (!r || r.companyId !== e.companyId) fail(404, 'Case not found');
+  if (r.userId !== e.userId) fail(403, 'That case belongs to someone else');
+  if (r.userId !== actor.id && actor.role !== 'admin') fail(403, 'Only the case owner can file receipts into it');
+  if (!wf.isEditable(r)) fail(409, `A ${r.status} case cannot take more receipts`);
   leaving();
   reports.addExpense(r.id, e.id);
 }
@@ -92,6 +92,9 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
     try { _file(e, b.reportId || null, req.user); }
     catch (err) { return res.status(err.status || 400).json({ error: err.message }); }
   }
+  // Setting the currency answers the reader's note that it was assumed.
+  const currencyChanged = patch.currency !== undefined && patch.currency !== e.currency;
+  if (currencyChanged && e.errorMsg) patch.errorMsg = withoutCurrencyNote(e.errorMsg);
   const updated = store.updateExpense(e.id, patch);
   // A single line follows the total; a split is the claimant's to redo.
   if (patch.total !== undefined && updated.lines.length === 1) {
@@ -99,8 +102,11 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
   } else if (patch.currency && updated.lines.length) {
     store.replaceLines(e.id, updated.lines.map(l => ({ ...l, currency: updated.currency })), { force: true });
   }
-  // A new currency, date or amount changes what the base figure is.
-  if (patch.currency !== undefined || patch.receiptDate !== undefined || patch.total !== undefined) await applyFx(e.id);
+  // A new currency, date or amount changes what the base figure is. A rate
+  // somebody typed was typed for the OLD currency, so a currency change drops
+  // it and fetches afresh; a new date or total keeps it (it is their decision,
+  // and the base amount follows the line).
+  if (patch.currency !== undefined || patch.receiptDate !== undefined || patch.total !== undefined) await applyFx(e.id, { force: currencyChanged });
   res.json(_out(store.getExpense(e.id)));
 }));
 
@@ -148,7 +154,10 @@ router.patch('/:id/status', requireAuth, (req, res) => {
     if (missing.length) return res.status(400).json({ error: `Fill in the ${missing.join(', ')} before marking this reviewed` });
     if (!store.linesReconcile(e.lines, store.toCents(e.total))) return res.status(400).json({ error: 'The lines do not add up to the receipt total' });
   }
-  res.json(_out(store.updateExpense(e.id, { status })));
+  const patch = { status };
+  // Marking it reviewed is the person saying the currency on it is right.
+  if (status === 'reviewed' && e.errorMsg) patch.errorMsg = withoutCurrencyNote(e.errorMsg);
+  res.json(_out(store.updateExpense(e.id, patch)));
 });
 
 // POST /:id/claimed — the owner's own record that this one receipt has been put

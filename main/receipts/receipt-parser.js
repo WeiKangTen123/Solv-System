@@ -93,6 +93,15 @@ const _currency = _intake.currencyCode;
 // description when the model left it out; when the model answered, keep the
 // name and drop the room numbers and the arrow.
 const TRANSFER_RE = /([A-Z][A-Za-z.'\- ]{2,60}?)\s*#\d+\s*=>/;
+// "Accomodation Charges -[NA Room] Tan Suan Kuan #1155=>Khoo Elaine #1159"
+// → "Accomodation Charges -[NA Room]". Once the person is on the line the
+// rest — two room numbers and an arrow — is noise on the printed report. A
+// description that is nothing but the transfer is left as it was.
+const TRANSFER_TAIL_RE = new RegExp(`\\s*-?\\s*${TRANSFER_RE.source}.*$`);
+function _withoutTransfer(description) {
+  const cleaned = String(description || '').replace(TRANSFER_TAIL_RE, '').trim();
+  return cleaned || description;
+}
 function _onBehalf(li) {
   const printed = typeof li.description === 'string' ? TRANSFER_RE.exec(li.description) : null;
   if (printed) return _titleCase(printed[1].trim().slice(0, 80));
@@ -132,6 +141,17 @@ function _taxFromLines(lineItems, total) {
   return cents / 100;
 }
 
+// Do the items, tax lines included, add up to the total? Within a unit or
+// half a percent, which is the rounding a folio's per-charge taxes carry
+// (the JW folio itemises to one rupee over). When they do, the itemisation
+// is complete and can be held against the model's summary figures; when
+// they do not, something is missing and nothing is inferred from them.
+function _itemsAccountForTotal(lineItems, total) {
+  if (total === null || lineItems.length < 2) return false;
+  const sum = lineItems.reduce((s, li) => s + Math.round(Number(li.unitAmount || 0) * 100), 0);
+  return Math.abs(sum - Math.round(total * 100)) <= Math.max(100, Math.round(total * 0.005));
+}
+
 // Normalises whatever the model returned into the shape the invoice store uses.
 // Exported for testing: this is where a bad model response is made harmless.
 function normalise(parsed) {
@@ -158,12 +178,13 @@ function normalise(parsed) {
     .map(li => {
       const n = _intake.normaliseLineItem(li);
       if (!n) return null;
+      const onBehalfOf = li ? _onBehalf(li) : null;
       return {
-        description:  n.description.slice(0, 200),
+        description:  (onBehalfOf ? _withoutTransfer(n.description) : n.description).slice(0, 200),
         unitAmount:   n.unitAmount,
         discountRate: n.discountRate,
         category:     canonicalCategory(li && li.category),
-        onBehalfOf:   li ? _onBehalf(li) : null,
+        onBehalfOf,
       };
     })
     .filter(Boolean);
@@ -177,6 +198,20 @@ function normalise(parsed) {
     desc = `[${category}] ${desc}`.slice(0, 250);
   }
 
+  // Tax cannot exceed the total; if it does, one of the two was misread and
+  // neither should be presented as fact.
+  const fromLines = _taxFromLines(lineItems, usableTotal);
+  let taxOut = (tax !== null && tax > 0 && (usableTotal === null || tax <= usableTotal)) ? tax : (fromLines ?? (tax === 0 ? 0 : null));
+  // The model's one tax figure against its own itemised tax lines. When the
+  // items account for the whole total, every tax line is there, and a tax
+  // figure that disagrees with their sum is the model summarising badly: the
+  // same folio read twice gave 6760 and then 3717, against tax lines that
+  // summed to 6760 both times. The itemised figures are read one at a time
+  // off the page; the summary is the one to doubt.
+  if (fromLines !== null && taxOut !== null && _itemsAccountForTotal(lineItems, usableTotal) && Math.abs(fromLines - taxOut) > Math.max(1, fromLines * 0.01)) {
+    taxOut = fromLines;
+  }
+
   return {
     merchant:    typeof parsed.merchant === 'string' && parsed.merchant.trim() ? parsed.merchant.trim().slice(0, 120) : null,
     invoiceNumber: typeof parsed.invoiceNumber === 'string' && parsed.invoiceNumber.trim() ? parsed.invoiceNumber.trim().slice(0, 60) : null,
@@ -185,9 +220,7 @@ function normalise(parsed) {
     category,
     currency:    _currency(parsed.currency),
     total:       usableTotal,
-    // Tax cannot exceed the total; if it does, one of the two was misread and
-    // neither should be presented as fact.
-    tax:         (tax !== null && tax > 0 && (usableTotal === null || tax <= usableTotal)) ? tax : (_taxFromLines(lineItems, usableTotal) ?? (tax === 0 ? 0 : null)),
+    tax:         taxOut,
     subTotal:    sub !== null && sub >= 0 && (usableTotal === null || sub <= usableTotal) ? sub : null,
     description: desc,
     lineItems,
@@ -292,13 +325,15 @@ async function parseReceiptText(userId, text, { maxAttempts = 2 } = {}) {
 // Several page images that are ONE document: a hotel folio, a multi-page
 // invoice. Read together, so the total on the last page and the lines on the
 // first belong to one receipt. Never split, whatever the model returns.
+//
+// ONE page is different: it is read like a photo, and a scanned page can hold
+// several receipts laid side by side. Whether that split is safe is
+// splittable()'s call, exactly as for a photo. This used to keep the first
+// receipt on the page and drop the rest without a word.
 async function parseReceiptPages(userId, pages, { maxAttempts = 2 } = {}) {
   const list = (pages || []).filter(p => p && Buffer.isBuffer(p.buffer) && p.buffer.length);
   if (!list.length) return null;
-  if (list.length === 1) {
-    const one = await parseReceiptImage(userId, list[0].buffer, list[0].mime, { maxAttempts });
-    return one ? { receipts: [one.receipts[0]], split: false, reason: 'single page' } : null;
-  }
+  if (list.length === 1) return parseReceiptImage(userId, list[0].buffer, list[0].mime, { maxAttempts });
   const content = [{ type: 'text', text:
     `These ${list.length} images are the PAGES of ONE document (a hotel folio, an invoice or a statement), in order. ` +
     `Read them together as a single receipt and return { "receipts": [ one entry ] }: one merchant, one invoiceNumber, ` +
@@ -308,26 +343,39 @@ async function parseReceiptPages(userId, pages, { maxAttempts = 2 } = {}) {
     content.push({ type: 'text', text: `Page ${i + 1} of ${list.length}:` });
     content.push({ type: 'image_url', image_url: { url: `data:${p.mime};base64,${p.buffer.toString('base64')}` } });
   });
-  const result = await _readWith(userId, content, maxAttempts, { maxTokens: 6000 });
+  const result = await _readWith(userId, content, maxAttempts, { maxTokens: PAGES_MAX_TOKENS });
   if (!result) return null;
   return { receipts: [result.receipts[0]], split: false, reason: 'pages of one document' };
 }
 
+// Output budgets. Every line item is sixty-odd tokens of JSON and a folio for
+// a week runs to fifty of them; at the old 3,000 a forty-line stay was on the
+// edge, and past it the reply was cut off, failed to parse, and the receipt
+// landed blank. The model's own ceiling is far above these, and an unused
+// budget costs nothing — only the tokens actually written are billed.
+const READ_MAX_TOKENS  = 8000;
+const PAGES_MAX_TOKENS = 12000;
+const CEILING_TOKENS   = 32000;
+
 // One attempt loop for both readers: a transient model error or an unusable
-// shape earns a second try, then the receipt is left for the user.
-async function _readWith(userId, userContent, maxAttempts, { maxTokens = 3000 } = {}) {
+// shape earns a second try, then the receipt is left for the user. A reply
+// cut off mid-JSON gets its second try with twice the room, since the same
+// budget would be cut off in the same place.
+async function _readWith(userId, userContent, maxAttempts, { maxTokens = READ_MAX_TOKENS } = {}) {
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user',   content: userContent },
   ];
+  let budget = maxTokens;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const content = await callGemini(userId, messages, { temperature: 0, maxTokens });
+      const content = await callGemini(userId, messages, { temperature: 0, maxTokens: budget });
       const result  = normaliseMany(parseLlmJson(content));
       if (result) return result;
       logger.warn('Receipt parse returned an unusable shape', { userId, attempt });
     } catch (err) {
-      logger.warn('Receipt parse attempt failed', { userId, attempt, error: err.message });
+      if (err.truncated) budget = Math.min(budget * 2, CEILING_TOKENS);
+      logger.warn('Receipt parse attempt failed', { userId, attempt, error: err.message, ...(err.truncated ? { nextMaxTokens: budget } : {}) });
     }
   }
   return null;
@@ -369,7 +417,7 @@ async function _readBatch(userId, images) {
   const raw = await callGemini(userId, [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content },
-  ], { temperature: 0, maxTokens: Math.max(4000, 800 * images.length) });
+  ], { temperature: 0, maxTokens: Math.max(READ_MAX_TOKENS, 1500 * images.length) });
 
   const parsed = parseLlmJson(raw);
   const list = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.receipts) ? parsed.receipts : null);
@@ -421,4 +469,4 @@ async function parseReceiptBatch(userId, images, { batchSize = BATCH_SIZE, onPro
   return results;
 }
 
-module.exports = { parseReceiptImage, parseReceiptText, parseReceiptPages, parseReceiptBatch, _readBatch, BATCH_SIZE, normalise, normaliseMany, splittable, SYSTEM_PROMPT, _num, _isoDate, _time, _currency, _box, _overlapFraction };
+module.exports = { parseReceiptImage, parseReceiptText, parseReceiptPages, parseReceiptBatch, _readBatch, BATCH_SIZE, READ_MAX_TOKENS, PAGES_MAX_TOKENS, normalise, normaliseMany, splittable, SYSTEM_PROMPT, _num, _isoDate, _time, _currency, _box, _overlapFraction, _withoutTransfer };

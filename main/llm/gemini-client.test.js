@@ -83,4 +83,11 @@ describe('gemini-client rotation', () => {
     await callGemini('user1', []);
     expect(axios.post.mock.calls[0][2].headers.Authorization).toBe('Bearer key-multi');
   });
+
+  test('a reply cut off at max_tokens is thrown as truncated, not returned as half a JSON', async () => {
+    process.env.Gemini_API_KEY = 'legacy-key';
+    axios.post.mockResolvedValue({ data: { choices: [{ message: { content: '{"receipts": [' }, finish_reason: 'length' }] } });
+    await expect(callGemini('user1', [], { maxTokens: 10 })).rejects.toMatchObject({ truncated: true, message: expect.stringMatching(/max_tokens=10/) });
+    expect(axios.post).toHaveBeenCalledTimes(1);   // not a quota error, so no rotation
+  });
 });

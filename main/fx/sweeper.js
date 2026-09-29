@@ -23,9 +23,15 @@ let running = false;
 // rate is the whole point; a base-currency line always has 1.
 // Only what a sweep could actually fix. Without the last two conditions the
 // oldest twenty-five expenses that can never be priced — one whose rate was
-// refused and is waiting for a person, one sitting in a submitted report — held
+// refused and is waiting for a person, one sitting in a claimed case — held
 // the batch for ever, and the twenty-sixth, which the provider would have
 // priced instantly, was never reached on any sweep.
+//
+// A case is 'open' or 'claimed', nothing else (reports/workflow.js). This
+// used to ask for 'draft' or 'rejected', the names from before cases, and
+// since every receipt now lives in a case from the moment it lands, the query
+// matched nothing at all: the sweeper ran every quarter of an hour and never
+// priced a line.
 function pendingExpenseIds(limit = BATCH) {
   return db.prepare(`SELECT DISTINCT e.id FROM expenses e
                      JOIN expense_lines l ON l.expense_id = e.id
@@ -34,7 +40,7 @@ function pendingExpenseIds(limit = BATCH) {
                        AND l.fx_override_by IS NULL
                        AND l.fx_check IS NULL
                        AND e.status NOT IN ('duplicate', 'rejected')
-                       AND (e.report_id IS NULL OR r.status IN ('draft', 'rejected'))
+                       AND (e.report_id IS NULL OR r.status = 'open')
                      ORDER BY e.created_at LIMIT ?`).all(limit).map(r => r.id);
 }
 
