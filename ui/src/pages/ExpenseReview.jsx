@@ -29,7 +29,7 @@ export default function ExpenseReview() {
   const [exp, setExp] = useState(null);
   const [rateEdit, setRateEdit] = useState(null);
   const [locked, setLocked] = useState(false);
-  const [drafts, setDrafts] = useState([]);
+  const [cases, setCases] = useState([]);
   const [imageUrl, setImageUrl] = useState(null);
   const [form, setForm] = useState({});
   const [lines, setLines] = useState([]);
@@ -60,7 +60,11 @@ export default function ExpenseReview() {
   }, [id]);
 
   useEffect(() => { setMsg(null); load().catch(e => setMsg({ tone: 'error', text: e.message })); }, [load]);
-  useEffect(() => { api.get('/company').then(d => { setCategories(d.categories); setCurrencies(d.currencies || []); }).catch(() => {}); api.get('/reports').then(d => setDrafts(d.reports.filter(r => ['draft', 'rejected'].includes(r.status)))).catch(() => {}); }, []);
+  // Every case in the company for an admin, the person's own for anyone else
+  // (the server answers scope=all with your own unless you are an admin).
+  // Which of them may take this receipt is decided at render, once the
+  // expense and its owner are known.
+  useEffect(() => { api.get('/company').then(d => { setCategories(d.categories); setCurrencies(d.currencies || []); }).catch(() => {}); api.get('/reports?scope=all').then(d => setCases(d.reports || [])).catch(() => {}); }, []);
   useEffect(() => {
     // The image token lives five minutes; refresh it, and keep polling while the reader works.
     const t = setInterval(() => load({ preserveEdits: true }).catch(() => {}), exp?.status === 'reading' ? 2500 : 4 * 60 * 1000);
@@ -133,6 +137,13 @@ export default function ExpenseReview() {
   const idx = group?.siblings?.findIndex(s => s.id === id) ?? -1;
   const prev = idx > 0 ? group.siblings[idx - 1] : null;
   const next = idx >= 0 && idx < (group?.siblings?.length || 0) - 1 ? group.siblings[idx + 1] : null;
+  // The owner's open cases can take it, and the one it is already in is shown
+  // whatever its state, so a filed receipt never shows a blank box. This list
+  // used to be filtered on statuses that no longer exist, so it was always
+  // empty: a filed receipt read "Not filed yet", and picking that — the only
+  // choice there was — took it out of its case on Save.
+  const caseOptions = cases.filter(r => r.userId === exp.userId && (r.status === 'open' || r.id === exp.reportId));
+  const caseKnown = !exp.reportId || caseOptions.some(r => r.id === exp.reportId);
 
   return (
     <div>
@@ -202,8 +213,9 @@ export default function ExpenseReview() {
             <div className="form-group">
               <label className="form-label" htmlFor="f-report">Case</label>
               <select id="f-report" className="form-input" value={form.reportId || ''} onChange={e => set('reportId', e.target.value)} disabled={locked}>
-                <option value="">Not filed yet</option>
-                {drafts.map(r => <option key={r.id} value={r.id}>{r.number} {r.title || ''}</option>)}
+                <option value="">Not in a case</option>
+                {!caseKnown && <option value={exp.reportId}>Its case</option>}
+                {caseOptions.map(r => <option key={r.id} value={r.id}>{r.number} {r.title || ''}</option>)}
               </select>
             </div>
             {exp.description && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Reader's note: {exp.description}</div>}

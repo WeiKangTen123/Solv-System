@@ -105,6 +105,14 @@ async function _callOnce(model, key, messages, opts) {
   );
   const choice = response.data.choices?.[0];
   if (!choice?.message?.content) throw new Error(`Gemini returned empty response (model: ${model})`);
+  // A reply that ran into max_tokens is half a JSON document. Returned, it
+  // failed to parse and the receipt was left blank with nothing saying why;
+  // thrown with a flag, the reader can ask again with a larger budget.
+  if (choice.finish_reason === 'length') {
+    const err = new Error(`Gemini reply was cut off at max_tokens=${opts.maxTokens ?? 800} (model: ${model})`);
+    err.truncated = true;
+    throw err;
+  }
   return choice.message.content;
 }
 

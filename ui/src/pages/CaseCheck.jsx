@@ -194,7 +194,10 @@ export default function CaseCheck() {
                                disabled={!mayEdit} value={row.receiptDate || ''} onChange={ev => set(e.id, 'receiptDate', ev.target.value)} /></td>
                     <td><input className="form-input" style={{ minWidth: 126 }}
                                disabled={!mayEdit} value={row.merchant || ''} placeholder="Merchant"
-                               onChange={ev => set(e.id, 'merchant', ev.target.value)} /></td>
+                               onChange={ev => set(e.id, 'merchant', ev.target.value)} />
+                      {/* What the reader could not settle — an assumed currency, a
+                          possible duplicate — belongs beside the row it is about. */}
+                      {e.errorMsg && <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 3, maxWidth: 220, lineHeight: 1.3 }}>{e.errorMsg}</div>}</td>
                     <td>
                       {many
                         ? <Link to={`/expenses/${e.id}`} style={{ fontSize: 12 }}>{e.lines.length} lines →</Link>

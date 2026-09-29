@@ -52,14 +52,18 @@ async function run({ db: source = db, destDir = BACKUP_DIR } = {}) {
   // back in. Switching the copy to DELETE mode checkpoints and removes them,
   // leaving a single portable .db file and letting _prune()'s filename filter
   // (which only tracks *.db) actually account for everything on disk.
-  let result;
+  // Closed in `finally`: a copy that is not a database throws out of the
+  // first pragma, and a handle left open on it made the unlink below fail
+  // quietly, leaving the bad file on disk looking like a backup.
+  let result, copy = null;
   try {
-    const copy = new Database(dest);
+    copy = new Database(dest);
     copy.pragma('journal_mode = DELETE');
     result = copy.pragma('integrity_check', { simple: true });
-    copy.close();
   } catch (err) {
     result = err.message;
+  } finally {
+    try { if (copy) copy.close(); } catch { /* already closed or never opened */ }
   }
   if (result !== 'ok') {
     try { fs.unlinkSync(dest); } catch {}

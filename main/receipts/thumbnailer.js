@@ -31,6 +31,11 @@ function sharp() {
       // run honest: several jest workers each spawning a CPU-sized pool
       // oversubscribes the machine badly enough to disturb unrelated suites.
       _sharp.concurrency(1);
+      // libvips caches recent operations, which keeps their input files open.
+      // A thumbnail is made once per receipt and never revisited, so the cache
+      // buys nothing here, and an open handle on the original stops a re-read
+      // or rotate from writing the file back in place on Windows.
+      _sharp.cache(false);
     } catch (err) {
       _sharpFailed = true;
       logger.warn('sharp unavailable — receipts will be served at full size', { error: err.message });
