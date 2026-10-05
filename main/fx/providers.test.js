@@ -69,3 +69,40 @@ describe('fx/providers', () => {
     expect(await erapi('XXX', 'SGD')).toBeNull();
   });
 });
+
+describe('fx/providers — whole tables for the live board', () => {
+  const { frankfurterAll, erapiAll, oxrAll, crossRate } = require('./providers');
+  beforeEach(() => jest.clearAllMocks());
+
+  test('each free feed answers every currency against the base in one request', async () => {
+    axios.get.mockResolvedValueOnce({ data: { amount: 1, base: 'SGD', date: '2026-10-05', rates: { INR: 75.216, MYR: 3.1923 } } });
+    expect(await frankfurterAll('SGD')).toEqual({ source: 'frankfurter', base: 'SGD', providerDate: '2026-10-05', providerTime: null, rates: { INR: 75.216, MYR: 3.1923 } });
+    expect(axios.get.mock.calls[0][0]).toBe('https://api.frankfurter.dev/v1/latest?base=SGD');
+
+    axios.get.mockResolvedValueOnce({ data: { result: 'success', base_code: 'SGD', time_last_update_utc: 'Mon, 05 Oct 2026 00:02:31 +0000', rates: { INR: 75.220879, VND: 20279.08 } } });
+    expect(await erapiAll('SGD')).toMatchObject({ source: 'open.er-api', providerDate: '2026-10-05', providerTime: '2026-10-05T00:02:31.000Z', rates: { VND: 20279.08 } });
+    expect(axios.get.mock.calls[1][0]).toBe('https://open.er-api.com/v6/latest/SGD');
+
+    axios.get.mockRejectedValueOnce(new Error('timeout'));
+    expect(await frankfurterAll('SGD')).toBeNull();
+  });
+
+  test('Open Exchange Rates is asked in dollars and says what is wrong in its own words', async () => {
+    axios.get.mockResolvedValueOnce({ data: { timestamp: 1791295200, base: 'USD', rates: { SGD: 1.28, INR: 96.32 } } });
+    const t = await oxrAll('abc');
+    expect(t).toMatchObject({ source: 'openexchangerates', base: 'USD', providerTime: '2026-10-06T14:00:00.000Z', providerDate: '2026-10-06' });
+    expect(axios.get.mock.calls[0][0]).toBe('https://openexchangerates.org/api/latest.json?app_id=abc');
+    axios.get.mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 401'), { response: { status: 401, data: { error: true, message: 'invalid_app_id', description: 'Invalid App ID provided.' } } }));
+    await expect(oxrAll('bad')).rejects.toThrow('Open Exchange Rates: Invalid App ID provided.');
+    await expect(oxrAll('')).rejects.toThrow(/No Open Exchange Rates App ID/);
+  });
+
+  test('crossRate reads any pair out of a table, counting the base as 1, and null when one side is missing', () => {
+    const t = { base: 'USD', rates: { SGD: 1.28, INR: 96.32 } };
+    expect(crossRate(t, 'INR', 'SGD')).toBeCloseTo(1.28 / 96.32, 12);
+    expect(crossRate(t, 'USD', 'SGD')).toBe(1.28);
+    expect(crossRate(t, 'SGD', 'USD')).toBeCloseTo(1 / 1.28, 12);
+    expect(crossRate(t, 'VND', 'SGD')).toBeNull();
+    expect(crossRate(null, 'INR', 'SGD')).toBeNull();
+  });
+});

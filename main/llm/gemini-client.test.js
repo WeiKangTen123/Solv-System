@@ -1,11 +1,12 @@
 jest.mock('axios');
 jest.mock('../store/users', () => ({
   getGeminiKeysForUser: jest.fn(),
+  recordKeyUse: jest.fn(),
   findById: jest.fn(() => ({ companyId: 'c1' })),
 }));
 
 const axios = require('axios');
-const { getGeminiKeysForUser } = require('../store/users');
+const { getGeminiKeysForUser, recordKeyUse } = require('../store/users');
 
 function quotaError() {
   const err = new Error('quota exceeded');
@@ -82,6 +83,30 @@ describe('gemini-client rotation', () => {
 
     await callGemini('user1', []);
     expect(axios.post.mock.calls[0][2].headers.Authorization).toBe('Bearer key-multi');
+  });
+
+  test('what happened to each stored key is written back to it; the server fallback key has no row', async () => {
+    getGeminiKeysForUser.mockReturnValue([{ apiKey: 'k1', id: 7, scope: 'user' }, { apiKey: 'k2', id: 3, scope: 'company' }]);
+    axios.post
+      .mockRejectedValueOnce(quotaError()).mockRejectedValueOnce(quotaError())   // k1, both models
+      .mockResolvedValueOnce(okResponse('ok'));                                   // k2, first model
+    await callGemini('user1', []);
+    expect(recordKeyUse.mock.calls.map(c => [c[0], c[1], c[2].ok ? 'ok' : c[2].error])).toEqual([
+      ['user', 7, 'Out of quota or rate-limited'], ['user', 7, 'Out of quota or rate-limited'], ['company', 3, 'ok'],
+    ]);
+
+    recordKeyUse.mockClear();
+    getGeminiKeysForUser.mockReturnValue([{ apiKey: 'k3', id: 9, scope: 'company' }]);
+    axios.post.mockRejectedValueOnce(authError());
+    await expect(callGemini('user1', [])).rejects.toThrow('invalid api key');
+    expect(recordKeyUse).toHaveBeenCalledWith('company', 9, expect.objectContaining({ error: expect.stringMatching(/Rejected/) }));
+
+    recordKeyUse.mockClear();
+    getGeminiKeysForUser.mockReturnValue([]);
+    process.env.Gemini_API_KEY = 'env-key';
+    axios.post.mockResolvedValueOnce(okResponse('ok'));
+    await callGemini('user1', []);
+    expect(recordKeyUse).not.toHaveBeenCalled();
   });
 
   test('a reply cut off at max_tokens is thrown as truncated, not returned as half a JSON', async () => {

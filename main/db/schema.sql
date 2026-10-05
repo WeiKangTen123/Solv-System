@@ -176,6 +176,42 @@ CREATE TABLE IF NOT EXISTS fx_rates (
   PRIMARY KEY (base, quote, rate_date, source)
 );
 
+-- The live board (fx/live.js). The latest rate for every currency a company
+-- watches, refreshed on a schedule; same direction as fx_rates, one unit of
+-- `base` in `quote` (INR → SGD is base INR, quote SGD). Replaced in place on
+-- each refresh: the history is the daily close, written into fx_rates.
+CREATE TABLE IF NOT EXISTS fx_live (
+  base          TEXT NOT NULL,
+  quote         TEXT NOT NULL,
+  rate          REAL NOT NULL,
+  source        TEXT NOT NULL,
+  provider_date TEXT,            -- the day the provider says the rate is for
+  provider_time TEXT,            -- when the provider last moved it, where it says
+  fetched_at    TEXT NOT NULL,
+  divergence    REAL,            -- how far the other provider was, as a fraction
+  PRIMARY KEY (base, quote)
+);
+
+-- Currencies an admin asked to watch before any receipt used them. Every
+-- currency a receipt has used is watched without being listed here.
+CREATE TABLE IF NOT EXISTS fx_watch (
+  company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  currency   TEXT NOT NULL,
+  added_by   TEXT,
+  added_at   TEXT NOT NULL,
+  PRIMARY KEY (company_id, currency)
+);
+
+-- One row per company per day the close has been taken, so a restart neither
+-- takes it twice nor forgets to take it.
+CREATE TABLE IF NOT EXISTS fx_closes (
+  company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  close_date TEXT NOT NULL,
+  closed_at  TEXT NOT NULL,
+  summary    TEXT,
+  PRIMARY KEY (company_id, close_date)
+);
+
 CREATE TABLE IF NOT EXISTS report_events (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   report_id TEXT NOT NULL REFERENCES expense_reports(id) ON DELETE CASCADE,

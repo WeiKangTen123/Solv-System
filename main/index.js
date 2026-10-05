@@ -106,6 +106,10 @@ app.listen(PORT, HOST, () => {
   // Re-prices anything left without an exchange rate because a provider was
   // unreachable when the receipt was read. Quarter-hourly, small batches.
   require('./fx/sweeper').start();
+
+  // The live exchange-rate board: refreshed through the day, and closed into
+  // the daily log at 23:55 company time. See fx/live.js.
+  require('./fx/live').start();
 });
 
 module.exports = app;

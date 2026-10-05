@@ -2,6 +2,7 @@ const store  = require('../store/expenses');
 const users  = require('../store/users');
 const rates  = require('./rates');
 const logger = require('../utils/logger');
+const { localDate } = require('../utils/zone-date');
 
 // Puts a rate on every line of an expense and freezes it there. Which date
 // the rate is for comes from the company policy; a rate a person typed in
@@ -39,7 +40,9 @@ async function applyFx(expenseId, { force = false } = {}) {
   }
 
   const date = policyDate(company.fxPolicy, e);
-  let r = await rates.getRate({ from: e.currency, to: base, date, force });
+  // The company's own today decides whether this day may take the live
+  // board's figure (fx/live.js) or must be priced from its history.
+  let r = await rates.getRate({ from: e.currency, to: base, date, force, today: localDate(company.timezone) });
   // A fixed monthly table is a promise finance made; a provider's number is not it.
   if (r && company.fxPolicy === 'monthly_fixed' && r.source !== 'manual') r = null;
   // A rate that moved further than a currency moves is not put on a line: the

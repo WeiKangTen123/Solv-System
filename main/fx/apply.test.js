@@ -15,7 +15,8 @@ describe('fx/apply', () => {
     const e = exp('INR', 88188.77, [{ category: 'Lodging', amount: 43131.36 }, { category: 'Lodging', amount: 36713.34, onBehalfOf: 'Lim Wei Jie' }, { category: 'Meals', amount: 8344.07 }]);
     const out = await apply.applyFx(e.id);
     expect(out.pending).toBe(0);
-    expect(rates.getRate).toHaveBeenCalledWith({ from: 'INR', to: 'SGD', date: '2026-09-04', force: false });
+    // `today` is the company's own date, which decides whether the live board may price the day.
+    expect(rates.getRate).toHaveBeenCalledWith({ from: 'INR', to: 'SGD', date: '2026-09-04', force: false, today: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
     const after = store.getExpense(e.id);
     expect(after.lines.map(l => l.baseAmount)).toEqual([578.39, 492.33, 111.89]);
     expect(after.lines[0]).toMatchObject({ fxRate: 0.01341, fxRateDate: '2026-09-04', fxSource: 'frankfurter', fxPolicy: 'receipt_date' });

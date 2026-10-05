@@ -6,10 +6,21 @@ const logger = require('../utils/logger');
 // known — a historical reference rate never changes — except today's, which
 // providers update through the day and which is re-fetched after an hour.
 //
-// Priority when several rows exist for a day: a rate finance typed in, then
-// the ECB reference rate, then the daily open.er-api rate.
-const PRIORITY = { manual: 0, frankfurter: 1, 'open.er-api': 2 };
+// Which row prices a day, when several exist for it:
+//   1. a rate an admin typed in for that day — a decision, never overridden
+//   2. the day's close (fx/live.js), the last live rate of the day, written
+//      at the end of it — the day's price for every receipt dated that day
+//   3. a lookup made for that day: the ECB reference rate, then the paid
+//      intraday feed if one is configured, then the daily open.er-api rate
+//
+// Today, before the close, a receipt takes the live board's rate when the
+// board refreshed recently, and moves to the close that night.
+const PRIORITY = { manual: 0, frankfurter: 1, openexchangerates: 2, 'open.er-api': 3 };
 const TODAY_TTL_MS = 60 * 60 * 1000;
+// How old the live board's rate may be and still price a receipt. Twice the
+// default refresh interval with room to spare; past that the board has
+// stopped refreshing and a provider is asked directly, as before it existed.
+const LIVE_FRESH_MS = 3 * 60 * 60 * 1000;
 const today = () => new Date().toISOString().slice(0, 10);
 
 // Two checks on every rate the providers hand over, because nothing else looks
@@ -22,7 +33,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 //   moved       this rate is a long way from the last one we knew for the pair.
 //               A currency can genuinely move, but not usually by a tenth in a
 //               day, so this one does block: the line is left without a rate
-//               and says why, and finance types the rate in to settle it.
+//               and says why, and an admin types the rate in to settle it.
 const DIVERGENCE_FLAG = 0.01;
 // A tenth in a day is the bar, and it grows with the gap: a rate ten days older
 // is a weaker comparison, and judging it by the same tenth refused legitimate
@@ -37,7 +48,7 @@ function _row(r) {
   if (!r) return null;
   const row = { from: r.base, to: r.quote, rateDate: r.rate_date, rate: r.rate, source: r.source, fetchedAt: r.fetched_at,
     providerDate: r.provider_date || r.rate_date, enteredBy: r.entered_by || null,
-    divergence: r.divergence ?? null, moved: r.moved ?? null };
+    divergence: r.divergence ?? null, moved: r.moved ?? null, closedAt: r.closed_at || null };
   row.notes = [];
   if (row.source !== 'manual') {
     if (row.divergence !== null && Math.abs(row.divergence) > DIVERGENCE_FLAG) {
@@ -51,12 +62,15 @@ function _row(r) {
   return row;
 }
 
+// Manual first, then the day's close, then the providers in PRIORITY order.
+const _rank = r => (r.source === 'manual' ? 0 : r.closedAt ? 1 : 2 + (PRIORITY[r.source] ?? 9));
+
 // How far this rate is from the last one known for the pair.
 //
 // Three things it deliberately does not compare against. A rate somebody typed
 // in, because that is a human decision and a typo in it would block every real
 // rate after it. A rate this check itself rejected — those are no longer stored
-// at all, see _fetch. And a row whose real pricing day is far from this one:
+// at all, see _accept. And a row whose real pricing day is far from this one:
 // the comparison is made on provider_date, not on the date the row is filed
 // under, because for the currencies with no published history every row is
 // filed under its receipt's date while holding the rate of the day it was
@@ -74,17 +88,40 @@ function _movement(from, to, pricedOn, rate) {
 
 function _cached(from, to, date) {
   const rows = db.prepare('SELECT * FROM fx_rates WHERE base = ? AND quote = ? AND rate_date = ?').all(from, to, date).map(_row);
-  rows.sort((a, b) => (PRIORITY[a.source] ?? 9) - (PRIORITY[b.source] ?? 9));
+  rows.sort((a, b) => _rank(a) - _rank(b));
   return rows[0] || null;
 }
 
-function _save({ from, to, date, rate, source, providerDate, by = null, divergence = null, moved = null }) {
-  db.prepare(`INSERT INTO fx_rates (base, quote, rate_date, rate, source, fetched_at, provider_date, entered_by, divergence, moved)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+// A close, once taken, stays a close: a later lookup for the same day from the
+// same provider may refresh the figure but must not demote the row.
+function _save({ from, to, date, rate, source, providerDate, by = null, divergence = null, moved = null, closedAt = null }) {
+  db.prepare(`INSERT INTO fx_rates (base, quote, rate_date, rate, source, fetched_at, provider_date, entered_by, divergence, moved, closed_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(base, quote, rate_date, source) DO UPDATE SET rate = excluded.rate, fetched_at = excluded.fetched_at,
-                provider_date = excluded.provider_date, entered_by = excluded.entered_by, divergence = excluded.divergence, moved = excluded.moved`)
-    .run(from, to, date, rate, source, new Date().toISOString(), providerDate || date, by, divergence, moved);
+                provider_date = excluded.provider_date, entered_by = excluded.entered_by, divergence = excluded.divergence, moved = excluded.moved,
+                closed_at = COALESCE(excluded.closed_at, fx_rates.closed_at)`)
+    .run(from, to, date, rate, source, new Date().toISOString(), providerDate || date, by, divergence, moved, closedAt);
   return _cached(from, to, date);
+}
+
+// Every rate on its way to being stored goes through here: a lookup, the live
+// board's rate pricing a receipt today, and the day's close. A rate the move
+// check refuses is NOT stored. Storing it made the block permanent — a
+// historical row never expires, so the refused rate came back from the cache
+// for ever — and made the glitch the baseline the next day, so one bad
+// morning from a provider refused two days of correct rates. Nothing cached
+// means the next look asks the provider again.
+function _accept({ from, to, date, rate, source, providerDate, divergence = null, closedAt = null }) {
+  const m = _movement(from, to, providerDate || date, rate);
+  if (m && Math.abs(m.moved) > allowedMove(m.days)) {
+    logger.warn('Rate moved further than expected; not stored', { from, to, date, rate, moved: m.moved, days: m.days, against: m.against });
+    return {
+      from, to, rateDate: date, rate, source, providerDate,
+      fetchedAt: new Date().toISOString(), divergence, moved: m.moved, movedOverDays: m.days, notes: [],
+      blocked: `${from} moved ${(m.moved * 100).toFixed(1)}% against ${to} since the rate of ${m.on}. Check it, then enter the rate to use.`,
+    };
+  }
+  return _save({ from, to, date, rate, source, providerDate, divergence, moved: m ? m.moved : null, closedAt });
 }
 
 async function _fetch(from, to, date) {
@@ -101,38 +138,91 @@ async function _fetch(from, to, date) {
     return null;
   }
   const divergence = f && alt ? (f.rate - alt.rate) / alt.rate : null;
-  const m = _movement(from, to, chosen.providerDate || date, chosen.rate);
   if (divergence !== null && Math.abs(divergence) > DIVERGENCE_FLAG) {
     logger.warn('Rate providers disagree', { from, to, date, frankfurter: f.rate, erapi: alt.rate, divergence });
   }
-  // A rate this check rejects is NOT stored. Storing it made the block
-  // permanent — a historical row never expires, so the refused rate came back
-  // from the cache for ever — and made the glitch the baseline the next day,
-  // so one bad morning from a provider refused two days of correct rates.
-  // Nothing cached means the next look asks the provider again.
-  if (m && Math.abs(m.moved) > allowedMove(m.days)) {
-    logger.warn('Rate moved further than expected; not stored', { from, to, date, rate: chosen.rate, moved: m.moved, days: m.days, against: m.against });
-    return {
-      from, to, rateDate: date, rate: chosen.rate, source: chosen.source, providerDate: chosen.providerDate,
-      fetchedAt: new Date().toISOString(), divergence, moved: m.moved, movedOverDays: m.days, notes: [],
-      blocked: `${from} moved ${(m.moved * 100).toFixed(1)}% against ${to} since the rate of ${m.on}. Check it, then enter the rate to use.`,
-    };
-  }
-  return _save({ from, to, date, rate: chosen.rate, source: chosen.source, providerDate: chosen.providerDate, divergence, moved: m ? m.moved : null });
+  return _accept({ from, to, date, rate: chosen.rate, source: chosen.source, providerDate: chosen.providerDate, divergence });
 }
 
-async function getRate({ from, to, date, force = false }) {
+// The live board's latest rate for a pair, or null. Written by fx/live.js.
+function liveRate(from, to) {
+  const r = db.prepare('SELECT * FROM fx_live WHERE base = ? AND quote = ?').get(from, to);
+  return r ? { from: r.base, to: r.quote, rate: r.rate, source: r.source, providerDate: r.provider_date, providerTime: r.provider_time,
+               fetchedAt: r.fetched_at, divergence: r.divergence ?? null } : null;
+}
+
+// `localToday` is the company's own date (utils/zone-date.js). Only a day on
+// or after it may take the live board's figure; without it, UTC's date is
+// used, which in Singapore is still yesterday until 08:00.
+async function getRate({ from, to, date, force = false, today: localToday = null }) {
   if (!from || !to) return null;
   if (from === to) return { from, to, rateDate: date, rate: 1, source: 'same', fetchedAt: new Date().toISOString(), providerDate: date };
-  const day = date || today();
+  const day = date || localToday || today();
   const hit = _cached(from, to, day);
   if (hit && hit.source === 'manual') return hit;          // a decision, never re-fetched over
+  // A closed day has its price. Refresh asks again only for a day still open,
+  // so the Refresh button cannot move a receipt off the close its day settled.
+  if (hit && hit.closedAt) return hit;
+  // Today, before the close: the live board's rate while it is fresh.
+  if (day >= (localToday || today())) {
+    const live = liveRate(from, to);
+    if (live && Date.now() - Date.parse(live.fetchedAt) <= LIVE_FRESH_MS) {
+      if (hit && !force && Date.parse(hit.fetchedAt) >= Date.parse(live.fetchedAt)) return hit;
+      return _accept({ from, to, date: day, rate: live.rate, source: live.source, providerDate: live.providerDate, divergence: live.divergence });
+    }
+  }
   if (hit && !force) {
-    const stale = hit.source !== 'manual' && day >= today() && Date.now() - Date.parse(hit.fetchedAt) > TODAY_TTL_MS;
+    const stale = day >= today() && Date.now() - Date.parse(hit.fetchedAt) > TODAY_TTL_MS;
     if (!stale) return hit;
   }
   const fresh = await _fetch(from, to, day);
   return fresh || hit || null;
+}
+
+// The day's close: the live rate at the end of the day, stored as the price
+// of that day. Returns the stored row, or the refusal when it moved too far.
+function recordClose({ from, to, date, rate, source, providerDate, divergence = null }) {
+  return _accept({ from, to, date, rate, source, providerDate, divergence, closedAt: new Date().toISOString() });
+}
+
+// For a day the server was not running at the end of: the rate a lookup
+// found for it becomes its close.
+function markClosed({ from, to, date, source }) {
+  db.prepare('UPDATE fx_rates SET closed_at = ? WHERE base = ? AND quote = ? AND rate_date = ? AND source = ? AND closed_at IS NULL')
+    .run(new Date().toISOString(), from, to, date, source);
+  return _cached(from, to, date);
+}
+
+// The most recent close strictly before `date`, or, before any close was ever
+// taken, the most recent provider rate — so the board has a comparison from
+// its first day rather than a blank.
+function lastClose(from, to, before) {
+  const closed = db.prepare(`SELECT * FROM fx_rates WHERE base = ? AND quote = ? AND closed_at IS NOT NULL AND rate_date < ?
+                             ORDER BY rate_date DESC LIMIT 1`).get(from, to, before);
+  if (closed) return _row(closed);
+  const any = db.prepare(`SELECT * FROM fx_rates WHERE base = ? AND quote = ? AND source != 'manual' AND rate_date < ?
+                          ORDER BY rate_date DESC LIMIT 1`).get(from, to, before);
+  return _row(any);
+}
+
+// One entry per day, newest first: the row that prices the day, and, when an
+// admin's rate overrides it, the provider figure it overrode.
+function history(from, to, { limit = 60 } = {}) {
+  const rows = db.prepare('SELECT * FROM fx_rates WHERE base = ? AND quote = ? ORDER BY rate_date DESC').all(from, to).map(_row);
+  const byDay = new Map();
+  for (const r of rows) {
+    if (!byDay.has(r.rateDate)) byDay.set(r.rateDate, []);
+    byDay.get(r.rateDate).push(r);
+  }
+  const out = [];
+  for (const [date, list] of byDay) {
+    list.sort((a, b) => _rank(a) - _rank(b));
+    const [top] = list;
+    const under = top.source === 'manual' ? list.find(r => r.source !== 'manual') || null : null;
+    out.push({ date, ...top, overrides: under ? { rate: under.rate, source: under.source, closedAt: under.closedAt } : null });
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 function setManualRate({ from, to, date, rate, by }) {
@@ -154,4 +244,7 @@ function listRates({ to, from, since } = {}) {
   return db.prepare(`SELECT * FROM fx_rates ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY rate_date DESC, base, source LIMIT 500`).all(...args).map(_row);
 }
 
-module.exports = { getRate, setManualRate, deleteManualRate, listRates, TODAY_TTL_MS, PRIORITY, DIVERGENCE_FLAG, MAX_MOVE, MOVE_CEILING, MOVE_WINDOW_DAYS, allowedMove };
+module.exports = {
+  getRate, setManualRate, deleteManualRate, listRates, liveRate, recordClose, markClosed, lastClose, history,
+  TODAY_TTL_MS, LIVE_FRESH_MS, PRIORITY, DIVERGENCE_FLAG, MAX_MOVE, MOVE_CEILING, MOVE_WINDOW_DAYS, allowedMove,
+};

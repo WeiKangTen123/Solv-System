@@ -29,6 +29,19 @@ function run() {
   // published rate for), kept beside the date the provider actually priced.
   _ensureColumn('expense_lines', 'fx_asked_date', 'fx_asked_date TEXT');
   _ensureColumn('expense_lines', 'fx_check', 'fx_check TEXT');
+  // Set when a row is the day's close (fx/live.js): the rate that day's
+  // receipts are priced at, ahead of any lookup made for the same day.
+  _ensureColumn('fx_rates', 'closed_at', 'closed_at TEXT');
+  // An Open Exchange Rates App ID, for a live board that moves within the day.
+  _ensureColumn('company_credentials', 'fx_oxr_app_id', 'fx_oxr_app_id TEXT');
+  // What the reader last saw from each key, so Settings can say which one
+  // works and which ran out — rather than only listing them.
+  for (const table of ['company_gemini_keys', 'user_gemini_keys']) {
+    _ensureColumn(table, 'last_ok_at', 'last_ok_at TEXT');
+    _ensureColumn(table, 'last_error_at', 'last_error_at TEXT');
+    _ensureColumn(table, 'last_error', 'last_error TEXT');
+    _ensureColumn(table, 'last_model', 'last_model TEXT');
+  }
 
   // Steps run in ascending order, because each one stamps the database with its
   // own number and a lower number is then skipped for good.

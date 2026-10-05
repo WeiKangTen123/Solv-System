@@ -67,4 +67,70 @@ async function erapi(from, to) {
   return direct;
 }
 
-module.exports = { frankfurter, erapi, TIMEOUT, THIN_RATE };
+// ── Every currency at once, for the live board ────────────────────────────
+// One request returns the provider's whole table against one base, so the
+// board costs the same to refresh for two currencies as for twenty. A table
+// is { source, base, providerDate, providerTime, rates: { XXX: units of XXX
+// for one unit of base } }, and crossRate() reads any pair out of it.
+//
+// Asked against the company's base and inverted, which is the direction that
+// keeps the precision: SGD → INR is 75.216, five figures, where INR → SGD is
+// printed as 0.0133, three. Same reasoning as THIN_RATE above.
+
+async function frankfurterAll(base) {
+  try {
+    const { data } = await axios.get(`https://api.frankfurter.dev/v1/latest?base=${encodeURIComponent(base)}`, { timeout: TIMEOUT });
+    if (!data || !data.rates || !Object.keys(data.rates).length) return null;
+    return { source: 'frankfurter', base, providerDate: data.date || null, providerTime: null, rates: data.rates };
+  } catch (err) {
+    logger.info('frankfurter table unavailable', { base, error: err.message });
+    return null;
+  }
+}
+
+async function erapiAll(base) {
+  try {
+    const { data } = await axios.get(`https://open.er-api.com/v6/latest/${encodeURIComponent(base)}`, { timeout: TIMEOUT });
+    if (!data || data.result !== 'success' || !data.rates) return null;
+    const at = data.time_last_update_utc ? new Date(data.time_last_update_utc) : null;
+    const iso = at && !Number.isNaN(at.getTime()) ? at.toISOString() : null;
+    return { source: 'open.er-api', base, providerDate: iso ? iso.slice(0, 10) : null, providerTime: iso, rates: data.rates };
+  } catch (err) {
+    logger.info('open.er-api table unavailable', { base, error: err.message });
+    return null;
+  }
+}
+
+// Open Exchange Rates: keyed, and the one that moves within the day — hourly
+// on the free plan, every 30 or 5 minutes on paid ones. The free plan is fixed
+// to a US-dollar base, so it is always asked in dollars and every pair is a
+// cross through them; that works on every plan and costs one request.
+//
+// Unlike the free feeds this THROWS, with Open Exchange Rates' own words,
+// because the caller is either an admin checking a key they just pasted or
+// the scheduler, which logs it; neither is served by a silent null.
+async function oxrAll(appId) {
+  if (!appId) throw new Error('No Open Exchange Rates App ID');
+  try {
+    const { data } = await axios.get(`https://openexchangerates.org/api/latest.json?app_id=${encodeURIComponent(appId)}`, { timeout: TIMEOUT });
+    if (!data || !data.rates || !data.base) throw new Error('Open Exchange Rates answered without rates');
+    const at = Number(data.timestamp) > 0 ? new Date(Number(data.timestamp) * 1000).toISOString() : null;
+    return { source: 'openexchangerates', base: data.base, providerDate: at ? at.slice(0, 10) : null, providerTime: at, rates: data.rates };
+  } catch (err) {
+    const body = err.response && err.response.data;
+    const said = body && (body.description || body.message);
+    throw new Error(said ? `Open Exchange Rates: ${said}` : err.message);
+  }
+}
+
+// One unit of `from` in `to`, read from a table, or null when the table does
+// not carry both. The table's own base is worth exactly 1 of itself.
+function crossRate(table, from, to) {
+  if (!table || !table.rates) return null;
+  const per = c => (c === table.base ? 1 : Number(table.rates[c]));
+  const f = per(from), t = per(to);
+  if (!(f > 0) || !(t > 0)) return null;
+  return t / f;
+}
+
+module.exports = { frankfurter, erapi, frankfurterAll, erapiAll, oxrAll, crossRate, TIMEOUT, THIN_RATE };

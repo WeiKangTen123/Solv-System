@@ -16,6 +16,7 @@ router.get('/me/gemini-keys', requireAuth, (req, res) => {
       label: k.label,
       createdAt: k.createdAt,
       keyMasked: k.apiKey.length > 8 ? `${k.apiKey.slice(0, 4)}••••••••••••••••${k.apiKey.slice(-4)}` : '••••',
+      lastOkAt: k.lastOkAt, lastErrorAt: k.lastErrorAt, lastError: k.lastError, lastModel: k.lastModel,
     }))
   });
 });
@@ -23,7 +24,10 @@ router.get('/me/gemini-keys', requireAuth, (req, res) => {
 router.post('/me/gemini-keys', requireAuth, async (req, res) => {
   try {
     const { apiKey, label } = req.body || {};
-    const result = users.addUserGeminiKey(req.user.id, apiKey.trim(), label ? label.trim() : null);
+    // Checked here: an absent key used to reach .trim() and come back as
+    // "Cannot read properties of undefined".
+    if (typeof apiKey !== 'string' || !apiKey.trim()) return res.status(400).json({ error: 'Paste an API key first' });
+    const result = users.addUserGeminiKey(req.user.id, apiKey.trim(), typeof label === 'string' && label.trim() ? label.trim() : null);
     logger.info('User added personal Gemini key', { userId: req.user.id, email: req.user.email });
     res.status(201).json({ success: true, id: result.id });
   } catch (err) {
@@ -32,18 +36,18 @@ router.post('/me/gemini-keys', requireAuth, async (req, res) => {
 });
 
 router.post('/me/gemini-keys/test', requireAuth, async (req, res) => {
+  const { apiKey, keyId } = req.body || {};
+  // A stored key is tested only when it is the caller's own, and only then is
+  // the answer written back onto it.
+  const stored = !apiKey && keyId ? users.getUserGeminiKeys(req.user.id).find(k => k.id === Number(keyId)) || null : null;
+  const keyToTest = apiKey || (stored && stored.apiKey);
+  if (!keyToTest) return res.status(400).json({ error: 'No API key provided to test' });
   try {
-    const { apiKey, keyId } = req.body || {};
-    let keyToTest = apiKey;
-    if (!keyToTest && keyId) {
-      const userKeys = users.getUserGeminiKeys(req.user.id);
-      const found = userKeys.find(k => k.id === Number(keyId));
-      if (found) keyToTest = found.apiKey;
-    }
-    if (!keyToTest) return res.status(400).json({ error: 'No API key provided to test' });
     const result = await testGeminiKey(keyToTest);
+    if (stored) users.recordKeyUse('user', stored.id, { ok: true, model: result.model });
     res.json({ success: true, ...result });
   } catch (err) {
+    if (stored) users.recordKeyUse('user', stored.id, { error: err.message });
     res.status(400).json({ error: err.message });
   }
 });

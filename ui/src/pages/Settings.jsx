@@ -1,11 +1,22 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { fmtRate } from '../utils/format';
+import { formatRelative } from '../utils/formatDate';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
+import ExchangeRates from '../components/settings/ExchangeRates';
+
+// What the reader last saw from a key: worked, ran out of quota, or was
+// refused. Whichever happened most recently is the one that describes it.
+function keyStatus(k) {
+  const okAt = k.lastOkAt ? Date.parse(k.lastOkAt) : 0;
+  const errAt = k.lastErrorAt ? Date.parse(k.lastErrorAt) : 0;
+  if (!okAt && !errAt) return { color: 'var(--text-muted)', text: 'Not used yet' };
+  if (okAt >= errAt) return { color: 'var(--success)', text: `Worked ${formatRelative(k.lastOkAt)}${k.lastModel ? ` · ${k.lastModel}` : ''}` };
+  return { color: /quota|rate-limit/i.test(k.lastError || '') ? 'var(--warning)' : 'var(--danger)', text: `${k.lastError || 'Failed'} · ${formatRelative(k.lastErrorAt)}` };
+}
 
 const POLICIES = [
   ['receipt_date', 'Rate on the receipt date'],
@@ -19,7 +30,7 @@ const ADMIN_TABS = [
   { key: 'profile',    label: 'My Profile & Security', icon: '👤' },
   { key: 'company',    label: 'Company & Policy',   icon: '🏢' },
   { key: 'xero',       label: 'Xero Integration',   icon: '⚡' },
-  { key: 'keys',       label: 'Receipt Reader Keys', icon: '🔑' },
+  { key: 'keys',       label: 'LLM API Setup',      icon: '🔑' },
   { key: 'fx',         label: 'Exchange Rates',     icon: '💱' },
 ];
 
@@ -32,11 +43,11 @@ export default function Settings() {
   const [columns, setColumns] = useState('');
   const [users, setUsers] = useState([]);
   const [keys, setKeys] = useState([]);
-  const [rates, setRates] = useState([]);
+  const [keysMeta, setKeysMeta] = useState({ models: [], fallbackKey: false });
+  const [keyTests, setKeyTests] = useState({});     // key id -> { busy } or { tone, text }
   const [xero, setXero] = useState(null);
   const [xeroForm, setXeroForm] = useState({ XERO_CLIENT_ID: '', XERO_CLIENT_SECRET: '', XERO_OAUTH_CLIENT_ID: '', XERO_OAUTH_CLIENT_SECRET: '', DEFAULT_ACCOUNT_CODE: '' });
   const [params, setParams] = useSearchParams();
-  const [newRate, setNewRate] = useState({ from: '', date: new Date().toISOString().slice(0, 10), rate: '' });
   const [newKey, setNewKey] = useState({ apiKey: '', label: '' });
   const [currencies, setCurrencies] = useState([]);
   const [msg, setMsg] = useState(null);
@@ -55,8 +66,7 @@ export default function Settings() {
     setCurrencies(c.currencies || []);
     if (isAdmin) {
       setUsers((await api.get('/users')).users);
-      setKeys((await api.get('/company/llm-keys')).keys);
-      setRates((await api.get('/fx/rates')).rates.slice(0, 30));
+      await loadKeys();
       const x = await api.get('/xero');
       setXero(x);
       setXeroForm(f => ({
@@ -121,14 +131,23 @@ export default function Settings() {
     } catch (err) { fail(err); }
   }
 
-  async function addRate(e) {
-    e.preventDefault();
+  async function loadKeys() {
+    const k = await api.get('/company/llm-keys');
+    setKeys(k.keys);
+    setKeysMeta({ models: k.models || [], fallbackKey: !!k.fallbackKey });
+  }
+
+  // The answer is shown beside the key and written onto it by the server, so
+  // the status line and the button agree after a reload.
+  async function testKey(id) {
+    setKeyTests(t => ({ ...t, [id]: { busy: true } }));
     try {
-      await api.post('/fx/rates', { from: newRate.from.toUpperCase(), date: newRate.date, rate: Number(newRate.rate) });
-      setNewRate({ ...newRate, from: '', rate: '' });
-      await loadAll();
-      ok('Rate saved.');
-    } catch (err) { fail(err); }
+      const r = await api.post(`/company/llm-keys/${id}/test`, {});
+      setKeyTests(t => ({ ...t, [id]: { color: 'var(--success)', text: `Works · ${r.model} · ${r.latencyMs} ms` } }));
+    } catch (err) {
+      setKeyTests(t => ({ ...t, [id]: { color: 'var(--danger)', text: err.message } }));
+    }
+    loadKeys().catch(() => {});
   }
 
   async function saveXero(e) {
@@ -160,8 +179,8 @@ export default function Settings() {
     try {
       await api.post('/company/llm-keys', newKey);
       setNewKey({ apiKey: '', label: '' });
-      await loadAll();
-      ok('Reader key added.');
+      await loadKeys();
+      ok('LLM API key added.');
     } catch (err) { fail(err); }
   }
 
@@ -376,13 +395,16 @@ export default function Settings() {
         </form>
       )}
 
-      {/* Admin Tab 4: Receipt Reader Keys */}
+      {/* Admin Tab 4: LLM API Setup */}
       {isAdmin && adminTab === 'keys' && (
         <div className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
             <div>
-              <div className="card-title">Receipt Reader Keys (Company Pool)</div>
-              <div className="card-subtitle">Shared Gemini API keys for the company. Individual user keys in Profile settings take priority; company keys rotate automatically if one runs out of quota.</div>
+              <div className="card-title">LLM API Keys</div>
+              <div className="card-subtitle">
+                The AI that reads receipts uses these keys. Personal keys in My Profile are tried first; when a key runs out
+                of quota the next one is used.
+              </div>
             </div>
             <a
               href="https://aistudio.google.com/app/apikey"
@@ -394,55 +416,42 @@ export default function Settings() {
               <span>Google AI Studio ↗</span>
             </a>
           </div>
-          {keys.map(k => (
-            <div key={k.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderTop: '1px solid var(--border)', fontSize: 13 }}>
-              <span><code>{k.keyMasked}</code> {k.label && <span style={{ color: 'var(--text-muted)' }}>· {k.label}</span>}</span>
-              <button className="btn btn-ghost btn-sm" onClick={() => api.delete(`/company/llm-keys/${k.id}`).then(loadAll).catch(fail)}>Remove</button>
-            </div>
-          ))}
+          <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', margin: '10px 0 4px', lineHeight: 1.5 }}>
+            {keysMeta.models.length > 0 && <>Receipts are read by <code>{keysMeta.models[0]}</code>{keysMeta.models.length > 1 && <>, falling back to <code>{keysMeta.models.slice(1).join(', ')}</code></>}. </>}
+            {keysMeta.fallbackKey
+              ? 'When none of these keys works, the server’s own key is used.'
+              : 'The server has no key of its own, so at least one key here or in someone’s profile must work.'}
+          </div>
+          {keys.map(k => {
+            const s = keyStatus(k);
+            const t = keyTests[k.id];
+            return (
+              <div key={k.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '9px 0', borderTop: '1px solid var(--border)', fontSize: 13 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div><code>{k.keyMasked}</code> {k.label && <span style={{ color: 'var(--text-muted)' }}>· {k.label}</span>}</div>
+                  <div style={{ fontSize: 11.5, color: s.color, marginTop: 2 }}>{s.text}</div>
+                  {t && !t.busy && <div style={{ fontSize: 11.5, color: t.color, marginTop: 2 }}>{t.text}</div>}
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button className="btn btn-outline btn-sm" disabled={!!(t && t.busy)} onClick={() => testKey(k.id)}>{t && t.busy ? 'Testing…' : 'Test'}</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => api.delete(`/company/llm-keys/${k.id}`).then(loadKeys).catch(fail)}>Remove</button>
+                </div>
+              </div>
+            );
+          })}
+          {!keys.length && <div style={{ fontSize: 12.5, color: 'var(--text-muted)', padding: '8px 0', borderTop: '1px solid var(--border)' }}>No company key yet.</div>}
           <form onSubmit={addKey} style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-            <input className="form-input" style={{ flex: 2, minWidth: 220 }} placeholder="AIza…" required value={newKey.apiKey} onChange={e => setNewKey({ ...newKey, apiKey: e.target.value })} aria-label="API key" />
+            <input className="form-input" style={{ flex: 2, minWidth: 220 }} placeholder="Paste a Gemini API key" required autoComplete="off"
+                   value={newKey.apiKey} onChange={e => setNewKey({ ...newKey, apiKey: e.target.value })} aria-label="API key" />
             <input className="form-input" style={{ flex: 1, minWidth: 120 }} placeholder="Label" value={newKey.label} onChange={e => setNewKey({ ...newKey, label: e.target.value })} aria-label="Label" />
             <button className="btn btn-primary" type="submit">Add company key</button>
           </form>
         </div>
       )}
 
-      {/* Admin Tab 5: Exchange Rates */}
+      {/* Admin Tab 5: Exchange Rates — the live board and its daily log */}
       {isAdmin && adminTab === 'fx' && (
-        <div className="card">
-          <div className="card-title">Exchange Rates</div>
-          <div className="card-subtitle">Rates used so far, newest first. A rate entered here beats the provider's for that day; use it for a monthly fixed table or a correction.</div>
-          <datalist id="currency-options">
-            {currencies.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
-          </datalist>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.5 }}>
-            Any currency a receipt is printed in works: {currencies.slice(0, 8).map(c => c.code).join(', ')} and {Math.max(0, currencies.length - 8)} more are offered by name,
-            and any other three-letter code can be typed.
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="data-table">
-              <thead><tr><th>Date</th><th>Pair</th><th style={{ textAlign: 'right' }}>Rate</th><th>Source</th><th></th></tr></thead>
-              <tbody>{rates.map(r => (
-                <tr key={`${r.from}-${r.to}-${r.rateDate}-${r.source}`}>
-                  <td>{r.rateDate}{r.providerDate && r.providerDate !== r.rateDate ? <span style={{ color: 'var(--text-muted)' }}> (priced {r.providerDate})</span> : null}</td>
-                  <td>{r.from} → {r.to}</td>
-                  <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }} title={String(r.rate)}>{fmtRate(r.rate)}</td>
-                  <td>{r.source}{r.enteredBy ? <span style={{ color: 'var(--text-muted)' }}> · {r.enteredBy}</span> : null}</td>
-                  <td>{r.source === 'manual' && <button className="btn btn-ghost btn-sm" onClick={() => api.delete(`/fx/rates?from=${r.from}&to=${r.to}&date=${r.rateDate}`).then(loadAll).catch(fail)}>Remove</button>}</td>
-                </tr>))}</tbody>
-            </table>
-            {!rates.length && <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '10px 0' }}>No rates fetched yet.</div>}
-          </div>
-          <form onSubmit={addRate} style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-            <input id="rate-from" className="form-input" style={{ maxWidth: 110 }} placeholder="IDR" maxLength={3} required list="currency-options"
-                   value={newRate.from} onChange={e => setNewRate({ ...newRate, from: e.target.value.toUpperCase().slice(0, 3) })} aria-label="From currency" />
-            <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>→ {company.baseCurrency} on</span>
-            <input id="rate-date" className="form-input" type="date" style={{ maxWidth: 170 }} required value={newRate.date} onChange={e => setNewRate({ ...newRate, date: e.target.value })} aria-label="Date" />
-            <input id="rate-value" className="form-input" type="number" step="any" min="0" style={{ maxWidth: 150 }} placeholder="0.01341" required value={newRate.rate} onChange={e => setNewRate({ ...newRate, rate: e.target.value })} aria-label="Rate" />
-            <button className="btn btn-primary" type="submit">Save rate</button>
-          </form>
-        </div>
+        <ExchangeRates isAdmin={isAdmin} currencies={currencies} onNotify={setMsg} />
       )}
 
       {confirm && (
@@ -720,7 +729,7 @@ function UserGeminiSection({ onNotify }) {
         <div>
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span>🔑</span>
-            <span>Google Gemini API Key (Receipt Reader)</span>
+            <span>My LLM API Key (Google Gemini)</span>
           </div>
           <div className="card-subtitle">
             Configure your personal Google Gemini API key to parse uploaded receipts and invoices.
@@ -802,6 +811,9 @@ function UserGeminiSection({ onNotify }) {
                   <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
                     Added {new Date(k.createdAt).toLocaleDateString()}
                   </span>
+                  {!existingKeyResults[k.id] && (
+                    <span style={{ fontSize: 11.5, color: keyStatus(k).color }}>{keyStatus(k).text}</span>
+                  )}
                   {existingKeyResults[k.id] && (
                     <span style={{
                       fontSize: 11.5,

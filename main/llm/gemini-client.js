@@ -14,12 +14,23 @@ function _resolveKeys(userId) {
   const keys = [];
   if (userId) {
     const { getGeminiKeysForUser } = require('../store/users');
-    for (const row of getGeminiKeysForUser(userId)) keys.push(row.apiKey);
+    for (const row of getGeminiKeysForUser(userId)) keys.push({ apiKey: row.apiKey, id: row.id ?? null, scope: row.scope || null });
   }
-  if (!keys.length && process.env.Gemini_API_KEY) keys.push(process.env.Gemini_API_KEY);
+  if (!keys.length && process.env.Gemini_API_KEY) keys.push({ apiKey: process.env.Gemini_API_KEY, id: null, scope: 'env' });
   if (!keys.length) throw new Error('No Gemini API key configured — add one in Settings');
   return keys;
 }
+
+// What happened to a stored key, written back to it for Settings to show.
+// The server's own fallback key has no row. Never allowed to fail a read.
+function _record(key, result) {
+  if (!key || !key.id || !key.scope || key.scope === 'env') return;
+  try {
+    const users = require('../store/users');
+    if (typeof users.recordKeyUse === 'function') users.recordKeyUse(key.scope, key.id, result);
+  } catch { /* status is a convenience */ }
+}
+const _isAuthError = err => [401, 403].includes(err.response?.status);
 function _limiterKey(userId) {
   if (!userId) return 'default';
   try { const u = require('../store/users').findById(userId); return u ? `company:${u.companyId}` : String(userId); }
@@ -132,13 +143,19 @@ async function callGemini(userId, messages, opts = {}) {
       const key = keys[k];
       for (const model of GEMINI_MODELS) {
         try {
-          return await _callOnce(model, key, messages, opts);
+          const out = await _callOnce(model, key.apiKey, messages, opts);
+          _record(key, { ok: true, model });
+          return out;
         } catch (err) {
           lastErr = err;
           if (_isQuotaError(err)) {
+            _record(key, { error: 'Out of quota or rate-limited', model });
             logger.warn(`Gemini quota/rate limit on ${model} (key ${k + 1}/${keys.length}) — rotating`, { userId });
             continue;
           }
+          // A refused key is the key's problem; a cut-off reply or a bad
+          // request is not, and must not mark a working key as broken.
+          if (_isAuthError(err)) _record(key, { error: 'Rejected by Google: the key is invalid or not enabled', model });
           throw err;
         }
       }
@@ -156,6 +173,7 @@ async function testGeminiKey(apiKey) {
   const testModels = [...GEMINI_MODELS, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
   let lastErr = null;
   for (const model of testModels) {
+    const t0 = Date.now();
     try {
       const response = await axios.post(
         GEMINI_URL,
@@ -170,7 +188,9 @@ async function testGeminiKey(apiKey) {
         }
       );
       if (response.data?.choices?.[0]?.message) {
-        return { ok: true, model };
+        // latencyMs: the Profile screen has always printed it, and it read
+        // "undefinedms" because it was never returned.
+        return { ok: true, model, latencyMs: Date.now() - t0 };
       }
     } catch (err) {
       lastErr = err;

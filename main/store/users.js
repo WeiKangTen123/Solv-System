@@ -70,9 +70,10 @@ const CRED_COLUMNS = {
   XERO_OAUTH_CLIENT_ID: 'xero_oauth_client_id', XERO_OAUTH_CLIENT_SECRET: 'xero_oauth_client_secret',
   XERO_OAUTH_REFRESH_TOKEN: 'xero_oauth_refresh_token', XERO_OAUTH_CONNECTED_AT: 'xero_oauth_connected_at',
   XERO_CONNECTION_TYPE: 'xero_connection_type', DEFAULT_ACCOUNT_CODE: 'default_account_code',
+  FX_OXR_APP_ID: 'fx_oxr_app_id',
 };
 const CRED_TO_KEY = Object.fromEntries(Object.entries(CRED_COLUMNS).map(([k, v]) => [v, k]));
-const ENCRYPTED_COLUMNS = new Set(['xero_client_secret', 'xero_oauth_client_secret', 'xero_oauth_refresh_token']);
+const ENCRYPTED_COLUMNS = new Set(['xero_client_secret', 'xero_oauth_client_secret', 'xero_oauth_refresh_token', 'fx_oxr_app_id']);
 
 function getCompanyConfig(companyId) {
   const row = db.prepare('SELECT * FROM company_credentials WHERE company_id = ?').get(companyId);
@@ -210,10 +211,16 @@ function deleteUser(id) { db.prepare('DELETE FROM users WHERE id = ?').run(id); 
 function readUsers() { return db.prepare('SELECT * FROM users ORDER BY created_at').all().map(sanitize); }
 
 // ── Reader keys (per-user personal keys) ──────────────────────────────────
+// What the reader last saw from a key rides along with it, so Settings can
+// say which key works and which ran out rather than only listing them.
+const _keyRow = r => ({
+  id: r.id, apiKey: decrypt(r.api_key), label: r.label, createdAt: r.created_at,
+  lastOkAt: r.last_ok_at || null, lastErrorAt: r.last_error_at || null, lastError: r.last_error || null, lastModel: r.last_model || null,
+});
+const KEY_COLS = 'id, api_key, label, created_at, last_ok_at, last_error_at, last_error, last_model';
 function getUserGeminiKeys(userId) {
   try {
-    return db.prepare('SELECT id, api_key, label, created_at FROM user_gemini_keys WHERE user_id = ? ORDER BY id').all(userId)
-      .map(r => ({ id: r.id, apiKey: decrypt(r.api_key), label: r.label, createdAt: r.created_at }));
+    return db.prepare(`SELECT ${KEY_COLS} FROM user_gemini_keys WHERE user_id = ? ORDER BY id`).all(userId).map(_keyRow);
   } catch { return []; }
 }
 function addUserGeminiKey(userId, apiKey, label) {
@@ -228,15 +235,26 @@ function removeUserGeminiKey(userId, keyId) {
 
 // ── Reader keys (company-wide) ──────────────────────────────────────────────
 function getGeminiKeys(companyId) {
-  return db.prepare('SELECT id, api_key, label, created_at FROM company_gemini_keys WHERE company_id = ? ORDER BY id').all(companyId)
-    .map(r => ({ id: r.id, apiKey: decrypt(r.api_key), label: r.label, createdAt: r.created_at }));
+  return db.prepare(`SELECT ${KEY_COLS} FROM company_gemini_keys WHERE company_id = ? ORDER BY id`).all(companyId).map(_keyRow);
 }
+// The person's own keys first, then the company's. `scope` says which table
+// a key came from, so the reader can report back on the right row.
 function getGeminiKeysForUser(userId) {
   const u = findById(userId);
   if (!u) return [];
-  const userKeys = getUserGeminiKeys(userId);
-  const companyKeys = getGeminiKeys(u.companyId);
-  return [...userKeys, ...companyKeys];
+  return [
+    ...getUserGeminiKeys(userId).map(k => ({ ...k, scope: 'user' })),
+    ...getGeminiKeys(u.companyId).map(k => ({ ...k, scope: 'company' })),
+  ];
+}
+const KEY_TABLE = { user: 'user_gemini_keys', company: 'company_gemini_keys' };
+function recordKeyUse(scope, id, { ok = false, model = null, error = null } = {}) {
+  const table = KEY_TABLE[scope];
+  if (!table || !id) return;
+  const at = new Date().toISOString();
+  if (ok) db.prepare(`UPDATE ${table} SET last_ok_at = ?, last_model = COALESCE(?, last_model) WHERE id = ?`).run(at, model, id);
+  else db.prepare(`UPDATE ${table} SET last_error_at = ?, last_error = ?, last_model = COALESCE(?, last_model) WHERE id = ?`)
+    .run(at, String(error || 'Failed').slice(0, 200), model, id);
 }
 function addGeminiKey(companyId, apiKey, label) {
   if (!apiKey || !apiKey.trim()) throw new Error('API key is required');
@@ -263,5 +281,5 @@ module.exports = {
   touchLastSeen, isOnline, sanitize,
   getCompany, createCompany, updateCompany, getCompanyConfig, saveCompanyConfig, ENCRYPTED_COLUMNS,
   getUserGeminiKeys, addUserGeminiKey, removeUserGeminiKey,
-  getGeminiKeys, getGeminiKeysForUser, addGeminiKey, removeGeminiKey, getUserDefaults, ensureUserDirectories,
+  getGeminiKeys, getGeminiKeysForUser, recordKeyUse, addGeminiKey, removeGeminiKey, getUserDefaults, ensureUserDirectories,
 };

@@ -116,6 +116,8 @@ Four checks stand between a provider's number and a figure somebody is paid. The
 
 The rate, its date, its source and the moment it was fetched are stored on every line and printed on the report. Each line is converted and rounded to the cent; the report total is the sum of the lines. A rate an admin or the claimant types in is kept with the person and the reason until someone asks for a refresh.
 
+**The live board and the daily log** ([main/fx/live.js](main/fx/live.js), Settings → Exchange Rates). Every currency a receipt has used, plus any an admin adds, is refreshed every hour (`FX_LIVE_MINUTES`), one request per source whatever the number of currencies. At 23:55 company time the day's last figure is written as that day's close, and the close is the price of the day: it outranks any lookup made for that date, and only a rate an admin typed beats it. A receipt dated today takes the live figure and moves to the close that night unless its case has been claimed. A day the server was down for is closed late from the providers' history. The free feeds publish once a day, so without a key the board moves when they publish; an Open Exchange Rates App ID, entered on the same page and checked before it is kept, makes it hourly on their free plan and faster on paid ones, with the ECB kept as its cross-check.
+
 ## Not yet
 
 - A live post to the real Xero organisation: the code and a dry run exist; connect the org in Settings and click Post.
