@@ -28,10 +28,14 @@ export default function Reports() {
   const load = useCallback(() => api.get(`/reports?scope=${scope}`).then(d => setReports(d.reports)).catch(e => setMsg({ tone: 'error', text: e.message })), [scope]);
   useEffect(() => { load(); }, [load]);
 
+  const [saving, setSaving] = useState(false);
   async function create(e) {
     e.preventDefault();
+    // A double click made two cases.
+    if (saving) return;
+    setSaving(true);
     try { const d = await api.post('/reports', form); navigate(`/reports/${d.report.id}`); }
-    catch (err) { setMsg({ tone: 'error', text: err.message }); }
+    catch (err) { setMsg({ tone: 'error', text: err.message }); setSaving(false); }
   }
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -55,7 +59,7 @@ export default function Reports() {
             <div className="form-group"><label className="form-label" htmlFor="r-to">To</label><input id="r-to" className="form-input" type="date" value={form.periodTo} onChange={e => set('periodTo', e.target.value)} /></div>
             {form.kind === 'trip' && <div className="form-group"><label className="form-label" htmlFor="r-dest">Destination</label><input id="r-dest" className="form-input" placeholder="Mumbai and Pune, India" value={form.destination} onChange={e => set('destination', e.target.value)} /></div>}
           </div>
-          <button className="btn btn-primary" type="submit">Create case</button>
+          <button className="btn btn-primary" type="submit" disabled={saving}>{saving ? 'Creating…' : 'Create case'}</button>
         </form>
       )}
 
@@ -73,7 +77,9 @@ export default function Reports() {
             <table className="data-table">
               <thead><tr><th>Number</th><th>Title</th>{scope !== 'mine' && <th>Claimant</th>}<th>Period</th><th style={{ textAlign: 'right' }}>Expenses</th><th style={{ textAlign: 'right' }}>{base}</th><th>Status</th></tr></thead>
               <tbody>{reports.map(r => (
-                <tr key={r.id} onClick={() => navigate(`/reports/${r.id}`)} style={{ cursor: 'pointer' }}>
+                <tr key={r.id} onClick={() => navigate(`/reports/${r.id}`)} style={{ cursor: 'pointer' }}
+                    tabIndex={0} role="link" aria-label={`Open case ${r.number}`}
+                    onKeyDown={ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); navigate(`/reports/${r.id}`); } }}>
                   <td style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{r.number}</td>
                   <td><div style={{ fontWeight: 600 }}>{r.title || '—'} <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-muted)' }}>{KIND_LABEL[r.kind] || ''}</span></div>{r.purpose && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{r.purpose}</div>}</td>
                   {scope !== 'mine' && <td>{r.ownerName || r.ownerEmail}</td>}

@@ -30,7 +30,11 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
   // find it again: without this the progress view, the reconciliation summary
   // and the Undo button were gone for good the moment the dialog was closed.
   const [runningJobId, setRunningJobId] = useState(null);
+  const [importing, setImporting] = useState(false);
+  // Asked when the import panel opens, not on every page that shows the
+  // upload button.
   useEffect(() => {
+    if (!importing) return undefined;
     let alive = true;
     api.get('/claims/active')
       // The server answers { job } (routes/claims.js). This read d.jobs, which
@@ -38,8 +42,13 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
       .then(d => { if (alive) setRunningJobId((d && d.job && (d.job.id || d.job.jobId)) || null); })
       .catch(() => {});
     return () => { alive = false; };
-  }, []);
+  }, [importing]);
   const fileRef = useRef(null);
+  // Whether this component is still on screen. A batch that finishes after the
+  // person moved to another page used to take them to the new case anyway,
+  // and whatever they were typing there was lost.
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
   const [busy, setBusy]     = useState(false);
   const [error, setError]   = useState('');
   const [note, setNote]     = useState('');
@@ -48,7 +57,6 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
   // every photograph has somewhere to land; a session that produced nothing
   // deletes it again on close, rather than leaving an empty case behind.
   const [pairing, setPairing] = useState(null);
-  const [importing, setImporting] = useState(false);
 
   const newCase = async () => (await api.post('/reports', { kind: 'case', title: caseTitle() })).report;
 
@@ -95,6 +103,7 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
       try { await api.delete(`/reports/${made.id}`); } catch { /* it will show as empty; not worth an error on top of the upload's */ }
       return;
     }
+    if (!mounted.current) return;
     if (ok && onUploaded) onUploaded();
     if (made && onCase) onCase(made);
   }
@@ -186,7 +195,7 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
       )}
 
       {importing && (
-        <ClaimImport onClose={() => setImporting(false)} onImported={onUploaded} initialJobId={runningJobId} />
+        <ClaimImport key={runningJobId || 'new'} onClose={() => { setImporting(false); setRunningJobId(null); }} onImported={onUploaded} initialJobId={runningJobId} />
       )}
     </div>
   );

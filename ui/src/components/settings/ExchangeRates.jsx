@@ -66,6 +66,8 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
 
   // Every admin action answers with the whole board, so the screen never has
   // to guess what changed.
+  // Resolves true when it worked, so a caller clears its form only then: a
+  // rate or an App ID that was refused used to be wiped from the form anyway.
   async function act(label, fn, done) {
     setBusy(label);
     try {
@@ -73,7 +75,8 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
       if (next && next.rows) setBoard(next);
       if (open) await loadLog(open);
       if (done) notify('success', done);
-    } catch (e) { notify('error', e.message); }
+      return true;
+    } catch (e) { notify('error', e.message); return false; }
     finally { setBusy(''); }
   }
 
@@ -123,7 +126,8 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
                 return (
                   <Fragment key={r.currency}>
                     <tr onClick={() => setOpen(isOpen ? null : r.currency)} style={{ cursor: 'pointer', background: isOpen ? 'var(--bg-hover)' : undefined }}
-                        aria-expanded={isOpen}>
+                        aria-expanded={isOpen} tabIndex={0} role="button"
+                        onKeyDown={ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); setOpen(isOpen ? null : r.currency); } }}>
                       <td>
                         <div style={{ fontWeight: 600 }}>{r.currency} to {base}</div>
                         <div style={muted}>{r.name || (r.pinned ? 'Watched' : '')}{r.pinned && r.name ? ' · watched' : ''}</div>
@@ -159,10 +163,10 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
                             onSetRate={e => {
                               e.preventDefault();
                               act('rate', () => api.post('/fx/rates', { from: r.currency, date: rateForm.date, rate: Number(rateForm.rate) }).then(load), 'Rate saved for that day.')
-                                .then(() => setRateForm({ date: '', rate: '' }));
+                                .then(ok => { if (ok) setRateForm({ date: '', rate: '' }); });
                             }}
                             onRemoveRate={date => act('rate', () => api.delete(`/fx/rates?from=${r.currency}&to=${base}&date=${date}`).then(load), 'Rate removed. The day is priced from the providers again.')}
-                            onUnwatch={() => act('unwatch', () => api.delete(`/fx/watch/${r.currency}`), `${r.currency} is no longer watched.`).then(() => setOpen(null))}
+                            onUnwatch={() => act('unwatch', () => api.delete(`/fx/watch/${r.currency}`), `${r.currency} is no longer watched.`).then(ok => { if (ok) setOpen(null); })}
                           />
                         </td>
                       </tr>
@@ -181,7 +185,7 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
 
         {isAdmin && (
           <form style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}
-                onSubmit={e => { e.preventDefault(); act('watch', () => api.post('/fx/watch', { currency: watchInput }), `${watchInput} added to the board.`).then(() => setWatchInput('')); }}>
+                onSubmit={e => { e.preventDefault(); act('watch', () => api.post('/fx/watch', { currency: watchInput }), `${watchInput} added to the board.`).then(ok => { if (ok) setWatchInput(''); }); }}>
             <datalist id="fx-watch-options">
               {currencies.filter(c => c.code !== base).map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
             </datalist>
@@ -217,7 +221,7 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
                 Their free plan updates hourly within 1,000 requests a month, and this board uses about 744 refreshing every {source.everyMinutes} minutes.
               </div>
               <form style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}
-                    onSubmit={e => { e.preventDefault(); act('source', () => api.put('/fx/live/source', { appId }), 'Open Exchange Rates connected.').then(() => setAppId('')); }}>
+                    onSubmit={e => { e.preventDefault(); act('source', () => api.put('/fx/live/source', { appId }), 'Open Exchange Rates connected.').then(ok => { if (ok) setAppId(''); }); }}>
                 <input className="form-input" style={{ flex: 1, minWidth: 220 }} placeholder="Open Exchange Rates App ID" required
                        value={appId} onChange={e => setAppId(e.target.value.trim())} aria-label="Open Exchange Rates App ID" autoComplete="off" />
                 <button className="btn btn-primary" type="submit" disabled={!!busy || !appId}>{busy === 'source' ? 'Checking…' : 'Check and save'}</button>

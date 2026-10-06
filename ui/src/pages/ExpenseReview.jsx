@@ -9,6 +9,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import StatusBadge from '../components/StatusBadge';
 import { fmtMoney, fmtRate } from '../utils/format';
 import { useVisiblePolling } from '../utils/useVisiblePolling';
+import { getCompany } from '../utils/useCompany';
 
 // Image on the left, fields on the right, so a figure is checked against the
 // receipt without switching context. Below the fields, the split into report
@@ -20,6 +21,8 @@ const FIELDS = [
 const SOURCE_LABEL = { frankfurter: 'European Central Bank reference rate', 'open.er-api': 'ExchangeRate-API daily rate', base: 'Base currency', same: 'Same currency' };
 const pick = e => Object.fromEntries(FIELDS.map(([k]) => [k, e[k] ?? '']));
 const cents = v => Math.round(Number(v || 0) * 100);
+// The lines as the server would store them, to tell whether they were edited.
+const sameLines = ls => JSON.stringify(ls.map(l => [l.category || '', l.description || '', cents(l.amount), String(l.onBehalfOf || '').trim()]));
 
 export default function ExpenseReview() {
   const { id } = useParams();
@@ -61,6 +64,12 @@ export default function ExpenseReview() {
   // flight when Prev or Next was pressed — is dropped rather than painted over
   // the new receipt, where Save would then have written it.
   const current = useRef(id);
+  // What the fields said when they were loaded. Save sends only what differs:
+  // sending every field wrote back blanks for anything that had changed on
+  // the server since, such as what the reader filled in a moment later.
+  const baseline = useRef({ form: {}, lines: '[]' });
+  // Where Prev or Next would go with unsaved changes, waiting for a yes.
+  const [leaveTo, setLeaveTo] = useState(null);
 
   const load = useCallback(async ({ preserveEdits } = {}) => {
     const asked = id;
@@ -70,13 +79,18 @@ export default function ExpenseReview() {
     setLocked(!!d.locked);
     setPerm({ isOwner: !!d.isOwner, canEditDetails: !!d.canEditDetails, canAct: !!d.canAct, posted: !!d.posted });
     if (!(preserveEdits && dirty.current)) {
-      setForm({ ...pick(d.expense), reportId: d.expense.reportId || '' });
-      setLines(d.expense.lines.map(l => ({ category: l.category || '', description: l.description || '', amount: l.amount, onBehalfOf: l.onBehalfOf || '' })));
+      const f = { ...pick(d.expense), reportId: d.expense.reportId || '' };
+      const ls = d.expense.lines.map(l => ({ category: l.category || '', description: l.description || '', amount: l.amount, onBehalfOf: l.onBehalfOf || '' }));
+      setForm(f); setLines(ls);
+      baseline.current = { form: f, lines: sameLines(ls) };
       dirty.current = false;
     }
     const rid = d.expense.receipt ? d.expense.receipt.id : null;
+    // The picture on screen stays as it is: renewing its link reloaded the
+    // PDF (losing scroll and zoom) and downloaded the photo again every few
+    // minutes. Open original asks for a fresh link when it is pressed.
     if (!rid || !d.imageToken) { image.current = { receiptId: null, at: 0 }; setImageUrl(null); }
-    else if (image.current.receiptId !== rid || Date.now() - image.current.at > 4 * 60 * 1000) {
+    else if (image.current.receiptId !== rid) {
       image.current = { receiptId: rid, at: Date.now() };
       setImageUrl(`/api/receipts/${rid}/image?token=${encodeURIComponent(d.imageToken)}`);
     }
@@ -101,7 +115,14 @@ export default function ExpenseReview() {
   // (the server answers scope=all with your own unless you are an admin).
   // Which of them may take this receipt is decided at render, once the
   // expense and its owner are known.
-  useEffect(() => { api.get('/company').then(d => { setCategories(d.categories); setCurrencies(d.currencies || []); }).catch(() => {}); api.get('/reports?scope=all').then(d => setCases(d.reports || [])).catch(() => {}); }, []);
+  useEffect(() => { getCompany().then(d => { setCategories(d.categories); setCurrencies(d.currencies || []); }).catch(() => {}); }, []);
+  // The cases this receipt could be filed in: its owner's open ones. Only the
+  // owner files, so nobody else needs the list; an admin's page used to fetch
+  // every case in the company to fill a box it could not use.
+  useEffect(() => {
+    if (!perm.isOwner) { setCases([]); return; }
+    api.get('/reports?status=open').then(d => setCases(d.reports || [])).catch(() => {});
+  }, [perm.isOwner, id]);
   // Quickly while the reader works, slowly after; and not at all in a tab
   // nobody is looking at.
   useVisiblePolling(() => load({ preserveEdits: true }).catch(() => {}), () => (exp?.status === 'reading' ? 2500 : 4 * 60 * 1000));
@@ -128,12 +149,17 @@ export default function ExpenseReview() {
   async function save({ quiet } = {}) {
     setBusy('save');
     try {
-      const body = { ...form, currency: String(form.currency || '').toUpperCase(), reportId: form.reportId || null };
+      const was = baseline.current.form;
+      const body = {};
+      for (const [k] of FIELDS) {
+        if (String(form[k] ?? '') === String(was[k] ?? '')) continue;
+        body[k] = k === 'currency' ? String(form[k] || '').toUpperCase() : form[k];
+      }
       // Filing is the owner's; anyone else's save leaves the case alone.
-      if (!perm.canAct) delete body.reportId;
-      const r = await api.patch(`/expenses/${id}`, body);
-      if (lines.length && (lines.length !== 1 || cents(lines[0].amount) !== cents(r.expense.total) || lines[0].category !== (r.expense.lines[0]?.category || '') || (lines[0].onBehalfOf || '') !== (r.expense.lines[0]?.onBehalfOf || '') || (lines[0].description || '') !== (r.expense.lines[0]?.description || ''))) {
-        await api.put(`/expenses/${id}/lines`, { lines: lines.map(l => ({ ...l, amount: Number(l.amount), onBehalfOf: l.onBehalfOf.trim() || null })) });
+      if (perm.canAct && (form.reportId || '') !== (was.reportId || '')) body.reportId = form.reportId || null;
+      if (Object.keys(body).length) await api.patch(`/expenses/${id}`, body);
+      if (lines.length && sameLines(lines) !== baseline.current.lines) {
+        await api.put(`/expenses/${id}/lines`, { lines: lines.map(l => ({ ...l, amount: Number(l.amount), onBehalfOf: String(l.onBehalfOf || '').trim() || null })) });
       }
       dirty.current = false;
       await load();
@@ -185,7 +211,23 @@ export default function ExpenseReview() {
 
   if (!exp) return <div style={{ color: 'var(--text-muted)' }}>{msg?.text || 'Loading…'}</div>;
   const viewOnly = !perm.isOwner;
-  const detailsLocked = !perm.canEditDetails || exp.status === 'duplicate';
+  // Locked while a save runs too: what was typed during it was overwritten
+  // by the reload that followed.
+  const detailsLocked = !perm.canEditDetails || exp.status === 'duplicate' || busy === 'save';
+  // Prev and Next ask first when something typed has not been saved.
+  const go = to => { if (dirty.current) setLeaveTo(to); else navigate(to); };
+  async function openOriginal() {
+    if (!exp.receipt) return;
+    // Opened inside the click so the browser allows it, then pointed at a
+    // freshly signed link: the page's own may be older than its five minutes.
+    const w = window.open('', '_blank');
+    if (w) w.opener = null;
+    try {
+      const d = await api.get(`/receipts/${exp.receipt.id}/token`);
+      const url = `/api/receipts/${exp.receipt.id}/image?token=${encodeURIComponent(d.token)}`;
+      if (w) w.location.href = url; else window.location.href = url;
+    } catch (e) { if (w) w.close(); setMsg({ tone: 'error', text: e.message }); }
+  }
   const actionsLocked = !perm.canAct;
   const isPdf = exp.receipt?.mime === 'application/pdf';
   // Where a saved field no longer says what the reader read, show what it
@@ -215,8 +257,8 @@ export default function ExpenseReview() {
           <h1 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>{exp.merchant || 'Untitled receipt'} <StatusBadge status={exp.status} /></h1>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {prev && <button className="btn btn-outline btn-sm" onClick={() => navigate(`/expenses/${prev.id}`)}>← Prev</button>}
-          {next && <button className="btn btn-outline btn-sm" onClick={() => navigate(`/expenses/${next.id}`)}>Next →</button>}
+          {prev && <button className="btn btn-outline btn-sm" onClick={() => go(`/expenses/${prev.id}`)}>← Prev</button>}
+          {next && <button className="btn btn-outline btn-sm" onClick={() => go(`/expenses/${next.id}`)}>Next →</button>}
           {perm.isOwner && <button className="btn btn-outline btn-sm" disabled={actionsLocked} title={locked ? 'The case it is in has been claimed' : ''} onClick={() => setConfirm('delete')}>Delete</button>}
         </div>
       </div>
@@ -251,7 +293,7 @@ export default function ExpenseReview() {
             <div style={{ display: 'flex', gap: 6 }}>
               {!isPdf && <button className="btn btn-outline btn-sm" onClick={() => setRot(r => (r + 90) % 360)}>Rotate</button>}
               <button className="btn btn-outline btn-sm" disabled={busy === 'reread' || !exp.receipt || actionsLocked} title={viewOnly ? 'Only the claimant can re-read it' : ''} onClick={reread}>{busy === 'reread' ? 'Reading…' : 'Re-read'}</button>
-              {imageUrl && <a className="btn btn-outline btn-sm" href={imageUrl} target="_blank" rel="noopener noreferrer">Open original</a>}
+              {imageUrl && <button className="btn btn-outline btn-sm" onClick={openOriginal}>Open original</button>}
             </div>
           </div>
           {!imageUrl ? <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No receipt file.</div>
@@ -347,7 +389,7 @@ export default function ExpenseReview() {
             <div className="card-title">Lines</div>
             <div className="card-subtitle">One line per category on the report. They must add up to the total{form.currency ? ` in ${form.currency}` : ''}.</div>
             {lines.map((l, i) => (
-              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.4fr 0.9fr auto', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+              <div key={i} className="expense-line">
                 <select className="form-input" value={l.category} disabled={detailsLocked} onChange={e => setLine(i, 'category', e.target.value)} aria-label="Category">
                   <option value="">Category…</option>
                   {categories.map(c => <option key={c} value={c}>{c}</option>)}
@@ -359,7 +401,9 @@ export default function ExpenseReview() {
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <input type="checkbox" checked={!!l.onBehalfOf} disabled={detailsLocked} onChange={e => setLine(i, 'onBehalfOf', e.target.checked ? (l.onBehalfOf || ' ') : '')} /> paid on behalf of
                   </label>
-                  {!!l.onBehalfOf && <input className="form-input" style={{ padding: '4px 8px', fontSize: 12, maxWidth: 220 }} value={l.onBehalfOf.trim()} disabled={detailsLocked} placeholder="Colleague's name" onChange={e => setLine(i, 'onBehalfOf', e.target.value || ' ')} />}
+                  {/* ' ' marks "ticked, no name yet". The value shown used to be trimmed,
+                      which ate each space as it was typed: "Jane Tan" became "JaneTan". */}
+                  {!!l.onBehalfOf && <input className="form-input" style={{ padding: '4px 8px', fontSize: 12, maxWidth: 220 }} value={l.onBehalfOf === ' ' ? '' : l.onBehalfOf} disabled={detailsLocked} placeholder="Colleague's name" aria-label="Paid on behalf of" onChange={e => setLine(i, 'onBehalfOf', e.target.value || ' ')} />}
                 </div>
               </div>
             ))}
@@ -384,6 +428,10 @@ export default function ExpenseReview() {
         </div>
       </div>
 
+      {leaveTo && (
+        <ConfirmDialog title="Leave without saving?" message="What you typed on this receipt has not been saved." confirmLabel="Leave" danger
+                       onConfirm={() => { const to = leaveTo; setLeaveTo(null); dirty.current = false; navigate(to); }} onCancel={() => setLeaveTo(null)} />
+      )}
       {confirm === 'delete' && (
         <ConfirmDialog title="Delete this expense?" message="The receipt file goes with it unless another expense still uses it." confirmLabel="Delete" danger onConfirm={remove} onCancel={() => setConfirm(null)} />
       )}

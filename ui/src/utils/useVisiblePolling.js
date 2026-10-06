@@ -28,25 +28,35 @@ export function useVisiblePolling(fn, interval) {
       return typeof v === 'function' ? v() : v;
     };
 
+    let running = false, gone = false;
     function stop() {
       if (id) { clearTimeout(id); id = null; }
     }
-    // setTimeout rather than setInterval so the delay is re-read each cycle and
-    // a slow call cannot stack up behind itself.
+    // The next call is scheduled only once this one has answered. It used to
+    // be scheduled straight away, so on a slow link calls overlapped and could
+    // answer out of order: a poll sent before a save repainted the old values
+    // after it.
+    async function tick() {
+      if (running) return;
+      running = true;
+      try { await fnRef.current(); } catch { /* the caller shows its own errors */ }
+      finally { running = false; }
+    }
     function schedule() {
       stop();
-      if (document.hidden) return;
-      id = setTimeout(() => { fnRef.current(); schedule(); }, period());
+      if (document.hidden || gone) return;
+      id = setTimeout(async () => { await tick(); schedule(); }, period());
     }
 
     schedule();
-    function onVisibility() {
+    async function onVisibility() {
       if (document.hidden) { stop(); return; }
-      fnRef.current();
+      await tick();
       schedule();
     }
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
+      gone = true;
       stop();
       document.removeEventListener('visibilitychange', onVisibility);
     };

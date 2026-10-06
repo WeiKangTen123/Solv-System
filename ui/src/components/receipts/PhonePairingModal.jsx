@@ -24,6 +24,10 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
   const arrivedRef = useRef(onArrived);
   arrivedRef.current = onArrived;
   const seenRef = useRef(0);
+  // The first image link each photo arrived with. The server signs a fresh
+  // one on every poll, and a new URL made every thumbnail download again
+  // every three seconds.
+  const linkRef = useRef({});
 
   // Mint the pairing once, on open.
   useEffect(() => {
@@ -32,6 +36,8 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
       .then(res => { if (active) { setPair(res); setSecs(Math.round(res.expiresInMs / 1000)); } })
       .catch(err => { if (active) setError(err.message || 'Could not create a pairing code'); });
     return () => { active = false; };
+    // One code per opening, for the case it was opened on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Poll for arrivals. One request carries the countdown, the count and the
@@ -46,6 +52,8 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
         if (stop) return;
         setSecs(Math.max(0, Math.round(s.expiresInMs / 1000)));
         setSpent(!!s.spent);
+        // An expired or used-up code gets no more photos; stop asking.
+        if (s.expiresInMs <= 0 || s.spent) { stop = true; clearInterval(timer); }
         if (s.receipts) {
           // Parsed fields arrive over later polls, so replace wholesale rather
           // than appending — a row's merchant and total fill in as they are read.
@@ -57,8 +65,9 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
       } catch { /* transient — the next tick tries again */ }
     }
 
+    let timer = null;
     poll();
-    const timer = setInterval(poll, 3000);
+    timer = setInterval(poll, 3000);
     return () => { stop = true; clearInterval(timer); };
   }, [pair]);
 
@@ -146,7 +155,7 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
                           retina screen — rather than the stored receipt, which
                           can be 3MB. The server falls back to the original if it
                           cannot scale, so this never fails to show a photo. */}
-                      <img src={`/api/receipts/${r.id}/image?w=160&token=${encodeURIComponent(r.imageToken)}`}
+                      <img src={`/api/receipts/${r.id}/image?w=160&token=${encodeURIComponent(linkRef.current[r.id] || (linkRef.current[r.id] = r.imageToken))}`}
                            alt="" loading="lazy" decoding="async" width={76} height={76}
                            style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     </div>

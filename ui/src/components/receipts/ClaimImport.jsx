@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { blobToBase64 } from './receipt-upload';
 import Modal from '../Modal';
 import { useConfirm } from '../../context/ConfirmContext';
 // api/client prepends BASE = '/api', so paths here start after it.
@@ -27,14 +28,8 @@ const stageIndex = stage => {
   return ['unpacked', 'form read'].includes(stage) ? 1 : (stage === 'done' ? STAGES.length : -1);
 };
 
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result).split(',')[1]);
-    r.onerror = () => reject(new Error(`${file.name} could not be read`));
-    r.readAsDataURL(file);
-  });
-}
+// The bare base64 of a file, through the one reader the upload uses.
+const fileToBase64 = file => blobToBase64(file).then(uri => uri.split(',')[1]).catch(() => { throw new Error(`${file.name} could not be read`); });
 
 export default function ClaimImport({ onClose, onImported, initialJobId = null }) {
   const confirm = useConfirm();
@@ -125,7 +120,8 @@ export default function ClaimImport({ onClose, onImported, initialJobId = null }
           <>
             <input ref={fileRef} type="file" accept={ACCEPT} multiple style={{ display: 'none' }}
                    onChange={e => setFiles(Array.from(e.target.files || []))} />
-            <div onClick={() => fileRef.current?.click()}
+            <div onClick={() => fileRef.current?.click()} role="button" tabIndex={0} aria-label="Choose the claim files"
+                 onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileRef.current?.click(); } }}
                  style={{ border: '1px dashed var(--border)', borderRadius: 12, padding: '26px 18px',
                           textAlign: 'center', cursor: 'pointer', marginBottom: 14 }}>
               <div style={{ fontSize: 22, opacity: 0.5 }}>🗂</div>

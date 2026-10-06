@@ -78,7 +78,7 @@ const SCOPE = { own: 'your expenses', team: 'you and your team', company: 'the w
 export default function Insights({ refresh = 0 }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
-  useEffect(() => { api.get('/dashboard/summary').then(setD).catch(e => setErr(e.message)); }, [refresh]);
+  useEffect(() => { api.get('/dashboard/summary').then(x => { setD(x); setErr(null); }).catch(e => setErr(e.message)); }, [refresh]);
 
   if (err) return <div className="card"><div className="card-title">Where the money goes</div><div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Could not load the figures: {err}</div></div>;
   if (!d) return null;

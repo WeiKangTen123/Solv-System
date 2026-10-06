@@ -28,7 +28,6 @@ export default function Sidebar() {
   const { isMobile, mobileDrawerOpen, setMobileDrawerOpen } = useViewMode();
   const navigate = useNavigate();
   const close = () => { if (isMobile) setMobileDrawerOpen(false); };
-  const canAdmin = user?.role === 'admin';
 
   return (
     <aside style={{

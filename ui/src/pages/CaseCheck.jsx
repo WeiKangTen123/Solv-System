@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useViewMode } from '../context/ViewModeContext';
+import { getCompany } from '../utils/useCompany';
 import { useVisiblePolling } from '../utils/useVisiblePolling';
 import StatusBadge from '../components/StatusBadge';
 import { fmtMoney } from '../utils/format';
@@ -28,6 +30,7 @@ export default function CaseCheck() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { isMobile } = useViewMode();
   const base = user?.baseCurrency || 'SGD';
 
   const [view, setView] = useState(null);
@@ -47,11 +50,17 @@ export default function CaseCheck() {
       for (const e of d.report.expenses) next[e.id] = dirtyRef.has(e.id) ? r[e.id] : pick(e);
       return next;
     });
+    // dirtyRef and baseRef are stable for the page's life (made once by useState).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   // Which rows the user has touched, kept outside state so a reload can leave
-  // them alone without the loader depending on them.
+  // them alone without the loader depending on them, and what each row said
+  // when it was first touched: Save sends only the fields that differ from
+  // it. Sending every field wrote back blanks over whatever had changed on
+  // the server since, such as the reader's figures arriving a moment later.
   const [dirtyRef] = useState(() => new Set());
+  const [baseRef] = useState(() => ({}));
 
   useEffect(() => { load().catch(e => setMsg({ tone: 'error', text: e.message })); }, [load]);
   const reading = !!view?.report?.expenses?.some(e => e.status === 'reading');
@@ -63,7 +72,7 @@ export default function CaseCheck() {
     window.addEventListener('solv:changed', on);
     return () => window.removeEventListener('solv:changed', on);
   }, [load]);
-  useEffect(() => { api.get('/company').then(d => setCategories(d.categories || [])).catch(() => {}); }, []);
+  useEffect(() => { getCompany().then(d => setCategories(d.categories || [])).catch(() => {}); }, []);
 
   // The receipt for the row being looked at. One request per selection, and
   // only when there is a file to show.
@@ -79,6 +88,7 @@ export default function CaseCheck() {
   }, [sel, view?.report?.expenses?.find(x => x.id === sel)?.receipt?.id]);
 
   const set = (eid, k, v) => {
+    if (!dirtyRef.has(eid)) baseRef[eid] = rows[eid];
     dirtyRef.add(eid);
     setDirty(d => ({ ...d, [eid]: true }));
     setRows(r => ({ ...r, [eid]: { ...r[eid], [k]: v } }));
@@ -88,13 +98,15 @@ export default function CaseCheck() {
     const edit = rows[e.id];
     if (!edit || !dirtyRef.has(e.id)) return true;
     try {
+      const was = baseRef[e.id] || pick(e);
+      const changed = k => String(edit[k] ?? '') !== String(was[k] ?? '');
       const body = {};
-      for (const k of FIELDS) if (k !== 'category') body[k] = edit[k] === '' ? null : edit[k];
+      for (const k of FIELDS) if (k !== 'category' && changed(k)) body[k] = edit[k] === '' ? null : edit[k];
       // An empty currency box means "I have not typed it yet", not "this receipt
       // has no currency". Sending it cleared the currency and with it the rate.
       const ccy = String(edit.currency || '').toUpperCase();
-      if (/^[A-Z]{3}$/.test(ccy)) body.currency = ccy; else delete body.currency;
-      await api.patch(`/expenses/${e.id}`, body);
+      if ('currency' in body) { if (/^[A-Z]{3}$/.test(ccy)) body.currency = ccy; else delete body.currency; }
+      if (Object.keys(body).length) await api.patch(`/expenses/${e.id}`, body);
 
       const lines = e.lines || [];
       const amount = Number(edit.total);
@@ -106,15 +118,16 @@ export default function CaseCheck() {
         await api.put(`/expenses/${e.id}/lines`, {
           lines: [{ category: edit.category || null, description: null, amount, currency: ccy || e.currency || null }],
         });
-      } else if (lines.length === 1 && (edit.category !== lines[0].category || Number(lines[0].amount) !== amount)) {
+      } else if (lines.length === 1 && changed('category') && edit.category !== lines[0].category) {
         // The report's column comes from the line, not the expense, so a
         // category typed here has to reach the line or the printed report
         // ignores it.
         await api.put(`/expenses/${e.id}/lines`, {
-          lines: [{ ...lines[0], category: edit.category || null, amount: amount > 0 ? amount : lines[0].amount }],
+          lines: [{ ...lines[0], category: edit.category || null, amount: Number(lines[0].amount) }],
         });
       }
       dirtyRef.delete(e.id);
+      delete baseRef[e.id];
       setDirty(d => ({ ...d, [e.id]: false }));
       return true;
     } catch (err) {
@@ -127,7 +140,7 @@ export default function CaseCheck() {
     setBusy('save');
     try {
       for (const e of view.report.expenses) if (!(await saveRow(e))) return false;
-      await load();
+      await load().catch(err => setMsg({ tone: 'error', text: `Saved, but the table could not be reloaded: ${err.message}` }));
       return true;
     } finally { setBusy(''); }
   }
@@ -190,7 +203,9 @@ export default function CaseCheck() {
         <div className="alert alert-info">This case has been claimed. You can still correct a receipt&rsquo;s details, and each change is recorded on the case. Reopen it to check or add receipts.</div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: selected ? 'minmax(0, 1fr) 360px' : '1fr', gap: 16, alignItems: 'start' }}>
+      {/* On a phone the receipt goes under the table: a fixed 360px column beside
+          it squeezed the table to nothing. */}
+      <div style={{ display: 'grid', gridTemplateColumns: selected && !isMobile ? 'minmax(0, 1fr) 360px' : '1fr', gap: 16, alignItems: 'start' }}>
         <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
           <table className="data-table check-table">
             <thead>
@@ -211,9 +226,9 @@ export default function CaseCheck() {
                   <tr key={e.id} onClick={() => setSel(e.id)}
                       style={{ cursor: 'pointer', background: on ? 'var(--bg-hover)' : undefined }}>
                     <td><input className="form-input" type="date" style={{ minWidth: 118 }}
-                               disabled={rowLocked} value={row.receiptDate || ''} onChange={ev => set(e.id, 'receiptDate', ev.target.value)} /></td>
+                               disabled={rowLocked} value={row.receiptDate || ''} aria-label="Date" onChange={ev => set(e.id, 'receiptDate', ev.target.value)} /></td>
                     <td><input className="form-input" style={{ minWidth: 126 }}
-                               disabled={rowLocked} value={row.merchant || ''} placeholder="Merchant"
+                               disabled={rowLocked} value={row.merchant || ''} placeholder="Merchant" aria-label="Merchant"
                                onChange={ev => set(e.id, 'merchant', ev.target.value)} />
                       {/* What the reader could not settle — an assumed currency, a
                           possible duplicate — belongs beside the row it is about. */}
@@ -222,7 +237,7 @@ export default function CaseCheck() {
                       {many
                         ? <Link to={`/expenses/${e.id}`} style={{ fontSize: 12 }}>{e.lines.length} lines →</Link>
                         : <select className="form-input" style={{ minWidth: 118 }}
-                                  disabled={rowLocked} value={row.category || ''} onChange={ev => set(e.id, 'category', ev.target.value)}>
+                                  disabled={rowLocked} value={row.category || ''} aria-label="Category" onChange={ev => set(e.id, 'category', ev.target.value)}>
                             <option value="">Category…</option>
                             {categories.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>}
@@ -239,7 +254,7 @@ export default function CaseCheck() {
                       {e.baseTotal != null ? fmtMoney(e.baseTotal, '') : <span style={{ color: 'var(--warning)' }}>no rate</span>}
                     </td>
                     <td><input className="form-input" style={{ minWidth: 140 }}
-                               disabled={rowLocked} value={row.purpose || ''} placeholder="What it was for"
+                               disabled={rowLocked} value={row.purpose || ''} placeholder="What it was for" aria-label="Business purpose"
                                onChange={ev => set(e.id, 'purpose', ev.target.value)} /></td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <StatusBadge status={e.status} />
@@ -254,7 +269,7 @@ export default function CaseCheck() {
         </div>
 
         {selected && (
-          <div className="card" style={{ position: 'sticky', top: 12 }}>
+          <div className="card" style={isMobile ? undefined : { position: 'sticky', top: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
               <div style={{ fontSize: 13, fontWeight: 700 }}>{selected.merchant || 'Receipt'}</div>
               <button className="btn btn-ghost btn-sm" onClick={() => setSel(null)} aria-label="Close the receipt">✕</button>

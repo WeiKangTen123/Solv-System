@@ -1,6 +1,4 @@
 import { NavLink } from 'react-router-dom';
-import { useTheme } from '../../context/ThemeContext';
-import { useAuth } from '../../context/AuthContext';
 
 // The same three tabs for everyone; an admin gets Settings as a fourth. It
 // used to be shown to everyone while the route behind it refused most of them,
@@ -13,9 +11,6 @@ const ALL = [
 ];
 
 export default function BottomNav() {
-  const { theme } = useTheme();
-  const { user } = useAuth();
-  const isDark = theme === 'dark';
   const NAV_ITEMS = ALL;
   return (
     <nav style={{

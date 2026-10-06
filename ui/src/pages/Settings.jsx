@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { formatRelative } from '../utils/formatDate';
+import { formatDate, formatRelative } from '../utils/formatDate';
+import { fmtMoney } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
 import ExchangeRates from '../components/settings/ExchangeRates';
+import { forgetCompany } from '../utils/useCompany';
 
 // What the reader last saw from a key: worked, ran out of quota, or was
 // refused. Whichever happened most recently is the one that describes it.
@@ -52,6 +54,8 @@ export default function Settings() {
   const [currencies, setCurrencies] = useState([]);
   const [msg, setMsg] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  // A yes/no question before something that cannot be taken back.
+  const [ask, setAsk] = useState(null);
   const [pwFor, setPwFor] = useState(null);
   const [adding, setAdding] = useState(false);
   const [newPerson, setNewPerson] = useState({ email: '', name: '', password: '', role: 'user' });
@@ -96,6 +100,8 @@ export default function Settings() {
 
   useEffect(() => {
     loadAll().catch(e => setMsg({ tone: 'error', text: e.message }));
+    // Loaded again when the role changes; loadAll itself is rebuilt every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
   const ok = text => setMsg({ tone: 'success', text });
@@ -110,9 +116,18 @@ export default function Settings() {
     } catch (err) { fail(err); }
   }
 
+  // One request at a time per form: a double click on Save, Add or Remove
+  // used to send it twice (two people, two keys).
+  const inFlight = useRef(new Set());
+  const once = async (key, fn) => {
+    if (inFlight.current.has(key)) return;
+    inFlight.current.add(key);
+    try { await fn(); } finally { inFlight.current.delete(key); }
+  };
+
   async function saveCompany(e) {
     e.preventDefault();
-    try {
+    await once('company', async () => { try {
       await api.patch('/company', {
         name: company.name,
         baseCurrency: company.baseCurrency.toUpperCase(),
@@ -121,21 +136,22 @@ export default function Settings() {
         reportColumns: columns.split(',').map(s => s.trim()).filter(Boolean),
         allowRegistration: !!company.allowRegistration,
       });
+      forgetCompany();
       await loadAll();
       await refreshUser();
       ok('Company settings saved.');
-    } catch (err) { fail(err); }
+    } catch (err) { fail(err); } });
   }
 
   async function addPerson(e) {
     e.preventDefault();
-    try {
+    await once('person', async () => { try {
       await api.post('/users', { ...newPerson, name: newPerson.name.trim() || null });
       ok(`${newPerson.email} added. Tell them their first password.`);
       setNewPerson({ email: '', name: '', password: '', role: 'user' });
       setAdding(false);
       await loadAll();
-    } catch (err) { fail(err); }
+    } catch (err) { fail(err); } });
   }
 
   async function patchUser(id, patch) {
@@ -166,11 +182,11 @@ export default function Settings() {
 
   async function saveXero(e) {
     e.preventDefault();
-    try {
+    await once('xero', async () => { try {
       await api.patch('/xero/credentials', xeroForm);
       await loadAll();
       ok('Xero settings saved.');
-    } catch (err) { fail(err); }
+    } catch (err) { fail(err); } });
   }
 
   async function testXero() {
@@ -190,12 +206,12 @@ export default function Settings() {
 
   async function addKey(e) {
     e.preventDefault();
-    try {
+    await once('key', async () => { try {
       await api.post('/company/llm-keys', newKey);
       setNewKey({ apiKey: '', label: '' });
       await loadKeys();
       ok('LLM API key added.');
-    } catch (err) { fail(err); }
+    } catch (err) { fail(err); } });
   }
 
   if (!company) return <div style={{ color: 'var(--text-muted)', padding: 24 }}>{msg?.text || 'Loading settings…'}</div>;
@@ -306,7 +322,7 @@ export default function Settings() {
             <div style={{ background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Claimed</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--accent, #6366f1)', marginTop: 2 }}>
-                {company.baseCurrency} {(users.reduce((acc, u) => acc + (u.claimedCents || 0), 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {fmtMoney(users.reduce((acc, u) => acc + (u.claimedCents || 0), 0) / 100, company.baseCurrency)}
               </div>
             </div>
           </div>
@@ -356,7 +372,7 @@ export default function Settings() {
                       <span style={{ color: 'var(--text-muted)' }}> / {u.caseCount || 0}</span>
                     </td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>
-                      {company.baseCurrency} {((u.claimedCents || 0) / 100).toFixed(2)}
+                      {fmtMoney((u.claimedCents || 0) / 100, company.baseCurrency)}
                     </td>
                     <td>
                       {u.removed ? (
@@ -368,7 +384,7 @@ export default function Settings() {
                         </span>
                       ) : (
                         <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                          {u.lastSeenAt ? `Seen ${new Date(u.lastSeenAt).toLocaleDateString()}` : 'Offline'}
+                          {u.lastSeenAt ? `Seen ${formatDate(u.lastSeenAt, user?.timezone)}` : 'Offline'}
                         </span>
                       )}
                     </td>
@@ -443,7 +459,7 @@ export default function Settings() {
             <button className="btn btn-primary" type="submit">Save Xero settings</button>
             <button className="btn btn-outline" type="button" onClick={testXero}>Test Custom Connection</button>
             <button className="btn btn-outline" type="button" onClick={connectXero} disabled={!xero.oauthRedirectConfigured} title={xero.oauthRedirectConfigured ? '' : 'Set XERO_OAUTH_REDIRECT_URI on the server first'}>Connect with Xero (OAuth)</button>
-            {xero.tenants.length > 0 && <button className="btn btn-ghost" type="button" onClick={() => api.delete('/xero/oauth/disconnect').then(loadAll).catch(fail)}>Disconnect</button>}
+            {xero.tenants.length > 0 && <button className="btn btn-ghost" type="button" onClick={() => setAsk({ title: 'Disconnect Xero?', message: 'Nobody can post a case to Xero until it is connected again. Bills already in Xero stay there.', label: 'Disconnect', run: () => api.delete('/xero/oauth/disconnect').then(loadAll).catch(fail) })}>Disconnect</button>}
           </div>
         </form>
       )}
@@ -487,7 +503,7 @@ export default function Settings() {
                 </div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button className="btn btn-outline btn-sm" disabled={!!(t && t.busy)} onClick={() => testKey(k.id)}>{t && t.busy ? 'Testing…' : 'Test'}</button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => api.delete(`/company/llm-keys/${k.id}`).then(loadKeys).catch(fail)}>Remove</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setAsk({ title: 'Remove this LLM key?', message: `${k.keyMasked}${k.label ? ` (${k.label})` : ''} stops being used for reading receipts and the assistant.`, label: 'Remove', run: () => api.delete(`/company/llm-keys/${k.id}`).then(loadKeys).catch(fail) })}>Remove</button>
                 </div>
               </div>
             );
@@ -505,6 +521,11 @@ export default function Settings() {
       {/* Admin Tab 5: Exchange Rates — the live board and its daily log */}
       {isAdmin && adminTab === 'fx' && (
         <ExchangeRates isAdmin={isAdmin} currencies={currencies} onNotify={setMsg} />
+      )}
+
+      {ask && (
+        <ConfirmDialog title={ask.title} message={ask.message} confirmLabel={ask.label} danger
+                       onConfirm={async () => { await ask.run(); setAsk(null); }} onCancel={() => setAsk(null)} />
       )}
 
       {confirm && (
@@ -595,7 +616,7 @@ function PersonalSettings({ user, company, theme, toggleTheme, onOpenPassword, n
           <div style={{ background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Claimed</div>
             <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--accent, #6366f1)', marginTop: 2 }}>
-              {company?.baseCurrency || 'SGD'} {((user?.claimedCents || 0) / 100).toFixed(2)}
+              {fmtMoney((user?.claimedCents || 0) / 100, company?.baseCurrency || 'SGD')}
             </div>
           </div>
         </div>
@@ -630,7 +651,7 @@ function PersonalSettings({ user, company, theme, toggleTheme, onOpenPassword, n
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Password</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>You will be prompted for your current password to set a new one (at least 6 characters).</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>You will be prompted for your current password to set a new one (at least 8 characters).</div>
           </div>
           <button className="btn btn-primary" type="button" onClick={onOpenPassword}>Change Password</button>
         </div>
@@ -699,6 +720,8 @@ function UserGeminiSection({ onNotify }) {
 
   useEffect(() => {
     loadKeys();
+    // Once, when the section opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function loadKeys() {
@@ -707,7 +730,9 @@ function UserGeminiSection({ onNotify }) {
       const res = await api.get('/users/me/gemini-keys');
       setKeys(res.keys || []);
     } catch (e) {
-      console.error(e);
+      // It used to say "No personal key configured" when the list simply
+      // failed to load, which reads as a key having been lost.
+      onNotify && onNotify({ tone: 'error', text: `Could not load your personal keys: ${e.message}` });
     } finally {
       setLoading(false);
     }
@@ -865,7 +890,7 @@ function UserGeminiSection({ onNotify }) {
                     <span className="badge badge-gray" style={{ fontSize: 11 }}>Personal Key</span>
                   )}
                   <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                    Added {new Date(k.createdAt).toLocaleDateString()}
+                    Added {formatDate(k.createdAt)}
                   </span>
                   {!existingKeyResults[k.id] && (
                     <span style={{ fontSize: 11.5, color: keyStatus(k).color }}>{keyStatus(k).text}</span>

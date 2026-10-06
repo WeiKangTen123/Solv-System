@@ -31,7 +31,11 @@ export default function Home() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const isAdmin = user?.role === 'admin';
-  const [expenses, setExpenses] = useState([]);
+  // Only what the page shows: receipts that need checking, and checked ones not
+  // in a case. It used to fetch every receipt the person ever had, every
+  // twenty seconds, to filter them here.
+  const [needing, setNeeding] = useState([]);
+  const [unfiled, setUnfiled] = useState([]);
   const [reports, setReports] = useState([]);
   const [everyone, setEveryone] = useState([]);
   const [msg, setMsg] = useState(null);
@@ -42,7 +46,8 @@ export default function Home() {
   const [changed, setChanged] = useState(0);
 
   const load = useCallback(() => Promise.all([
-    api.get('/expenses').then(d => setExpenses(d.expenses)),
+    api.get('/expenses?status=review-needed,reading').then(d => setNeeding(d.expenses)),
+    api.get('/expenses?status=reviewed&unfiled=1').then(d => setUnfiled(d.expenses)),
     api.get('/reports').then(d => setReports(d.reports)),
     isAdmin ? api.get('/reports?scope=all').then(d => setEveryone(d.reports || [])).catch(() => setEveryone([])) : Promise.resolve(),
   ]).then(() => setMsg(m => (m && m.tone === 'error' ? null : m)))
@@ -50,13 +55,11 @@ export default function Home() {
     // expenses" rather than "the list could not be loaded".
     .catch(e => setMsg({ tone: 'error', text: `Could not load your cases: ${e.message}` })), [isAdmin]);
   useEffect(() => { load(); }, [load]);
-  useVisiblePolling(load, () => (expenses.some(e => e.status === 'reading') ? 2500 : 20000));
+  useVisiblePolling(load, () => (needing.some(e => e.status === 'reading') ? 2500 : 20000));
 
   const base = user?.baseCurrency || 'SGD';
   const sum = ns => Math.round(ns.reduce((s, n) => s + (Number(n) || 0), 0) * 100) / 100;
 
-  const needing = expenses.filter(e => e.status === 'review-needed' || e.status === 'reading');
-  const unfiled = expenses.filter(e => e.status === 'reviewed' && !e.reportId);
   const open = reports.filter(r => r.status === 'open');
   const claimedThisMonth = reports.filter(r => r.status === 'claimed' && thisMonth(r.claimedAt, user?.timezone));
   // Ready means the claim button will work: every receipt checked, every line

@@ -43,7 +43,9 @@ export default function CroppedImage({ src, box, alt = '', style, onError }) {
     img.src = src;
 
     return () => { cancelled = true; };
-  }, [src, box, onError]);
+    // The box arrives as a new array on every poll; its numbers are what matter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src, box ? box.join(',') : '', onError]);
 
   return <canvas ref={canvasRef} aria-label={alt} style={style} />;
 }

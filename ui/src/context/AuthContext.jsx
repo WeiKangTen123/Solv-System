@@ -28,6 +28,9 @@ export function AuthProvider({ children }) {
     const data = await api.post('/auth/login', { email, password });
     localStorage.setItem('token', data.token);
     setUser(data.user);
+    // The sign-in answer carries the account, not the company's currency and
+    // time zone; until a reload every page showed SGD and Singapore time.
+    await refreshUser();
     return data.user;
   }
 
@@ -44,6 +47,7 @@ export function AuthProvider({ children }) {
     const data = await api.post('/auth/register', { email, password, name });
     localStorage.setItem('token', data.token);
     setUser(data.user);
+    await refreshUser();
     return data.user;
   }
 

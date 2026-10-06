@@ -15,7 +15,9 @@ export default function ExpenseTable({ expenses, empty = 'No expenses yet.' }) {
         <thead><tr><th>Date</th><th>Merchant</th><th style={{ textAlign: 'right' }}>Amount</th><th style={{ textAlign: 'right' }}>{base}</th><th>Category</th><th>Status</th></tr></thead>
         <tbody>
           {expenses.map(e => (
-            <tr key={e.id} onClick={() => navigate(`/expenses/${e.id}`)} style={{ cursor: 'pointer' }}>
+            <tr key={e.id} onClick={() => navigate(`/expenses/${e.id}`)} style={{ cursor: 'pointer' }}
+                tabIndex={0} role="link" aria-label={`Open ${e.merchant || 'receipt'}`}
+                onKeyDown={ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); navigate(`/expenses/${e.id}`); } }}>
               <td style={{ whiteSpace: 'nowrap' }}>{e.receiptDate || '—'}</td>
               <td>
                 <div style={{ fontWeight: 600 }}>{e.merchant || (e.status === 'reading' ? 'Reading the receipt…' : 'Untitled receipt')}</div>

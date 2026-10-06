@@ -1,5 +1,9 @@
 import { useEffect, useRef } from 'react';
 
+// Open dialogs, newest last. Escape belongs to the top one: "Undo import?"
+// over the import panel used to close both.
+const _stack = [];
+
 // The one overlay. Six dialogs each drew their own fixed backdrop, their own
 // Escape handler (or none) and their own click-outside rule, with small
 // differences between them. This owns: the backdrop, Escape and click-outside
@@ -14,13 +18,39 @@ import { useEffect, useRef } from 'react';
 export default function Modal({ onClose, busy = false, maxWidth = 440, zIndex = 1000, card = false, label, style, children }) {
   const panelRef = useRef(null);
 
-  useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape' && !busy) onClose?.(); }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [busy, onClose]);
+  const me = useRef({});
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
-  useEffect(() => { panelRef.current?.focus(); }, []);
+  // On open: join the stack, take focus, remember where focus was. On close:
+  // leave the stack and give focus back to what opened the dialog.
+  useEffect(() => {
+    const token = me.current;
+    _stack.push(token);
+    const opener = document.activeElement;
+    panelRef.current?.focus();
+    function onKey(e) {
+      if (_stack[_stack.length - 1] !== token) return;
+      if (e.key === 'Escape' && !busyRef.current) { e.stopPropagation(); closeRef.current?.(); return; }
+      // Tab stays inside the dialog.
+      if (e.key === 'Tab' && panelRef.current) {
+        const items = [...panelRef.current.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(el => !el.disabled && el.offsetParent !== null);
+        if (!items.length) return;
+        const first = items[0], last = items[items.length - 1];
+        if (e.shiftKey && (document.activeElement === first || document.activeElement === panelRef.current)) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      const at = _stack.indexOf(token);
+      if (at !== -1) _stack.splice(at, 1);
+      if (opener && typeof opener.focus === 'function' && document.contains(opener)) opener.focus();
+    };
+  }, []);
 
   const panel = {
     width: '100%', maxWidth, maxHeight: '90vh', overflowY: 'auto', borderRadius: 18,

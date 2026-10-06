@@ -62,7 +62,11 @@ export default function ReportDetail() {
 
   // The same page is reused when the case in the address changes, so what was
   // picked, previewed or about to be confirmed on the last one is cleared.
-  useEffect(() => { setPicked([]); setPreview(null); setConfirm(null); coverDirty.current = false; }, [id]);
+  // Answers for the case the page showed before are dropped: a reply for case
+  // A arriving after the page moved to case B painted A's cover onto B, and
+  // Save cover then wrote it there.
+  const current = useRef(id);
+  useEffect(() => { current.current = id; setView(null); setPicked([]); setPreview(null); setConfirm(null); coverDirty.current = false; }, [id]);
 
   // The receipts are read after the upload answers, so the page has to come
   // back on its own: without this, dropping ten receipts in and pressing Check
@@ -70,11 +74,12 @@ export default function ReportDetail() {
   // and the only way to find out when they were ready was to reload.
   const refresh = useCallback(async () => {
     const d = await api.get(`/reports/${id}`);
-    setView(d);
+    if (current.current === id) setView(d);
   }, [id]);
 
   const load = useCallback(async () => {
     const d = await api.get(`/reports/${id}`);
+    if (current.current !== id) return;
     setView(d);
     if (!coverDirty.current) setCover(Object.fromEntries(COVER.map(([k]) => [k, d.report[k] ?? ''])));
     // Filing is the owner's: an admin sees the case to monitor it.

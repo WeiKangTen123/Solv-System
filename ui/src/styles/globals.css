@@ -908,3 +908,16 @@ body {
 .assistant-input { display: flex; gap: 8px; align-items: flex-end; padding: 10px 12px 6px; border-top: 1px solid var(--border); }
 .assistant-input textarea { flex: 1; resize: none; min-height: 40px; max-height: 140px; font-size: 13.5px; }
 .assistant-foot { padding: 0 14px 10px; font-size: 11px; color: var(--text-muted); }
+
+/* A receipt's split into lines (pages/ExpenseReview.jsx): category, what it
+   was, amount, remove. On a phone the category takes its own line so the
+   other three fit beside each other. */
+.expense-line {
+  display: grid;
+  grid-template-columns: 1.1fr 1.4fr 0.9fr auto;
+  gap: 6px;
+  margin-bottom: 6px;
+  align-items: center;
+}
+.mobile-mode .expense-line { grid-template-columns: 1fr 0.8fr auto; }
+.mobile-mode .expense-line > :first-child { grid-column: 1 / -1; }
