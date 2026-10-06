@@ -19,14 +19,24 @@ const path = require('path');
 describe('lint', () => {
   test('no ESLint errors in main/ or ui/src', () => {
     const root = path.join(__dirname, '../..');
-    let output = '';
+    // ESLint's own entry point through this Node, not `npx eslint`: on
+    // Windows npx is npx.cmd, execFile could not start it, and the catch below
+    // read the missing output as "no errors" — the test passed in 6 ms without
+    // linting anything. The same happened on any machine when ESLint crashed.
+    const eslint = path.join(root, 'node_modules/eslint/bin/eslint.js');
+    let output;
     try {
-      execFileSync('npx', ['eslint', 'main', 'ui/src', '--format', 'json'],
-        { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-      output = '[]';
+      output = execFileSync(process.execPath, [eslint, 'main', 'ui/src', '--format', 'json'],
+        { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
     } catch (err) {
-      // ESLint exits non-zero when it finds errors; the report is still on stdout.
-      output = err.stdout || '[]';
+      // Exit 1 is ESLint finding errors, with its report on stdout. Anything
+      // else — it did not start, its config threw (exit 2) — is a failure of
+      // the check itself, never a pass.
+      if (err.status !== 1 || !err.stdout) {
+        throw new Error(`ESLint did not run (exit ${err.status ?? err.code}):
+${String(err.stderr || err.message).slice(0, 800)}`);
+      }
+      output = err.stdout;
     }
 
     let report;

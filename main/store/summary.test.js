@@ -5,7 +5,14 @@ const { serverFor } = require('../scripts/test-server');
 describe('dashboard summary', () => {
   let users, store, reports, wf, summary, app, cid, boss, ela, mar;
 
-  const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  // n days ago, but never before the 1st of this month: on the 1st,
+  // "yesterday" is last month, and every test expecting its receipt in this
+  // month's column failed on the first day of every month — stopping deploys.
+  const day = n => {
+    const today = new Date().toISOString().slice(0, 10);
+    const d = new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+    return d < `${today.slice(0, 7)}-01` ? today : d;
+  };
 
   // A priced expense, without going near a rate provider: the lines carry
   // baseAmount directly, which is what applyFx would have written.
