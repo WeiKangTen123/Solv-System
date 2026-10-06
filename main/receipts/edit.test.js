@@ -45,6 +45,14 @@ describe('receipts/edit', () => {
     expect(log[1].newValue).toBe('Lodging 60.00 · Meals 40.00 (Tan)');
   });
 
+  test('a category set on a one-line receipt reaches its line, which the report reads', async () => {
+    const e = seed();
+    const after = await edit.editDetails(e.id, { category: 'Meals' }, actor(admin));
+    expect(after.category).toBe('Meals');
+    expect(after.lines).toEqual([expect.objectContaining({ category: 'Meals', amount: 100 })]);
+    expect(changes.list(e.id).map(c => c.field).sort()).toEqual(['category', 'lines']);
+  });
+
   test('a typed rate and a refresh are logged as rate changes', async () => {
     const e = seed();
     await edit.setRate(e.id, { rate: 0.0136, reason: 'Card statement' }, actor(emp));

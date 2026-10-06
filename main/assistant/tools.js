@@ -161,9 +161,15 @@ const READ = {
       ...SCOPE_PROPS,
     } },
     run(ctx, a) {
-      const scope = _scope(ctx, a);
-      let list = store.listExpenses({ ...scope, status: a.status, from: a.from, to: a.to, reportId: a.caseId, unfiled: !!a.unfiled });
-      if (a.caseId) list = list.filter(e => canView(ctx.actor, e.userId, e.companyId));
+      let list;
+      if (a.caseId) {
+        // A case answers for itself: whoever may see it may list it.
+        const r = db.prepare('SELECT user_id, company_id FROM expense_reports WHERE id = ?').get(String(a.caseId));
+        if (!r || !canView(ctx.actor, r.user_id, r.company_id)) no('No case with that id that this person can see.');
+        list = store.listExpenses({ reportId: String(a.caseId), status: a.status, from: a.from, to: a.to });
+      } else {
+        list = store.listExpenses({ ..._scope(ctx, a), status: a.status, from: a.from, to: a.to, unfiled: !!a.unfiled });
+      }
       if (a.merchant) { const q = String(a.merchant).toLowerCase(); list = list.filter(e => String(e.merchant || '').toLowerCase().includes(q)); }
       return { count: list.length, receipts: list.slice(0, MAX_LIST).map(e => _brief(ctx, e)), ...(list.length > MAX_LIST ? { note: `Showing the newest ${MAX_LIST}.` } : {}) };
     },

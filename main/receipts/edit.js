@@ -90,6 +90,12 @@ async function editDetails(expenseId, body, actor, { via = 'app' } = {}) {
   } else if (patch.currency && updated.lines.length) {
     store.replaceLines(e.id, updated.lines.map(l => ({ ...l, currency: updated.currency })), { force: true });
   }
+  // So does a single line's category: the report's columns come from the
+  // lines, so a category set only on the receipt would never reach the case.
+  if (patch.category) {
+    const lines = store.getLines(e.id);
+    if (lines.length === 1 && lines[0].category !== patch.category) store.updateLine(lines[0].id, { category: patch.category });
+  }
   // A new currency, date or amount changes what the base figure is. A rate
   // somebody typed was typed for the OLD currency, so a currency change drops
   // it and fetches afresh; a new date or total keeps it.

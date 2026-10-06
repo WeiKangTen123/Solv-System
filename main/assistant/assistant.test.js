@@ -48,6 +48,15 @@ describe('assistant', () => {
       expect((await tools.run(ctxFor(emp), 'spending_summary', { groupBy: 'person' })).error).toMatch(/admins/);
     });
 
+    test('a case lists for whoever may see it, and for nobody else', async () => {
+      const e = seed(emp);
+      const r = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'Trip' });
+      reports.addExpense(r.id, e.id);
+      expect((await tools.run(ctxFor(admin), 'find_receipts', { caseId: r.id })).receipts.map(x => x.id)).toEqual([e.id]);
+      expect((await tools.run(ctxFor(emp), 'find_receipts', { caseId: r.id })).count).toBe(1);
+      expect((await tools.run(ctxFor(peer), 'find_receipts', { caseId: r.id })).error).toMatch(/No case/);
+    });
+
     test('check_receipt says what is wrong, plainly and the same every time', async () => {
       const e = seed(emp, { merchant: 'Courtyrad', purpose: null, lines: [{ category: 'Lodging', amount: 100 }] });
       store.updateExpense(e.id, { aiRead: { merchant: 'Courtyard', total: 120 } });
