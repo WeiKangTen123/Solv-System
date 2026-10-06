@@ -52,12 +52,13 @@ describe('fx/apply', () => {
     await expect(apply.overrideFx(e.id, { rate: 0.0135, reason: '', actor: { email: 'x' } })).rejects.toThrow(/why/);
   });
 
-  test('submission_date policy prices at today; monthly_fixed needs a manual rate for the 1st of the month', async () => {
+  test('submission_date policy prices at the day it arrived, company time; monthly_fixed needs a manual rate for the 1st of the month', async () => {
     users.updateCompany(u.companyId, { fxPolicy: 'submission_date' });
     rates.getRate.mockResolvedValue({ rate: 0.0133, rateDate: 'x', providerDate: 'x', source: 'frankfurter', fetchedAt: 'x' });
     const e = exp('INR', 100, [{ category: 'Meals', amount: 100 }]);
     await apply.applyFx(e.id);
-    expect(rates.getRate.mock.calls[0][0].date).toBe(new Date().toISOString().slice(0, 10));
+    const { localDate } = require('../utils/zone-date');
+    expect(rates.getRate.mock.calls[0][0].date).toBe(localDate('Asia/Singapore', new Date(e.createdAt)));
     users.updateCompany(u.companyId, { fxPolicy: 'monthly_fixed' });
     rates.getRate.mockResolvedValue({ rate: 0.0134, rateDate: '2026-09-01', providerDate: '2026-09-01', source: 'manual', fetchedAt: 'x' });
     await apply.applyFx(e.id, { force: true });

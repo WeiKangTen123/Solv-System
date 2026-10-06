@@ -76,6 +76,17 @@ describe('routes/users and routes/company', () => {
     expect(JSON.stringify(keys.body)).not.toContain('AIzaSy-1234567890');
   });
 
+  test('the base currency can change before the first receipt is priced, never after', async () => {
+    await request(serverFor(app)).patch('/api/company').set(as(token)).send({ baseCurrency: 'MYR' }).expect(200);
+    await request(serverFor(app)).patch('/api/company').set(as(token)).send({ baseCurrency: 'SGD' }).expect(200);
+    const store = require('../store/expenses');
+    store.createExpense({ companyId: admin.companyId, userId: admin.id, status: 'reviewed', merchant: 'Grab', currency: 'SGD', total: 10, receiptDate: '2026-09-04',
+      lines: [{ category: 'Meals', amount: 10, baseAmount: 10, fxRate: 1, fxSource: 'base' }] });
+    const r = await request(serverFor(app)).patch('/api/company').set(as(token)).send({ baseCurrency: 'USD' }).expect(409);
+    expect(r.body.error).toMatch(/cannot change once receipts have been converted to SGD/);
+    await request(serverFor(app)).patch('/api/company').set(as(token)).send({ baseCurrency: 'SGD', name: 'Solv' }).expect(200);   // the same one is fine
+  });
+
   test('a company LLM key can be tested, the answer is kept on the key, and the list says which models read', async () => {
     const axios = require('axios');
     const post = jest.spyOn(axios, 'post');

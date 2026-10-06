@@ -90,4 +90,41 @@ describe('receipts/edit', () => {
     await expect(edit.editDetails(e.id, { merchant: 'x' }, actor(admin))).rejects.toMatchObject({ status: 409 });
     expect(edit.permissions(store.getExpense(e.id), actor(emp))).toEqual({ isOwner: true, canEditDetails: false, canAct: false, posted: true });
   });
+
+  test('a receipt still being read cannot be edited or checked, and a duplicate cannot be checked', async () => {
+    const e = store.createExpense({ companyId: emp.companyId, userId: emp.id, status: 'reading' });
+    await expect(edit.editDetails(e.id, { merchant: 'x' }, actor(emp))).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/still being read/) });
+    expect(() => edit.setStatus(e.id, 'reviewed', actor(emp))).toThrow(/still being read/);
+    const dup = store.createExpense({ companyId: emp.companyId, userId: emp.id, status: 'duplicate', merchant: 'M', receiptDate: '2026-09-04', currency: 'SGD', total: 10,
+      lines: [{ category: 'Meals', amount: 10 }] });
+    expect(() => edit.setStatus(dup.id, 'reviewed', actor(emp))).toThrow(/duplicate/);
+    expect(store.getExpense(dup.id).status).toBe('duplicate');
+    expect(edit.permissions(store.getExpense(e.id), actor(emp)).canEditDetails).toBe(false);
+  });
+
+  test('a new total on a split takes the receipt back to review; a re-split keeps a typed rate', async () => {
+    const e = store.createExpense({ companyId: emp.companyId, userId: emp.id, status: 'reviewed', merchant: 'Courtyard', currency: 'INR', total: 100, receiptDate: '2026-09-04',
+      lines: [{ category: 'Lodging', amount: 60 }, { category: 'Meals', amount: 40 }] });
+    const after = await edit.editDetails(e.id, { total: 250 }, actor(emp));
+    expect(after.status).toBe('review-needed');
+    const f = seed();
+    await edit.setRate(f.id, { rate: 0.0135, reason: 'Card statement' }, actor(emp));
+    const split = await edit.editLines(f.id, [{ category: 'Lodging', amount: 70 }, { category: 'Meals', amount: 30 }], actor(emp));
+    expect(split.lines.map(l => [l.fxRate, l.fxSource, l.fxOverrideReason, l.baseAmount])).toEqual([[0.0135, 'manual', 'Card statement', 0.95], [0.0135, 'manual', 'Card statement', 0.41]]);
+  });
+
+  test('a receipt claimed on its own cannot then be filed in a case', () => {
+    const e = store.createExpense({ companyId: emp.companyId, userId: emp.id, status: 'reviewed', merchant: 'Grab', currency: 'SGD', total: 10, receiptDate: '2026-09-04',
+      lines: [{ category: 'Meals', amount: 10, baseAmount: 10, fxRate: 1, fxSource: 'base' }] });
+    require('../reports/workflow').markExpenseClaimed(e.id, actor(emp));
+    const r = require('../store/reports').createReport({ companyId: emp.companyId, userId: emp.id, title: 'T' });
+    expect(() => edit.fileInCase(e.id, r.id, actor(emp))).toThrow(/already claimed on its own/);
+  });
+
+  test('sameValue treats empty as empty and never as zero', () => {
+    expect(edit.sameValue('tax', null, 0)).toBe(false);
+    expect(edit.sameValue('tax', '', null)).toBe(true);
+    expect(edit.sameValue('total', '12.50', 12.5)).toBe(true);
+    expect(edit.sameValue('merchant', ' Grab ', 'grab')).toBe(true);
+  });
 });

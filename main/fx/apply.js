@@ -8,13 +8,19 @@ const { localDate } = require('../utils/zone-date');
 // the rate is for comes from the company policy; a rate a person typed in
 // stays (its base amount follows the line's amount) until they ask for a
 // refresh with force.
-const today = () => new Date().toISOString().slice(0, 10);
 const toBase = (amount, rate) => Math.round(Math.round(amount * 100) * rate) / 100;
 
-function policyDate(policy, expense) {
-  if (policy === 'submission_date') return today();
-  if (policy === 'monthly_fixed') return `${(expense.receiptDate || today()).slice(0, 7)}-01`;
-  return expense.receiptDate || today();
+// The date a receipt is priced for, in the company's own calendar. It used to
+// be UTC's: a receipt read before 08:00 in Singapore took the previous day's
+// rate, and under the submission-date policy the date was "today" every time
+// it was asked, so the nightly close moved a line on to the next day, and the
+// next, for as long as it stayed open. Submission is when the receipt
+// arrived, which does not move.
+function policyDate(policy, expense, tz = 'Asia/Singapore') {
+  const today = localDate(tz);
+  if (policy === 'submission_date') return expense.createdAt ? localDate(tz, new Date(expense.createdAt)) : today;
+  if (policy === 'monthly_fixed') return `${(expense.receiptDate || today).slice(0, 7)}-01`;
+  return expense.receiptDate || today;
 }
 
 async function applyFx(expenseId, { force = false } = {}) {
@@ -22,6 +28,7 @@ async function applyFx(expenseId, { force = false } = {}) {
   if (!e) return { pending: 0, applied: 0 };
   const company = users.getCompany(e.companyId);
   const base = company.baseCurrency;
+  const today = localDate(company.timezone);
   let pending = 0, applied = 0;
 
   const keepOverride = l => {
@@ -33,16 +40,16 @@ async function applyFx(expenseId, { force = false } = {}) {
   if (!e.currency || e.currency === base) {
     for (const l of e.lines) {
       if (keepOverride(l)) continue;
-      store.updateLine(l.id, { fxRate: 1, fxRateDate: e.receiptDate || today(), fxSource: 'base', fxFetchedAt: new Date().toISOString(), fxPolicy: company.fxPolicy, fxOverrideBy: null, fxOverrideReason: null, baseAmount: l.amount, fxAskedDate: e.receiptDate || today(), fxCheck: null });
+      store.updateLine(l.id, { fxRate: 1, fxRateDate: e.receiptDate || today, fxSource: 'base', fxFetchedAt: new Date().toISOString(), fxPolicy: company.fxPolicy, fxOverrideBy: null, fxOverrideReason: null, baseAmount: l.amount, fxAskedDate: e.receiptDate || today, fxCheck: null });
       applied++;
     }
     return { pending, applied };
   }
 
-  const date = policyDate(company.fxPolicy, e);
+  const date = policyDate(company.fxPolicy, e, company.timezone);
   // The company's own today decides whether this day may take the live
   // board's figure (fx/live.js) or must be priced from its history.
-  let r = await rates.getRate({ from: e.currency, to: base, date, force, today: localDate(company.timezone) });
+  let r = await rates.getRate({ from: e.currency, to: base, date, force, today });
   // A fixed monthly table is a promise finance made; a provider's number is not it.
   if (r && company.fxPolicy === 'monthly_fixed' && r.source !== 'manual') r = null;
   // A rate that moved further than a currency moves is not put on a line: the
@@ -85,7 +92,7 @@ const TYPED_RATE_TOLERANCE = 0.05;
 async function typedRateProblem(e, n, actor) {
   if (actor && actor.role === 'admin') return null;
   const company = users.getCompany(e.companyId);
-  const date = policyDate(company.fxPolicy, e);
+  const date = policyDate(company.fxPolicy, e, company.timezone);
   const day = await rates.getRate({ from: e.currency, to: company.baseCurrency, date, today: localDate(company.timezone) }).catch(() => null);
   const ref = day ? day.rate : null;
   if (!(ref > 0)) return 'There is no published rate for this day to check yours against. Ask an admin to set it.';
@@ -106,7 +113,7 @@ async function overrideFx(expenseId, { rate, reason, actor }) {
   if (problem) throw new Error(problem);
   for (const l of e.lines) {
     store.updateLine(l.id, {
-      fxRate: n, fxRateDate: e.receiptDate || today(), fxSource: 'manual', fxFetchedAt: new Date().toISOString(),
+      fxRate: n, fxRateDate: e.receiptDate || localDate(users.getCompany(e.companyId).timezone), fxSource: 'manual', fxFetchedAt: new Date().toISOString(),
       fxOverrideBy: (actor && (actor.email || actor.id)) || 'unknown', fxOverrideReason: String(reason).trim().slice(0, 200), baseAmount: toBase(l.amount, n),
       fxCheck: null,
     });

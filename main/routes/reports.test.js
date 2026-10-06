@@ -53,7 +53,7 @@ describe('routes/reports', () => {
     await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ purpose: 'x' }).expect(200);
     await request(serverFor(app)).delete(`/api/expenses/${e.id}`).set(as(emp)).expect(409);
     await request(serverFor(app)).patch(`/api/reports/${r.id}`).set(as(emp)).send({ title: 'x' }).expect(409);
-    await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(emp)).expect(400);         // already
+    await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(emp)).expect(409);         // already
     // reopening is the owner's alone — an admin sees the case but does not
     // handle it — and frees the receipts again
     await request(serverFor(app)).post(`/api/reports/${r.id}/reopen`).set(as(other)).expect(404);

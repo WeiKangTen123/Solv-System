@@ -38,13 +38,23 @@ router.post('/rates', requireAuth, requireRole('admin'), (req, res) => {
   try {
     const me = users.findById(req.user.id);
     const { from, to, date, rate } = req.body || {};
-    res.status(201).json({ rate: rates.setManualRate({ from, to: to || users.getCompany(me.companyId).baseCurrency, date, rate, by: req.user.email }) });
+    const saved = rates.setManualRate({ from, to: to || users.getCompany(me.companyId).baseCurrency, date, rate, by: req.user.email });
+    _follow(me.companyId, saved);
+    res.status(201).json({ rate: saved });
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
+
+// Open receipts priced for that day follow a rate an admin sets or removes,
+// after the answer: there may be many, and each may ask a provider.
+function _follow(companyId, r) {
+  if (!r || !r.from || !r.rateDate) return;
+  live.repriceRate(companyId, r.from, r.rateDate).catch(err => require('../utils/logger').warn('Re-pricing after a manual rate failed', { error: err.message }));
+}
 
 router.delete('/rates', requireAuth, requireRole('admin'), (req, res) => {
   const { from, to, date } = req.query;
   if (!rates.deleteManualRate({ from: String(from || '').toUpperCase(), to: String(to || '').toUpperCase(), date })) return res.status(404).json({ error: 'No manual rate on that day' });
+  _follow(companyOf(req), { from: String(from || '').toUpperCase(), rateDate: date });
   res.json({ ok: true });
 });
 

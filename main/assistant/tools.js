@@ -76,7 +76,7 @@ function _receipt(ctx, id) {
   if (!e || !canView(ctx.actor, e.userId, e.companyId)) no('No receipt with that id that this person can see.');
   return e;
 }
-const _category = e => (e.lines.length === 1 ? e.lines[0].category : e.lines.length > 1 ? 'split across lines' : e.category) || null;
+const _category = e => (e.lines.length > 1 ? 'split across lines' : edit.categoryOf(e));
 
 // One line about a receipt, for lists.
 function _brief(ctx, e) {
@@ -90,7 +90,7 @@ function _brief(ctx, e) {
 
 // ── Checks ───────────────────────────────────────────────────────────────────
 
-const _same = (k, a, b) => (['total', 'tax'].includes(k) ? Number(a) === Number(b) : String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase());
+const _same = edit.sameValue;
 
 // What is wrong with or worth a look on one receipt. Deterministic: the same
 // receipt gives the same list, whatever the model makes of it.
@@ -417,7 +417,9 @@ const PROPOSE = {
       const sum = clean.reduce((s, l) => s + Math.round(l.amount * 100), 0);
       if (sum !== store.toCents(e.total)) no(`These lines add up to ${money(sum / 100)} but the receipt total is ${money(e.total)}. They must match to the cent; if the total is wrong, propose that first.`);
       const summary = `${_label(e)}: lines ${changes.linesSummary(e.lines) || 'none'} → ${changes.linesSummary(clean)}`;
-      return _propose(ctx, { expense: e, kind: 'edit_lines', payload: { expenseId: e.id, lines: clean, reason: String(a.reason || '').slice(0, 300) }, summary });
+      // What the card was made against: Apply refuses if the lines or the
+      // total have moved since, rather than overwriting somebody's newer split.
+      return _propose(ctx, { expense: e, kind: 'edit_lines', payload: { expenseId: e.id, lines: clean, reason: String(a.reason || '').slice(0, 300), basis: changes.linesSummary(e.lines), total: e.total }, summary });
     },
   },
 
@@ -442,7 +444,10 @@ const PROPOSE = {
       const problem = await require('../fx/apply').typedRateProblem(e, rate, ctx.actor);
       if (problem) no(problem);
       const now = e.lines[0] && e.lines[0].fxRate;
-      return _propose(ctx, { expense: e, kind: 'set_rate', payload: { expenseId: e.id, rate, reason: reason.slice(0, 200) },
+      // A rate is for one currency: Apply refuses once the receipt's currency
+      // has changed. An admin's rate card for INR applied after the receipt
+      // became USD turned USD 10,000 into SGD 155.
+      return _propose(ctx, { expense: e, kind: 'set_rate', payload: { expenseId: e.id, rate, reason: reason.slice(0, 200), currency: e.currency },
         summary: `${_label(e)}: ${e.currency} rate ${now ? Number(now.toPrecision(6)) : 'none'} → ${Number(rate.toPrecision(6))} (${reason.slice(0, 80)})` });
     },
   },

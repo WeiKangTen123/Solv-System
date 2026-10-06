@@ -105,4 +105,51 @@ describe('xero/bills — postReport', () => {
     expect(after.xeroError).toMatch(/Account code 494/);
     expect(after.events.at(-1).action).toBe('xero_failed');
   });
+
+  test('re-checks what claiming checked: a line that lost its rate, or lines that no longer add up, does not post', async () => {
+    wf.markClaimed(report.id, emp);
+    const db = require('../db');
+    const id = reports.getReport(report.id).expenses[0].id;
+    db.prepare('UPDATE expense_lines SET base_cents = NULL WHERE expense_id = ?').run(id);
+    await expect(bills.postReport(report.id, emp)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/no exchange rate/) });
+    db.prepare('UPDATE expense_lines SET base_cents = 134 WHERE expense_id = ?').run(id);
+    db.prepare('UPDATE expenses SET total_cents = 25000 WHERE id = ?').run(id);
+    await expect(bills.postReport(report.id, emp)).rejects.toThrow(/do not add up/);
+    expect(mockCreateInvoices).not.toHaveBeenCalled();
+  });
+
+  test('advances above the claim are refused before anything is sent', async () => {
+    reports.updateReport(report.id, { advances: 5 });
+    wf.markClaimed(report.id, emp);
+    await expect(bills.postReport(report.id, emp)).rejects.toThrow(/advances are more than the claim/);
+    expect(mockCreateInvoices).not.toHaveBeenCalled();
+  });
+
+  test('the bill is recorded the moment Xero makes it, before the receipts go up, and is sent with an idempotency key', async () => {
+    wf.markClaimed(report.id, emp);
+    mockCreateInvoices.mockResolvedValue({ body: { invoices: [{ invoiceID: 'xero-bill-2' }] } });
+    let seenDuringUpload = null;
+    mockAttach.mockImplementationOnce(async () => { seenDuringUpload = reports.getReport(report.id).xeroInvoiceId; });
+    await bills.postReport(report.id, emp);
+    expect(seenDuringUpload).toBe('xero-bill-2');
+    expect(mockCreateInvoices.mock.calls[0][4]).toMatch(new RegExp(`^solv-${report.id}-\\d+$`));
+    expect(mockAttach.mock.calls[0][5]).toBe('xero-bill-2-R1.pdf');
+    expect(reports.getReport(report.id).xeroError).toBeNull();
+  });
+
+  test('a posting marker left by a process that died is taken over after ten minutes', () => {
+    wf.markClaimed(report.id, emp);
+    expect(reports.claimForPost(report.id)).toBe(true);
+    expect(reports.claimForPost(report.id)).toBe(false);
+    require('../db').prepare("UPDATE expense_reports SET updated_at = '2020-01-01T00:00:00.000Z' WHERE id = ?").run(report.id);
+    expect(reports.claimForPost(report.id)).toBe(true);
+  });
+});
+
+describe('xero/bills — dates', () => {
+  test('the bill is dated the day it was claimed where the company is', () => {
+    const bills = require('./bills');
+    const out = bills.buildBill({ company: { baseCurrency: 'SGD', timezone: 'Asia/Singapore' }, report: { number: 'C-1', claimedAt: '2026-09-30T23:30:00.000Z' }, lines: [] });
+    expect(out.invoice.date).toBe('2026-10-01');      // 07:30 on 1 Oct in Singapore
+  });
 });

@@ -14,6 +14,10 @@ process.on('uncaughtException', err => {
 });
 process.on('unhandledRejection', err => fatal('FATAL REJECTION', err?.stack || err?.message || String(err)));
 
+// When this process started: a receipt still 'reading' from before it was
+// being read by the process this one replaced (receipts/recover.js).
+const BOOT_AT = new Date().toISOString();
+
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 const express     = require('express');
@@ -119,7 +123,7 @@ app.use((err, req, res, _next) => {
 });
 
 const HOST = process.env.HOST || (PROD ? '127.0.0.1' : '0.0.0.0');
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, () => {
   logger.info(`Solv server running on ${HOST}:${PORT} [${process.env.NODE_ENV || 'development'}]`);
   // recoverPendingJobs is async, so the try/catch this used to sit in
   // caught only its synchronous prologue; a rejection went to
@@ -139,6 +143,25 @@ app.listen(PORT, HOST, () => {
   // daily sweep keeps them to a month.
   assistantRoutes.pruneUsage();
   setInterval(assistantRoutes.pruneUsage, 24 * 60 * 60 * 1000).unref();
+
+  // Receipts a restart left half-read are read again, or released with a note.
+  require('./receipts/recover').recoverStuckReads({ before: BOOT_AT })
+    .catch(err => logger.warn('Could not recover interrupted reads', { error: err.message }));
 });
+
+// pm2 sends SIGINT on a reload and waits kill_timeout before killing. Stop
+// taking requests and give the reads under way that long to land; whatever
+// does not is picked up by recoverStuckReads on the next boot.
+let _stopping = false;
+function shutdown(signal) {
+  if (_stopping) return;
+  _stopping = true;
+  logger.info('Shutting down', { signal });
+  server.close();
+  const deadline = new Promise(resolve => setTimeout(resolve, 6500).unref());
+  Promise.race([receiptRoutes._drain(), deadline]).finally(() => process.exit(0));
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 module.exports = app;

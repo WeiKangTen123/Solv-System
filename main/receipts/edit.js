@@ -32,12 +32,27 @@ const MAX_AMOUNT = 1e10;
 
 function fail(status, message) { const err = new Error(message); err.status = status; throw err; }
 
+const MONEY_FIELDS = ['total', 'tax', 'subTotal'];
+// Whether two values of one field say the same thing: amounts as numbers,
+// with empty equal to empty and never to 0; text without case or edge spaces.
+function sameValue(field, a, b) {
+  const empty = v => v === null || v === undefined || v === '';
+  if (empty(a) || empty(b)) return empty(a) && empty(b);
+  if (MONEY_FIELDS.includes(field)) return Number(a) === Number(b);
+  return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+}
+// The category a receipt reports under: its one line's, or its own while it
+// has none. A split has no single category (null).
+const categoryOf = e => (e.lines.length === 1 ? e.lines[0].category : e.lines.length > 1 ? null : e.category) || null;
+
 // May this person change this receipt's details at all, and if not, why not.
 function detailsBlocked(e, actor) {
   if (!e) return { status: 404, error: 'Expense not found' };
   if (!canEditDetails(actor, e.userId, e.companyId)) return { status: 404, error: 'Expense not found' };
   if (wf.isPosted(e)) return { status: 409, error: 'This receipt is in a case that has been posted to Xero, which is final.' };
   if (e.status === 'duplicate') return { status: 400, error: 'A duplicate cannot be edited; delete it or restore it first' };
+  // The reader's answer would land on top of whatever was typed meanwhile.
+  if (e.status === 'reading') return { status: 409, error: 'This receipt is still being read. Edit it once the reading is done.' };
   return null;
 }
 function _assertDetails(e, actor) {
@@ -100,7 +115,14 @@ async function editDetails(expenseId, body, actor, { via = 'app' } = {}) {
   // somebody typed was typed for the OLD currency, so a currency change drops
   // it and fetches afresh; a new date or total keeps it.
   if (patch.currency !== undefined || patch.receiptDate !== undefined || patch.total !== undefined) await applyFx(e.id, { force: currencyChanged });
-  const after = store.getExpense(e.id);
+  // A new total on a split leaves the lines behind. A receipt whose lines no
+  // longer add up is not checked any more, whatever it was before; in a
+  // claimed case it keeps its status and posting refuses it until the lines
+  // are put right (xero/bills.js).
+  let after = store.getExpense(e.id);
+  if (after.status === 'reviewed' && after.lines.length && !store.linesReconcile(after.lines, store.toCents(after.total)) && !wf.isLocked(after)) {
+    after = store.updateExpense(e.id, { status: 'review-needed' });
+  }
   changes.record(e, after, actor, via);
   return after;
 }
@@ -117,6 +139,12 @@ async function editLines(expenseId, lines, actor, { via = 'app' } = {}) {
     if (!(n > 0) || n > MAX_AMOUNT) fail(400, 'Every line needs an amount above zero');
     if (l.category && !canonicalCategory(l.category)) fail(400, `Unknown category "${l.category}"`);
   }
+  // A rate somebody typed for this receipt was typed for the receipt, not for
+  // one way of splitting it; a re-split keeps it rather than quietly going
+  // back to the provider's.
+  const typed = e.lines.find(l => l.fxOverrideBy && l.fxRate > 0);
+  const keep = typed ? { fxRate: typed.fxRate, fxRateDate: typed.fxRateDate, fxSource: typed.fxSource, fxFetchedAt: typed.fxFetchedAt,
+                         fxPolicy: typed.fxPolicy, fxOverrideBy: typed.fxOverrideBy, fxOverrideReason: typed.fxOverrideReason } : {};
   try {
     store.replaceLines(e.id, lines.map(l => ({
       category: canonicalCategory(l.category) || e.category || 'Other',
@@ -124,6 +152,7 @@ async function editLines(expenseId, lines, actor, { via = 'app' } = {}) {
       amount: Number(l.amount),
       onBehalfOf: typeof l.onBehalfOf === 'string' && l.onBehalfOf.trim() ? l.onBehalfOf.trim().slice(0, 80) : null,
       currency: e.currency,
+      ...keep,
     })));
   } catch (err) { fail(400, err.message); }
   await applyFx(e.id);
@@ -186,6 +215,10 @@ function setStatus(expenseId, status, actor) {
   const e = store.getExpense(expenseId);
   _assertAction(e, actor);
   if (!['reviewed', 'review-needed'].includes(status)) fail(400, 'Status can be reviewed or review-needed here');
+  // A duplicate is locked where it is (intake/dedup.js): checking it would let
+  // the same receipt be filed and claimed twice.
+  if (e.status === 'duplicate') fail(409, 'It is a duplicate; delete it or restore it first');
+  if (e.status === 'reading') fail(409, 'It is still being read');
   if (status === 'reviewed') { const why = reviewBlocked(e); if (why) fail(400, why); }
   const patch = { status };
   // Marking it reviewed is the person saying the currency on it is right.
@@ -201,6 +234,8 @@ function fileInCase(expenseId, reportId, actor) {
   _assertAction(e, actor);
   if (e.status === 'duplicate') fail(400, 'A duplicate cannot be filed; delete it or restore it first');
   reportId = reportId || null;
+  // Claimed on its own already: in a case it would be claimed a second time.
+  if (reportId && e.claimedAt && !e.reportId) fail(409, 'This receipt was already claimed on its own. Unmark it as claimed before filing it in a case.');
   if (reportId === (e.reportId || null)) return e;
   const leaving = () => {
     if (!e.reportId) return;
@@ -231,5 +266,5 @@ function permissions(e, actor) {
   };
 }
 
-module.exports = { editDetails, editLines, setRate, refreshRate, cleanPatch, detailsBlocked, permissions,
+module.exports = { editDetails, editLines, setRate, refreshRate, cleanPatch, detailsBlocked, permissions, sameValue, categoryOf,
                    setStatus, fileInCase, actionBlocked, reviewBlocked, EDITABLE, MAX_AMOUNT };

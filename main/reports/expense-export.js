@@ -41,7 +41,9 @@ async function xlsxBuffer(payload) {
       row.getCell(col).numFmt = MONEY_FMT;
       row.font = { bold: true };
     }
-    sheet.columns.forEach(c => { c.width = Math.min(48, Math.max(10, ...(c.values || []).map(v => String(v ?? '').length + 2))); });
+    // A sheet with nothing in it has no columns at all (null, not []): a case
+    // priced only in the base currency has no rate notes, and its export died here.
+    (sheet.columns || []).forEach(c => { c.width = Math.min(48, Math.max(10, ...(c.values || []).map(v => String(v ?? '').length + 2))); });
   }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

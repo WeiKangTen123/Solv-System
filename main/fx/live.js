@@ -224,8 +224,6 @@ async function backfill(companyId, currency, { now = new Date() } = {}) {
 // those still open: a claimed receipt keeps the rate it was claimed at, a
 // rate somebody typed is theirs, and a duplicate is nobody's.
 async function repriceDay(companyId, date) {
-  const store = require('../store/expenses');
-  const { applyFx } = require('./apply');
   const ids = db.prepare(`SELECT DISTINCT e.id FROM expenses e
                           JOIN expense_lines l ON l.expense_id = e.id
                           LEFT JOIN expense_reports r ON r.id = e.report_id
@@ -233,6 +231,27 @@ async function repriceDay(companyId, date) {
                             AND l.fx_override_by IS NULL AND COALESCE(l.fx_source, '') NOT IN ('base', 'manual', 'same')
                             AND e.status NOT IN ('duplicate', 'rejected') AND e.claimed_at IS NULL
                             AND (e.report_id IS NULL OR r.status = 'open')`).all(companyId, date).map(r => r.id);
+  return _reprice(ids);
+}
+
+// An admin set, corrected or removed the rate for one currency on one day.
+// Every open receipt priced for that day follows it, except those somebody
+// typed a rate onto for that receipt alone. A typo in a monthly rate used to
+// stay on every receipt until each claimant pressed Refresh.
+async function repriceRate(companyId, currency, date) {
+  const ids = db.prepare(`SELECT DISTINCT e.id FROM expenses e
+                          JOIN expense_lines l ON l.expense_id = e.id
+                          LEFT JOIN expense_reports r ON r.id = e.report_id
+                          WHERE e.company_id = ? AND e.currency = ? AND l.fx_asked_date = ?
+                            AND l.fx_override_by IS NULL AND COALESCE(l.fx_source, '') NOT IN ('base', 'same')
+                            AND e.status NOT IN ('duplicate', 'rejected') AND e.claimed_at IS NULL
+                            AND (e.report_id IS NULL OR r.status = 'open')`).all(companyId, currency, date).map(r => r.id);
+  return _reprice(ids);
+}
+
+async function _reprice(ids) {
+  const store = require('../store/expenses');
+  const { applyFx } = require('./apply');
   let changed = 0;
   for (const id of ids) {
     const before = store.getExpense(id);
@@ -259,7 +278,15 @@ async function tick(now = new Date()) {
         const tz = users.getCompany(id).timezone || 'Asia/Singapore';
         const day = localDate(tz, now);
         const yesterday = addDays(day, -1);
-        if (!closedOn(id, yesterday)) done.push(await close(id, yesterday, { now }));
+        // Every day since the last close, a week at most: after a weekend of
+        // downtime only Sunday used to be closed, and Friday's and Saturday's
+        // receipts kept a provisional figure for good. With no close yet at
+        // all, yesterday alone.
+        const last = db.prepare('SELECT MAX(close_date) AS d FROM fx_closes WHERE company_id = ?').get(id).d;
+        const weekAgo = addDays(day, -7);
+        for (let d = last && last < yesterday ? addDays(last, 1) : yesterday; d <= yesterday; d = addDays(d, 1)) {
+          if (d >= weekAgo && !closedOn(id, d)) done.push(await close(id, d, { now }));
+        }
         if (localMinutes(tz, now) >= CLOSE_AT_MIN && !closedOn(id, day)) { done.push(await close(id, day, { now })); continue; }
         if (Date.now() - (_lastRefresh.get(id) || 0) >= EVERY_MIN * 60 * 1000) await refresh(id);
       } catch (err) {
@@ -343,6 +370,6 @@ function log(companyId, currency, { limit = 60, now = new Date() } = {}) {
 }
 
 module.exports = {
-  watched, watch, unwatch, refresh, close, backfill, repriceDay, tick, start, stop, board, log, sourceInfo, setOxrKey, closedOn,
+  watched, watch, unwatch, refresh, close, backfill, repriceDay, repriceRate, tick, start, stop, board, log, sourceInfo, setOxrKey, closedOn,
   localDate, localMinutes, addDays, EVERY_MIN, CLOSE_AT, SOURCE_LABEL, _lastRefresh,
 };

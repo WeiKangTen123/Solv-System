@@ -206,7 +206,7 @@ export default function CaseCheck() {
                 const row = rows[e.id] || pick(e);
                 const many = e.lines && e.lines.length > 1;
                 const on = e.id === sel;
-                const rowLocked = !mayEditDetails || e.status === 'duplicate';
+                const rowLocked = !mayEditDetails || e.status === 'duplicate' || e.status === 'reading';
                 return (
                   <tr key={e.id} onClick={() => setSel(e.id)}
                       style={{ cursor: 'pointer', background: on ? 'var(--bg-hover)' : undefined }}>

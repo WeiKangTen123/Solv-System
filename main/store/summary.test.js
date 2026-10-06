@@ -161,7 +161,7 @@ describe('dashboard summary', () => {
     reports.addExpense(r.id, e.id);
     const loose = spend(ela, { merchant: 'Taxi', amount: 20, base: 20, date: day(1) });   // in no case: open too
     expect(summary(me(ela)).open).toBe(320);
-    wf.markExpenseClaimed(e.id, me(ela));
+    wf.markClaimed(r.id, me(ela));
     const s = summary(me(ela));
     expect(s.open).toBe(20);
     expect(s.claimed).toBe(300);

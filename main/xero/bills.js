@@ -8,7 +8,11 @@ const { fmtRate } = require('../reports/expense-doc');
 const attachments = require('./attachments');
 const { withRetry, xeroErrMsg } = require('./xero-utils');
 const { _fmtDate: fmtDate } = require('../reports/expense-doc');
+const store   = require('../store/expenses');
+const { localDate } = require('../utils/zone-date');
 const logger  = require('../utils/logger');
+
+function fail(status, message) { const err = new Error(message); err.status = status; throw err; }
 
 // A claimed case becomes ONE draft bill in Xero, payable to the claimant,
 // in the company's base currency: one line per report line at its base
@@ -63,7 +67,9 @@ function buildBill(payload, { accounts = [], defaultAccountCode = null, taxRates
     });
   }
 
-  const date = (report.claimedAt || new Date().toISOString()).slice(0, 10);
+  // The day it was claimed where the company is: a claim at 07:30 in
+  // Singapore was dated the day before in UTC, which can be a closed period.
+  const date = localDate(company.timezone || 'Asia/Singapore', report.claimedAt ? new Date(report.claimedAt) : new Date());
   return {
     contact: { name: owner.name || owner.email || 'Claimant', email: owner.email || '' },
     invoice: {
@@ -76,11 +82,30 @@ function buildBill(payload, { accounts = [], defaultAccountCode = null, taxRates
   };
 }
 
+// What would make the bill wrong. Details stay correctable after a claim
+// (receipts/edit.js), so what claiming checked has to be asked again here:
+// a line that lost its rate posted as 0.00, and a split whose total changed
+// posted its old lines.
+function postProblems(r) {
+  const out = [];
+  const name = e => e.merchant || 'a receipt';
+  const unpriced = r.expenses.filter(e => !e.lines.length || e.lines.some(l => l.baseAmount === null || l.baseAmount === undefined));
+  if (unpriced.length) out.push(`${unpriced.map(name).join(', ')} ${unpriced.length === 1 ? 'has' : 'have'} no exchange rate`);
+  const off = r.expenses.filter(e => e.lines.length && !store.linesReconcile(e.lines, store.toCents(e.total)));
+  if (off.length) out.push(`the lines of ${off.map(name).join(', ')} do not add up to the receipt total`);
+  const odd = r.expenses.filter(e => ['reading', 'duplicate', 'rejected'].includes(e.status));
+  if (odd.length) out.push(`${odd.map(name).join(', ')} ${odd.length === 1 ? 'is' : 'are'} ${odd.map(e => e.status).join('/')}`);
+  return out;
+}
+
 async function postReport(reportId, actor, { dryRun = false } = {}) {
   const r = reports.getReport(reportId);
-  if (!r) throw new Error('Report not found');
-  if (r.xeroInvoiceId) throw new Error(`This report is already in Xero as bill ${r.xeroInvoiceId}`);
-  if (r.status !== 'claimed') throw new Error('Only a claimed case can be posted to Xero');
+  if (!r) fail(404, 'Report not found');
+  if (r.xeroInvoiceId) fail(409, `This report is already in Xero as bill ${r.xeroInvoiceId}`);
+  if (r.status !== 'claimed') fail(409, 'Only a claimed case can be posted to Xero');
+  if (!r.expenses.length) fail(400, 'This case has no receipts to post');
+  const problems = postProblems(r);
+  if (problems.length) fail(400, `Fix this before posting: ${problems.join('; ')}.`);
 
   const payload = await reportPayload(reportId, { withReceipts: false });
   const company = payload.company;
@@ -95,11 +120,17 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
     try { taxRates = await getTaxRates(company.id, tenant.tenantId); } catch (err) { logger.warn('Tax rates unavailable; lines go without a tax type', { error: xeroErrMsg(err) }); }
   }
   const bill = buildBill(payload, { accounts, defaultAccountCode: config.DEFAULT_ACCOUNT_CODE || null, taxRates });
+  // Xero refuses a bill below zero, so advances above the claim cannot post.
+  if (bill.total < 0) fail(400, `The advances are more than the claim, so the bill would be ${money(bill.total)}. Lower the advance on the case cover first.`);
   if (dryRun) return { dryRun: true, tenantId: tenant ? tenant.tenantId : null, tenantName: tenant ? tenant.tenantName : null, bill };
 
   // From here on a bill is going to be created, so take the claim first: two
   // clicks on Post used to make two draft bills for one report.
-  if (!reports.claimForPost(reportId)) throw new Error('This report is already being posted to Xero. Give it a moment and reload.');
+  if (!reports.claimForPost(reportId)) fail(409, 'This report is already being posted to Xero. Give it a moment and reload.');
+  // One key per attempt: a reply lost on the way back, retried, returns the
+  // same bill instead of making a second. A new attempt after a refusal gets
+  // a new key, so a corrected case can still post.
+  const attemptKey = `solv-${reportId}-${Date.now()}`;
 
   // Everything up to the bill existing either succeeds or releases the claim.
   // The token fetch used to sit outside this, so a failed refresh left the
@@ -112,7 +143,7 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
     api = new AccountingApi();
     api.accessToken = token;
     const contactID = await getOrCreateContact(company.id, tenant.tenantId, { vendorName: bill.contact.name, email: bill.contact.email, invoiceType: 'ACCPAY' });
-    const res = await withRetry(() => api.createInvoices(tenant.tenantId, { invoices: [{ ...bill.invoice, contact: { contactID } }] }));
+    const res = await withRetry(() => api.createInvoices(tenant.tenantId, { invoices: [{ ...bill.invoice, contact: { contactID } }] }, undefined, undefined, attemptKey));
     created = res.body.invoices[0];
     if (!created || !created.invoiceID) throw new Error('Xero answered without a bill');
   } catch (err) {
@@ -121,6 +152,14 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
     reports.addEvent(reportId, actor.id, 'xero_failed', msg);
     throw new Error(`Xero refused the bill: ${msg}`);
   }
+
+  // The bill exists: record it now, before the attachments. It used to be
+  // recorded only after every receipt was attached, so a restart part-way left
+  // a bill in Xero, a case that did not know it, and a 'posting' marker that
+  // refused every later attempt. If this process stops during the uploads the
+  // case still knows its bill, and the note says to check the attachments.
+  reports.setState(reportId, { xeroInvoiceId: created.invoiceID, xeroError: 'Receipts were still being attached when this was last checked. Check the bill in Xero.' });
+  reports.addEvent(reportId, actor.id, 'posted', `Xero bill ${created.invoiceID}`);
 
   // Receipts, best-effort: a rejected attachment is noted, never a reason to
   // lose the bill that was just created.
@@ -133,7 +172,7 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
     const ref = `R${++n}`;
     try {
       for (const a of await attachments.forReceipt(e.receipt, { ref })) {
-        await withRetry(() => api.createInvoiceAttachmentByFileName(tenant.tenantId, created.invoiceID, a.name, Readable.from(a.buffer), false));
+        await withRetry(() => api.createInvoiceAttachmentByFileName(tenant.tenantId, created.invoiceID, a.name, Readable.from(a.buffer), false, `${created.invoiceID}-${a.name}`.slice(0, 128)));
       }
     } catch (err) {
       warnings.push(`${ref}: ${xeroErrMsg(err)}`);
@@ -142,10 +181,9 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
   }
 
   // The status stays claimed: xero_invoice_id is what records the posting.
-  reports.setState(reportId, { xeroInvoiceId: created.invoiceID, xeroError: warnings.length ? `Attachments: ${warnings.join('; ')}` : null });
-  reports.addEvent(reportId, actor.id, 'posted', `Xero bill ${created.invoiceID}`);
+  reports.setState(reportId, { xeroError: warnings.length ? `Attachments: ${warnings.join('; ')}` : null });
   logger.info('Report posted to Xero', { reportId, number: r.number, invoiceID: created.invoiceID, lines: bill.invoice.lineItems.length, by: actor.id });
   return { dryRun: false, tenantId: tenant.tenantId, tenantName: tenant.tenantName, xeroInvoiceId: created.invoiceID, warnings, bill };
 }
 
-module.exports = { buildBill, postReport, DUE_DAYS };
+module.exports = { buildBill, postReport, postProblems, DUE_DAYS };

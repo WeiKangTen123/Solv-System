@@ -108,11 +108,19 @@ function updateReport(id, patch) {
 // answered — so a second click inside that window passed the same check and
 // made a second draft bill for the same report number. One UPDATE with the
 // condition in its WHERE decides it: exactly one caller gets `true`.
+//
+// A marker older than POST_STALE_MS belongs to a post that died with its
+// process (the bill is recorded as soon as Xero makes it, so a dead post
+// either made nothing or is already recorded): it is taken over rather than
+// refusing every later attempt for good.
 const POSTING = 'posting';
+const POST_STALE_MS = 10 * 60 * 1000;
 function claimForPost(id) {
+  const stale = new Date(Date.now() - POST_STALE_MS).toISOString();
   const info = db.prepare(`UPDATE expense_reports SET xero_error = ?, updated_at = ?
-                           WHERE id = ? AND xero_invoice_id IS NULL AND COALESCE(xero_error, '') != ?`)
-    .run(POSTING, now(), id, POSTING);
+                           WHERE id = ? AND xero_invoice_id IS NULL
+                             AND (COALESCE(xero_error, '') != ? OR COALESCE(updated_at, '') < ?)`)
+    .run(POSTING, now(), id, POSTING, stale);
   return info.changes === 1;
 }
 function releasePost(id, error = null) {

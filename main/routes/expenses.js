@@ -133,12 +133,12 @@ router.patch('/:id/status', requireAuth, (req, res) => {
 router.post('/:id/claimed', requireAuth, (req, res) => {
   const e = _load(req, res); if (!e) return;
   try { res.json(_out(wf.markExpenseClaimed(e.id, req.user, true), req)); }
-  catch (err) { res.status(/Only the claimant/.test(err.message) ? 403 : 400).json({ error: err.message }); }
+  catch (err) { _answer(res, err); }
 });
 router.delete('/:id/claimed', requireAuth, (req, res) => {
   const e = _load(req, res); if (!e) return;
   try { res.json(_out(wf.markExpenseClaimed(e.id, req.user, false), req)); }
-  catch (err) { res.status(/Only the claimant/.test(err.message) ? 403 : 400).json({ error: err.message }); }
+  catch (err) { _answer(res, err); }
 });
 
 // Reading the receipt again replaces what is on it, so what changed is logged
@@ -150,8 +150,13 @@ router.post('/:id/reread', requireAuth, asyncHandler(async (req, res) => {
   if (!buffer) return res.status(404).json({ error: 'The receipt file is missing from storage' });
   try {
     const r = await readOne(e.userId, buffer, e.receipt.mime, { page: e.page, box: e.box });
-    if (!r) return res.json({ ok: false, reason: 'unreadable', expense: e });
-    await applyRead(e.id, r); flagIfSuspected(e.id);
+    if (!r) {
+      // A row left 'reading' by an interrupted read is released either way.
+      if (e.status === 'reading') store.updateExpense(e.id, { status: 'review-needed' });
+      return res.json({ ok: false, reason: 'unreadable', expense: store.getExpense(e.id) });
+    }
+    await applyRead(e.id, r, {}, { reread: true }); flagIfSuspected(e.id);
+    if (store.getExpense(e.id).status === 'reading') store.updateExpense(e.id, { status: 'review-needed' });
     const after = store.getExpense(e.id);
     changes.record(e, after, req.user, 'reread');
     res.json({ ok: true, ..._out(after, req), confidence: r.confidence });

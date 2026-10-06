@@ -151,7 +151,7 @@ describe('receipts/read-receipt', () => {
     const e2 = store.createExpense({ companyId: u.companyId, userId: u.id, receiptId: r2.id });
     await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r2.id, expenseId: e2.id, buffer: Buffer.from('b'), mime: 'image/jpeg' });
     expect(store.getExpense(e2.id).duplicateOf).toBe(first.e.id);
-    await read.applyRead(e2.id, { ...grab, total: 25 }); read.flagIfSuspected(e2.id);
+    await read.applyRead(e2.id, { ...grab, total: 25 }, {}, { reread: true }); read.flagIfSuspected(e2.id);
     const after = store.getExpense(e2.id);
     expect(after.duplicateOf).toBeNull();
     expect(after.errorMsg).toBeNull();
@@ -167,7 +167,7 @@ describe('receipts/read-receipt', () => {
     expect(read.withoutCurrencyNote(after.errorMsg)).toBeNull();
     expect(read.withoutCurrencyNote(`${after.errorMsg} Possible duplicate of x — y. Check before submitting.`)).toBe('Possible duplicate of x — y. Check before submitting.');
     // A re-read that makes the currency out clears the note.
-    await read.applyRead(e.id, { merchant: 'Corner Cafe', date: '2026-09-02', total: 18.4, currency: 'MYR', category: 'Meals', confidence: 'high', lineItems: [] });
+    await read.applyRead(e.id, { merchant: 'Corner Cafe', date: '2026-09-02', total: 18.4, currency: 'MYR', category: 'Meals', confidence: 'high', lineItems: [] }, {}, { reread: true });
     after = store.getExpense(e.id);
     expect(after.currency).toBe('MYR');
     expect(after.errorMsg).toBeNull();
@@ -187,5 +187,27 @@ describe('receipts/read-receipt', () => {
     // Re-reading the second one picks the receipt nearest its box.
     const again = await read.readOne(u.id, Buffer.from('%PDF'), 'application/pdf', { box: [500, 0, 1000, 1000] });
     expect(again.merchant).toBe('B');
+  });
+
+  test('a first read that arrives after somebody moved the receipt on does not overwrite them', async () => {
+    const { r, e } = seed();
+    store.updateExpense(e.id, { status: 'review-needed', merchant: 'Typed by hand', total: 12.3 });
+    parser.parseReceiptImage.mockResolvedValue({ split: false, receipts: [{ merchant: 'Grab', date: '2026-09-01', total: 999.99, currency: 'SGD', category: 'Meals', confidence: 'high', lineItems: [] }] });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('x'), mime: 'image/jpeg' });
+    expect(store.getExpense(e.id)).toMatchObject({ merchant: 'Typed by hand', total: 12.3 });
+  });
+
+  test('the extra receipts found in one photo go into the same case, in the same currency', async () => {
+    const { r, e } = seed();
+    store.updateExpense(e.id, { currency: 'MYR' });
+    const rep = require('../store/reports').createReport({ companyId: u.companyId, userId: u.id, title: 'Trip' });
+    require('../store/reports').addExpense(rep.id, e.id);
+    parser.parseReceiptImage.mockResolvedValue({ split: true, reason: null, receipts: [
+      { merchant: 'A', date: '2026-09-01', total: 10, currency: 'MYR', category: 'Meals', confidence: 'high', lineItems: [], box: [0, 0, 500, 1000] },
+      { merchant: 'B', date: '2026-09-01', total: 20, currency: null, category: 'Meals', confidence: 'high', lineItems: [], box: [500, 0, 1000, 1000] },
+    ] });
+    const out = await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('x'), mime: 'image/jpeg' });
+    const sib = store.getExpense(out.expenseIds[1]);
+    expect(sib).toMatchObject({ merchant: 'B', reportId: rep.id, currency: 'MYR' });
   });
 });

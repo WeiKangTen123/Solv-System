@@ -32,6 +32,15 @@ router.patch('/', requireAuth, requireRole('admin'), (req, res) => {
     }
     if (b.baseCurrency !== undefined) {
       if (typeof b.baseCurrency !== 'string' || !/^[A-Z]{3}$/.test(b.baseCurrency)) return res.status(400).json({ error: 'Base currency must be a 3-letter code' });
+      // Every converted amount is stored as a number in the base currency of
+      // the day it was priced. Changing the base afterwards relabelled them all:
+      // SGD 100 became "USD 100" on screen, in exports and on Xero bills.
+      const current = users.getCompany(req.user.companyId);
+      if (b.baseCurrency !== current.baseCurrency) {
+        const priced = require('../db').prepare(`SELECT COUNT(*) AS n FROM expense_lines l JOIN expenses e ON e.id = l.expense_id
+                                                 WHERE e.company_id = ? AND l.base_cents IS NOT NULL`).get(req.user.companyId).n;
+        if (priced) return res.status(409).json({ error: `The base currency cannot change once receipts have been converted to ${current.baseCurrency}: every amount already converted is in ${current.baseCurrency}. It can be set before the first receipt.` });
+      }
       patch.baseCurrency = b.baseCurrency;
     }
     if (b.timezone !== undefined) {

@@ -245,4 +245,19 @@ describe('assistant', () => {
       expect(conversation.systemPrompt(as(admin), users.getCompany(admin.companyId), null)).toMatch(/anyone in the company/);
     });
   });
+
+  describe('cards made for an earlier version of a receipt', () => {
+    test('a rate card does not apply once the currency has changed, and a split card does not overwrite a newer split', async () => {
+      const e = seed(emp, { currency: 'INR', total: 100, lines: [{ category: 'Lodging', amount: 100 }] });
+      const boss = ctxFor(admin);
+      await tools.run(boss, 'propose_exchange_rate', { id: e.id, rate: 0.0155, reason: 'bank' });
+      await tools.run(boss, 'propose_lines', { id: e.id, lines: [{ category: 'Lodging', amount: 60 }, { category: 'Meals', amount: 40 }], reason: 'x' });
+      const [rate, split] = boss.proposals;
+      store.updateExpense(e.id, { currency: 'USD' });
+      expect(await actions.apply(rate.id, as(admin))).toMatchObject({ status: 'failed', result: expect.stringMatching(/USD now/) });
+      store.replaceLines(e.id, [{ category: 'Lodging', amount: 50 }, { category: 'Meals', amount: 50, onBehalfOf: 'Lee' }]);
+      expect(await actions.apply(split.id, as(admin))).toMatchObject({ status: 'failed', result: expect.stringMatching(/lines/) });
+      expect(store.getExpense(e.id).lines.map(l => l.amount)).toEqual([50, 50]);
+    });
+  });
 });

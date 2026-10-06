@@ -86,10 +86,33 @@ describe('reports/workflow', () => {
   });
 
   // Claiming one receipt out of a case says nothing about the case itself.
-  test('claiming a receipt inside a case does not claim the case', () => {
+  test('a receipt inside a case is claimed with its case, never on its own as well', () => {
     const r = fresh(); const e = ready(); reports.addExpense(r.id, e.id);
-    wf.markExpenseClaimed(e.id, owner);
+    expect(() => wf.markExpenseClaimed(e.id, owner)).toThrow(/Claim the case/);
+    expect(store.getExpense(e.id).claimedAt).toBeFalsy();
     expect(reports.getReport(r.id).status).toBe('open');
+  });
+
+  test('a receipt claimed on its own cannot then be claimed again with a case', () => {
+    const e = ready();
+    wf.markExpenseClaimed(e.id, owner);
+    const r = fresh();
+    // Filed by hand around the rules, as old data may be: the case refuses.
+    reports.addExpense(r.id, e.id);
+    expect(() => wf.markClaimed(r.id, owner)).toThrow(/already claimed on its own/);
+  });
+
+  test('a case whose receipt no longer adds up cannot be claimed', () => {
+    const r = fresh(); const e = ready(); reports.addExpense(r.id, e.id);
+    require('../db').prepare('UPDATE expenses SET total_cents = total_cents + 500 WHERE id = ?').run(e.id);
+    expect(() => wf.markClaimed(r.id, owner)).toThrow(/do not add up/);
+  });
+
+  test('a case cannot be reopened while it is being posted', () => {
+    const r = fresh(); const e = ready(); reports.addExpense(r.id, e.id);
+    wf.markClaimed(r.id, owner);
+    expect(reports.claimForPost(r.id)).toBe(true);
+    expect(() => wf.reopen(r.id, owner)).toThrow(/being posted/);
   });
 
   test('an expense in a claimed case is locked, and free again once it is reopened', () => {

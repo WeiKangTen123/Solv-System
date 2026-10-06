@@ -3,8 +3,9 @@
 // out for pdfmake; expenseReportCsv() and workbookModel() reuse the model, so
 // the three exports cannot disagree. Nothing here renders a byte.
 const ACCENT = '#0F6E56', MUTED = '#6b7280', RULE = '#d8dbd4', BAND = '#f3f4ef';
-const SOURCE_LABEL = { frankfurter: 'European Central Bank reference rate', 'open.er-api': 'ExchangeRate-API daily rate' };
-const VIA = { frankfurter: 'Frankfurter', 'open.er-api': 'open.er-api.com' };
+const { localDate } = require('../utils/zone-date');
+const SOURCE_LABEL = { frankfurter: 'European Central Bank reference rate', 'open.er-api': 'ExchangeRate-API daily rate', openexchangerates: 'Open Exchange Rates rate' };
+const VIA = { frankfurter: 'Frankfurter', 'open.er-api': 'open.er-api.com', openexchangerates: 'openexchangerates.org' };
 const POLICY_LABEL = { receipt_date: 'rate on the receipt date', submission_date: 'rate on the submission date', monthly_fixed: 'monthly fixed rate table' };
 
 const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -61,7 +62,8 @@ function buildModel(payload) {
     let desc = parts.filter(Boolean).join(' · ');
     if (l.purpose) desc += ` — ${l.purpose}`;
     if (l.onBehalfOf) desc += ' ‡';
-    return { n: i + 1, ref: l.ref, date: l.date, description: desc, currency: l.currency, amount: l.amount, rate: fmtRate(l.fxRate), base: l.baseAmount, column: col, cells: { [col]: l.baseAmount }, onBehalfOf: l.onBehalfOf || null, foreign: l.currency !== base };
+    const pending = l.baseAmount === null || l.baseAmount === undefined;
+    return { n: i + 1, ref: l.ref, date: l.date, description: desc, currency: l.currency, amount: l.amount, rate: fmtRate(l.fxRate), base: l.baseAmount, pending, column: col, cells: pending ? {} : { [col]: l.baseAmount }, onBehalfOf: l.onBehalfOf || null, foreign: l.currency !== base };
   });
   const categoryCents = {};
   for (const r of rows) categoryCents[r.column] = (categoryCents[r.column] || 0) + cents(r.base);
@@ -80,6 +82,8 @@ function buildModel(payload) {
     else rateNotes.push(`${l.currency}→${base} ${fmtRate(l.fxRate)}, ${SOURCE_LABEL[l.fxSource] || l.fxSource} for ${fmtDate(l.fxRateDate)}, via ${VIA[l.fxSource] || l.fxSource}, fetched ${fmtStamp(l.fxFetchedAt, company.timezone)}.`);
   }
   const notes = [];
+  const pendingRows = rows.filter(r => r.pending).length;
+  if (pendingRows) notes.push(`${pendingRows} line${pendingRows === 1 ? ' has' : 's have'} no exchange rate yet and ${pendingRows === 1 ? 'is' : 'are'} not in the totals.`);
   if (rateNotes.length) notes.push(`Policy: ${POLICY_LABEL[company.fxPolicy] || POLICY_LABEL.receipt_date}. Each line is converted and rounded to the cent; the total is the sum of the lines.`);
   const behalf = [...new Set(lines.map(l => l.onBehalfOf).filter(Boolean))];
   if (behalf.length) notes.push(`‡ Paid on behalf of ${behalf.join(', ')}; the charge was transferred to the claimant's bill.`);
@@ -94,8 +98,10 @@ function buildModel(payload) {
   return { base, columns, rows, categoryTotals, total, advances, reimbursement, rateNotes, notes };
 }
 
-function statusLine(report) {
-  if (report.status === 'claimed') return `Claimed ${fmtDate(report.claimedAt)}`;
+// The claim's date where the company is: 07:30 in Singapore is still the
+// day before in UTC, and the cover said so.
+function statusLine(report, company = {}) {
+  if (report.status === 'claimed') return `Claimed ${report.claimedAt ? fmtDate(localDate(company.timezone || 'Asia/Singapore', new Date(report.claimedAt))) : '—'}`;
   return 'Open';
 }
 
@@ -111,7 +117,7 @@ function expenseReportDoc(payload) {
     ['Department', owner.department || '—',
       report.kind === 'trip' ? 'Destination' : 'Reference',
       report.kind === 'trip' ? (report.destination || '—') : report.number],
-    ['Reference', report.number, 'Status', statusLine(report)],
+    ['Reference', report.number, 'Status', statusLine(report, company)],
   ];
   const head = ['#', 'Date', 'Description', 'Ccy', 'Amount', 'Rate', ...m.columns, `Total ${m.base}`]
     .map((t, i) => ({ text: L(t), style: 'colHead', alignment: i >= 4 ? 'right' : 'left' }));
@@ -121,7 +127,7 @@ function expenseReportDoc(payload) {
       { text: String(r.n), style: 'cell' }, { text: fmtDate(r.date), style: 'cell' }, { text: L(r.description), style: 'cell' },
       { text: r.currency || '', style: 'cell' }, { text: money(r.amount), style: 'cell', alignment: 'right' }, { text: r.foreign && r.rate ? String(r.rate) : '', style: 'cell', alignment: 'right' },
       ...m.columns.map(c => ({ text: r.cells[c] !== undefined ? money(r.cells[c]) : '', style: 'cell', alignment: 'right' })),
-      { text: money(r.base), style: 'strong', alignment: 'right' },
+      { text: r.pending ? 'rate pending' : money(r.base), style: 'strong', alignment: 'right' },
     ]);
   }
   body.push([
@@ -206,7 +212,9 @@ function workbookModel(payload) {
     { name: 'Lines', header: ['#', 'Date', 'Merchant', 'Description', 'Purpose', 'On behalf of', 'Category', 'Currency', 'Amount', 'Rate', 'Rate date', 'Rate source', m.base, 'Receipt'],
       rows: lines.map((l, i) => [i + 1, l.date, l.merchant, l.description, l.purpose, l.onBehalfOf, l.category, l.currency, Number(l.amount), l.fxRate === null || l.fxRate === undefined ? '' : Number(fmtRate(l.fxRate)), l.fxRateDate, l.fxSource, l.baseAmount, l.ref]),
       money: [9, 13], totalLabel: `Total ${m.base}`, total: m.total },
-    { name: 'Rates', rows: [...m.rateNotes.map(t => [t]), ...m.notes.map(t => [t])] },
+    { name: 'Rates', header: ['Notes'], rows: (m.rateNotes.length || m.notes.length)
+      ? [...m.rateNotes.map(t => [t]), ...m.notes.map(t => [t])]
+      : [[`Every line is in ${m.base}; no exchange rate was needed.`]] },
     { name: 'Receipts', header: ['Ref', 'Receipt', 'Pages'], rows: receipts.map(r => [r.ref, r.title, r.pages.length]) },
   ] };
 }

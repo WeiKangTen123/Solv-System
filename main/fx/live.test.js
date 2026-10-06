@@ -186,4 +186,24 @@ describe('fx/live', () => {
     await live.setOxrKey(u.companyId, '');
     expect(live.sourceInfo(u.companyId).keyed).toBe(false);
   });
+
+  test('every day missed since the last close is closed, a week at most', async () => {
+    expense('INR', 1000);
+    providers.frankfurter.mockResolvedValue({ rate: 0.0133, providerDate: yesterday, source: 'frankfurter' });
+    db.prepare('INSERT INTO fx_closes (company_id, close_date, closed_at) VALUES (?, ?, ?)').run(u.companyId, zone.addDays(today, -4), new Date().toISOString());
+    await live.tick(new Date(`${today}T04:00:00Z`));
+    for (const d of [-3, -2, -1]) expect(live.closedOn(u.companyId, zone.addDays(today, d))).toBe(true);
+  });
+
+  test('an admin correcting a rate moves the open receipts priced with it, not ones somebody typed a rate on', async () => {
+    rates.setManualRate({ from: 'INR', to: 'SGD', date: today, rate: 0.02, by: 'a@solv.sg' });
+    const a = expense('INR', 1000);
+    const b = expense('INR', 1000);
+    await apply.applyFx(a.id); await apply.applyFx(b.id);
+    await apply.overrideFx(b.id, { rate: 0.0131, reason: 'card', actor: { role: 'admin' } });
+    rates.setManualRate({ from: 'INR', to: 'SGD', date: today, rate: 0.0125, by: 'a@solv.sg' });
+    await live.repriceRate(u.companyId, 'INR', today);
+    expect(store.getExpense(a.id).baseTotal).toBe(12.5);
+    expect(store.getExpense(b.id).baseTotal).toBe(13.1);
+  });
 });

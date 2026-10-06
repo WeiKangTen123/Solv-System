@@ -12,9 +12,7 @@ const logger  = require('../utils/logger');
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function fail(status, message) { const err = new Error(message); err.status = status; throw err; }
-const _same = (k, a, b) => (['total', 'tax', 'subTotal'].includes(k) ? Number(a ?? NaN) === Number(b ?? NaN) || (a == null && b == null)
-  : String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase());
-const _category = e => (e.lines.length === 1 ? e.lines[0].category : e.category) || null;
+const _stale = what => fail(409, `The receipt changed after this was proposed: ${what}. Ask the assistant again.`);
 
 async function _do(a, actor) {
   const p = a.payload || {};
@@ -26,13 +24,24 @@ async function _do(a, actor) {
       const cur = store.getExpense(p.expenseId);
       if (!cur) fail(404, 'The receipt is gone.');
       for (const [k, was] of Object.entries(p.from || {})) {
-        const now = k === 'category' ? _category(cur) : cur[k];
-        if (!_same(k, now, was)) fail(409, `The receipt changed after this was proposed: ${changes.LABEL[k] || k} is now ${now ?? 'empty'}. Ask the assistant again.`);
+        const now = k === 'category' ? edit.categoryOf(cur) : cur[k];
+        if (!edit.sameValue(k, now, was)) _stale(`${changes.LABEL[k] || k} is now ${now ?? 'empty'}`);
       }
       return edit.editDetails(p.expenseId, p.patch, actor, opts);
     }
-    case 'edit_lines':    return edit.editLines(p.expenseId, p.lines, actor, opts);
-    case 'set_rate':      return edit.setRate(p.expenseId, { rate: p.rate, reason: p.reason }, actor, opts);
+    case 'edit_lines': {
+      const cur = store.getExpense(p.expenseId);
+      if (!cur) fail(404, 'The receipt is gone.');
+      if (p.basis !== undefined && changes.linesSummary(cur.lines) !== p.basis) _stale('its lines are not the ones the card was made for');
+      if (p.total !== undefined && !edit.sameValue('total', cur.total, p.total)) _stale(`the total is now ${cur.total}`);
+      return edit.editLines(p.expenseId, p.lines, actor, opts);
+    }
+    case 'set_rate': {
+      const cur = store.getExpense(p.expenseId);
+      if (!cur) fail(404, 'The receipt is gone.');
+      if (p.currency && cur.currency !== p.currency) _stale(`it is in ${cur.currency || 'no currency'} now, and the rate was for ${p.currency}`);
+      return edit.setRate(p.expenseId, { rate: p.rate, reason: p.reason }, actor, opts);
+    }
     case 'refresh_rate':  return (await edit.refreshRate(p.expenseId, actor, opts)).expense;
     case 'mark_reviewed': return edit.setStatus(p.expenseId, 'reviewed', actor);
     case 'file_in_case':  return edit.fileInCase(p.expenseId, p.caseId || null, actor);

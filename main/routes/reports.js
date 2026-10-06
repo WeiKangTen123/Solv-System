@@ -34,6 +34,7 @@ function _view(r, req) {
 }
 // A workflow error about WHO may act is a 403; anything else is a 400.
 function _fail(res, err) {
+  if (err.status) return res.status(err.status).json({ error: err.message });
   const who = /\bonly the claimant\b/i.test(err.message);
   res.status(who ? 403 : 400).json({ error: err.message });
 }
@@ -102,6 +103,8 @@ router.post('/:id/expenses', requireAuth, (req, res) => {
     if (!e || e.userId !== r.userId) { skipped.push({ id, why: 'not found' }); continue; }
     if (e.reportId && e.reportId !== r.id) { skipped.push({ id, why: 'already in another report' }); continue; }
     if (e.status !== 'reviewed') { skipped.push({ id, why: 'not marked reviewed yet' }); continue; }
+    // Claimed on its own already: in a case it would be claimed a second time.
+    if (e.claimedAt) { skipped.push({ id, why: 'already claimed on its own' }); continue; }
     reports.addExpense(r.id, e.id);
   }
   res.json({ ..._view(reports.getReport(r.id), req), skipped });
@@ -139,7 +142,7 @@ router.post('/:id/post', requireAuth, asyncHandler(async (req, res) => {
     const out = await require('../xero/bills').postReport(r.id, req.user, { dryRun: req.query.dryRun === '1' });
     res.json({ ...out, ...(_view(reports.getReport(r.id), req)) });
   } catch (err) {
-    const status = /not connected|claimed|already in Xero/i.test(err.message) ? 400 : 502;
+    const status = err.status || (/not connected|claimed|already in Xero/i.test(err.message) ? 400 : 502);
     res.status(status).json({ error: err.message, ...(_view(reports.getReport(r.id), req)) });
   }
 }));
@@ -153,7 +156,7 @@ router.post('/:id/review-all', requireAuth, (req, res) => {
   if (!_owns(req, r)) return res.status(403).json({ error: 'Only the claimant can check their own receipts' });
   if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} case cannot be changed` });
 
-  const store = require('../store/expenses');
+  const edit = require('../receipts/edit');
   const reviewed = [], skipped = [];
   for (const e of r.expenses) {
     if (e.status === 'reviewed') continue;
@@ -161,17 +164,14 @@ router.post('/:id/review-all', requireAuth, (req, res) => {
     // one place that would launder somebody else's into a claim if one ever got
     // in, so it asks rather than assuming.
     if (e.userId !== r.userId) { skipped.push({ id: e.id, merchant: e.merchant, why: 'it belongs to someone else' }); continue; }
-    if (e.status === 'duplicate') { skipped.push({ id: e.id, merchant: e.merchant, why: 'it is a duplicate' }); continue; }
-    if (e.status === 'reading')   { skipped.push({ id: e.id, merchant: e.merchant, why: 'it is still being read' }); continue; }
-    const missing = [];
-    if (!e.merchant) missing.push('merchant');
-    if (!e.receiptDate) missing.push('date');
-    if (!e.currency) missing.push('currency');
-    if (!(e.total > 0)) missing.push('total');
-    if (missing.length) { skipped.push({ id: e.id, merchant: e.merchant, why: `no ${missing.join(', ')}` }); continue; }
-    if (!store.linesReconcile(e.lines, store.toCents(e.total))) { skipped.push({ id: e.id, merchant: e.merchant, why: 'the lines do not add up to the total' }); continue; }
-    store.updateExpense(e.id, { status: 'reviewed' });
-    reviewed.push(e.id);
+    // Exactly the single-receipt rule (receipts/edit.js), so the two cannot
+    // drift apart again: this copy once kept the assumed-currency warning the
+    // single route clears.
+    try { edit.setStatus(e.id, 'reviewed', req.user); reviewed.push(e.id); }
+    catch (err) {
+      if (!err.status) throw err;
+      skipped.push({ id: e.id, merchant: e.merchant, why: err.message.replace(/^./, c => c.toLowerCase()) });
+    }
   }
   if (reviewed.length) reports.addEvent(r.id, req.user.id, 'checked', `${reviewed.length} receipt${reviewed.length === 1 ? '' : 's'}`);
   logger.info('Case checked in bulk', { id: r.id, number: r.number, reviewed: reviewed.length, skipped: skipped.length, by: req.user.id });

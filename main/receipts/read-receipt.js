@@ -68,8 +68,16 @@ function buildLines(r, fallbackCategory) {
 
 // Writes a read onto an expense. undefined leaves a field alone, so a value
 // the reader could not make out never erases one already typed.
-async function applyRead(expenseId, r, extra = {}) {
+// A first read lands only on a row still 'reading': once anybody has edited,
+// checked or claimed it, the reader's late answer would overwrite them with
+// nothing in the change log. A re-read is asked for, and passes reread.
+async function applyRead(expenseId, r, extra = {}, { reread = false } = {}) {
   const exp = store.getExpense(expenseId);
+  if (!exp) return null;
+  if (!reread && exp.status !== 'reading') {
+    logger.info('A late read was not applied: the receipt had moved on', { expenseId, status: exp.status });
+    return exp;
+  }
   let purpose = exp?.purpose;
   if (!purpose && exp?.reportId) {
     try {
@@ -130,8 +138,14 @@ function flagIfSuspected(expenseId) {
   });
 }
 
-function _sibling({ companyId, userId, receiptId, source, page = null, box = null }) {
-  return store.createExpense({ companyId, userId, receiptId, source, page, box, status: 'reading' });
+// Another receipt found in the same file. It goes where the first one went:
+// the same case, and the same default currency, or it was left out of the
+// claim and priced as base currency with nothing to say it was assumed.
+function _sibling({ companyId, userId, receiptId, source, page = null, box = null, parentId = null }) {
+  const parent = parentId ? store.getExpense(parentId) : null;
+  const sib = store.createExpense({ companyId, userId, receiptId, source, page, box, status: 'reading', currency: parent ? parent.currency : undefined });
+  if (parent && parent.reportId) require('../store/reports').addExpense(parent.reportId, sib.id);
+  return sib;
 }
 
 // One read, one or several receipts. A clean split — the parser said the
@@ -144,7 +158,7 @@ async function _applyMany({ companyId, userId, receiptId, source, expenseId, pag
   const [first, ...rest] = parsed.receipts;
   await applyRead(expenseId, first, { box: first.box || null }); flagIfSuspected(expenseId);
   for (const r of rest) {
-    const sib = _sibling({ companyId, userId, receiptId, source, page, box: r.box || null });
+    const sib = _sibling({ companyId, userId, receiptId, source, page, box: r.box || null, parentId: expenseId });
     made.push(sib.id);
     await applyRead(sib.id, r); flagIfSuspected(sib.id);
   }
@@ -174,7 +188,7 @@ async function readReceipt({ companyId, userId, receiptId, expenseId, buffer, mi
           // A thick scan: one receipt per page, each read on its own.
           store.updateExpense(expenseId, { page: 1 });
           for (const p of rendered.pages) {
-            const id = p.page === 1 ? expenseId : _sibling({ companyId, userId, receiptId, source, page: p.page }).id;
+            const id = p.page === 1 ? expenseId : _sibling({ companyId, userId, receiptId, source, page: p.page, parentId: expenseId }).id;
             if (p.page !== 1) touched.push(id);
             const one = await parser.parseReceiptImage(userId, p.buffer, 'image/jpeg');
             if (one) { await applyRead(id, one.receipts[0]); flagIfSuspected(id); }
@@ -189,7 +203,7 @@ async function readReceipt({ companyId, userId, receiptId, expenseId, buffer, mi
           const [first, ...rest] = decision.pageNumbers;
           store.updateExpense(expenseId, { page: first });
           const targets = [[expenseId, first]];
-          for (const page of rest) { const sib = _sibling({ companyId, userId, receiptId, source, page }); touched.push(sib.id); targets.push([sib.id, page]); }
+          for (const page of rest) { const sib = _sibling({ companyId, userId, receiptId, source, page, parentId: expenseId }); touched.push(sib.id); targets.push([sib.id, page]); }
           for (const [id, page] of targets) {
             const one = await parser.parseReceiptText(userId, extracted.pages[page - 1]);
             if (one) { await applyRead(id, one.receipts[0]); flagIfSuspected(id); }
