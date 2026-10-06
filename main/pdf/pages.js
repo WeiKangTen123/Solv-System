@@ -15,8 +15,11 @@ const logger      = require('../utils/logger');
 // has one. A photographed page scanned into a PDF does not, and comes back
 // empty, which read-receipt.js answers by rendering the pages to images.
 
-// Below this a "page" is a header or a stray mark, not a receipt.
+// Below this a "page" is a header or a stray mark, not a receipt. Asked one way
+// everywhere a page's text is weighed, here and in read-receipt.js, so a page
+// is never "blank" to one and "text" to the other.
 const MIN_PAGE_CHARS = 40;
+function pageHasText(text) { return typeof text === 'string' && text.trim().length >= MIN_PAGE_CHARS; }
 
 async function extractPages(buffer) {
   if (!Buffer.isBuffer(buffer) || !buffer.length) return { pages: [], numPages: 0, hasText: false };
@@ -24,7 +27,7 @@ async function extractPages(buffer) {
   try {
     const data = await textExtract.extractText(buffer);
     const pages = data.pages;
-    const withText = pages.filter(p => p.length >= MIN_PAGE_CHARS);
+    const withText = pages.filter(pageHasText);
     return {
       pages,
       numPages: data.numPages || pages.length,
@@ -33,8 +36,11 @@ async function extractPages(buffer) {
       textPageCount: withText.length,
     };
   } catch (err) {
+    // failed is not the same as "no text". The worker could not open the file
+    // or ran out of time; the renderer is the same engine on a longer clock,
+    // and drawing the pages used to cost a second timeout to learn the same.
     logger.warn('PDF page extraction failed', { error: err.message });
-    return { pages: [], numPages: 0, hasText: false, textPageCount: 0 };
+    return { pages: [], numPages: 0, hasText: false, textPageCount: 0, failed: true };
   }
 }
 
@@ -44,7 +50,7 @@ async function extractPages(buffer) {
 // The token must carry a digit: "Receipt total" is not a receipt number.
 const NUMBER_RE = /(?:invoice|bill|receipt|folio|statement)\s*(?:no|number|num|#)?\.?\s*[:#]?\s*((?=[A-Z0-9\/-]*\d)[A-Z0-9][A-Z0-9\/-]{2,})/i;
 function sameDocument(pages = []) {
-  const texts = pages.filter(p => typeof p === 'string' && p.trim().length >= MIN_PAGE_CHARS);
+  const texts = pages.filter(pageHasText);
   if (texts.length < 2) return false;
   const nums = texts.map(t => { const m = NUMBER_RE.exec(t); return m ? m[1].toUpperCase() : null; });
   if (nums.every(Boolean)) return new Set(nums).size === 1;
@@ -63,7 +69,7 @@ function splittablePages({ pages = [], hasText = false } = {}) {
   if (sameDocument(pages)) return { split: false, pageNumbers: [], reason: 'pages of one document' };
   const pageNumbers = pages
     .map((text, i) => ({ text, page: i + 1 }))
-    .filter(p => p.text.length >= MIN_PAGE_CHARS)
+    .filter(p => pageHasText(p.text))
     .map(p => p.page);
 
   // Every page must carry something, or we would create blank records for the
@@ -72,4 +78,4 @@ function splittablePages({ pages = [], hasText = false } = {}) {
   return { split: true, pageNumbers, reason: null };
 }
 
-module.exports = { extractPages, splittablePages, sameDocument, MIN_PAGE_CHARS };
+module.exports = { extractPages, splittablePages, sameDocument, pageHasText, MIN_PAGE_CHARS };

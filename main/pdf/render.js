@@ -1,8 +1,8 @@
 const { execFile } = require('child_process');
 const fs     = require('fs');
-const os     = require('os');
 const path   = require('path');
 const logger = require('../utils/logger');
+const workers = require('./workers');
 
 // A scanned PDF has no text layer, so its pages are drawn to images for the
 // vision reader. Rendering runs in a child process (see the .mjs worker) with
@@ -19,13 +19,13 @@ async function renderPdfPages(buffer, opts = {}) {
   return require('./slots').withSlot(() => _render(buffer, opts));
 }
 async function _render(buffer, { dpi = DPI, maxPages = MAX_PAGES, timeoutMs = TIMEOUT_MS, pages: only = null } = {}) {
-  const dir   = fs.mkdtempSync(path.join(os.tmpdir(), 'solv-render-'));
+  const dir   = workers.tempDir('render');
   const input = path.join(dir, 'in.pdf');
   try {
     fs.writeFileSync(input, buffer);
     const stdout = await new Promise((resolve, reject) => {
       execFile(process.execPath, [WORKER, input, dir, String(dpi), String(maxPages), Array.isArray(only) && only.length ? only.join(',') : ''],
-        { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
+        { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: workers.childEnv() },
         (err, out, stderr) => (err ? reject(new Error(`${err.message}${stderr ? ` — ${String(stderr).slice(0, 300)}` : ''}`)) : resolve(out)));
     });
     const result = JSON.parse(String(stdout).trim().split('\n').pop());

@@ -176,13 +176,18 @@ async function readParts(userId, buffer, mime) {
   const capNote = (read, what) => {
     if (numPages && read < numPages) notes.push(`Only the first ${read} of ${numPages} pages were ${what}; check the rest by hand.`);
   };
+  const unreadable = () => {
+    notes.push('This PDF could not be read automatically. Type the fields from the receipt.');
+    return { parts: [], numPages, parsed: null, notes };
+  };
+  // A file the text worker could not open, or that ran out its clock, is not
+  // drawn as well: the renderer is the same engine, and a broken or hanging
+  // PDF used to cost both timeouts before the person heard anything.
+  if (extracted.failed) return unreadable();
 
   if (!extracted.hasText) {
     const rendered = await pdfRender.renderPdfPages(buffer);
-    if (!rendered || !rendered.pages.length) {
-      notes.push('This PDF could not be read automatically. Type the fields from the receipt.');
-      return { parts: [], numPages, parsed: null, notes };
-    }
+    if (!rendered || !rendered.pages.length) return unreadable();
     capNote(rendered.pages.length, 'read');
     if (rendered.pages.length <= MAX_PAGES_ONE_DOC) {
       // Several pages are one document. A single page is read like a photo
@@ -218,7 +223,7 @@ async function readParts(userId, buffer, mime) {
   // as a typed cover sheet with the receipts scanned behind it. They used to
   // be skipped, since the text was read and the images never were. Each is
   // drawn and read; one that holds a receipt becomes a part of its own.
-  const blank = extracted.pages.map((t, i) => (String(t || '').length < pdfPages.MIN_PAGE_CHARS ? i + 1 : null)).filter(Boolean);
+  const blank = extracted.pages.map((t, i) => (pdfPages.pageHasText(t) ? null : i + 1)).filter(Boolean);
   if (blank.length && extracted.textPageCount) {
     const rendered = await pdfRender.renderPdfPages(buffer, { pages: blank.slice(0, 10) }).catch(() => null);
     for (const p of (rendered && rendered.pages) || []) {
@@ -229,7 +234,7 @@ async function readParts(userId, buffer, mime) {
     }
     // A single text part covering the whole file now sits beside page parts:
     // pin it to the first typed page so each row knows its place.
-    if (parts.length > 1 && parts[0].page === null) parts[0].page = extracted.pages.findIndex(t => String(t || '').length >= pdfPages.MIN_PAGE_CHARS) + 1;
+    if (parts.length > 1 && parts[0].page === null) parts[0].page = extracted.pages.findIndex(pdfPages.pageHasText) + 1;
   }
   return { parts, numPages, parsed, notes };
 }
@@ -312,6 +317,7 @@ function _nearest(out, box) {
 async function readOne(userId, buffer, mime, { page = null, box = null } = {}) {
   if (mime !== 'application/pdf') return _nearest(await parser.parseReceiptImage(userId, buffer, mime), box);
   const extracted = await pdfPages.extractPages(buffer);
+  if (extracted.failed) return null;
   if (extracted.hasText) {
     const text = page ? extracted.pages[page - 1] : extracted.pages.join('\n\n');
     const out = await parser.parseReceiptText(userId, text);

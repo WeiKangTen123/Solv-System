@@ -5,6 +5,7 @@ jest.mock('../pdf/render', () => ({ renderPdfPages: jest.fn() }));
 jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 0.01341, rateDate: '2026-09-04', providerDate: '2026-09-04', source: 'frankfurter', fetchedAt: '2026-09-18T03:00:00.000Z' }) }));
 jest.mock('../pdf/pages', () => ({
   extractPages: jest.fn(), splittablePages: jest.fn(() => ({ split: false, reason: 'single' })), sameDocument: jest.fn(() => false),
+  pageHasText: jest.requireActual('../pdf/pages').pageHasText,
 }));
 
 describe('receipts/read-receipt', () => {
@@ -94,9 +95,21 @@ describe('receipts/read-receipt', () => {
     expect(parser.parseReceiptPages).not.toHaveBeenCalled();
   });
 
+  test('a PDF the text worker could not open is not drawn as well, and says so', async () => {
+    // A broken or hanging file used to cost the text timeout and then the
+    // render timeout, ninety seconds more, to land in the same place.
+    const { r, e } = seed('application/pdf');
+    pdfPages.extractPages.mockResolvedValue({ pages: [], numPages: 0, hasText: false, textPageCount: 0, failed: true });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('%PDF'), mime: 'application/pdf' });
+    expect(render.renderPdfPages).not.toHaveBeenCalled();
+    expect(store.getExpense(e.id)).toMatchObject({ status: 'review-needed', errorMsg: expect.stringMatching(/could not be read automatically/) });
+    expect(await read.readOne(u.id, Buffer.from('%PDF'), 'application/pdf')).toBeNull();
+    expect(render.renderPdfPages).not.toHaveBeenCalled();
+  });
+
   test('a text PDF whose pages are one document is read from the joined text', async () => {
     const { r, e } = seed('application/pdf');
-    pdfPages.extractPages.mockResolvedValue({ pages: ['page one text', 'page two text'], numPages: 2, hasText: true, textPageCount: 2 });
+    pdfPages.extractPages.mockResolvedValue({ pages: ['page one text of the Courtyard folio: rooms and meals', 'page two text of the Courtyard folio: taxes and the total'], numPages: 2, hasText: true, textPageCount: 2 });
     pdfPages.splittablePages.mockReturnValue({ split: false, pageNumbers: [], reason: 'pages of one document' });
     parser.parseReceiptText.mockResolvedValue({ receipts: [{ ...folio, lineItems: [] }], split: false });
     await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('%PDF'), mime: 'application/pdf' });
@@ -106,7 +119,7 @@ describe('receipts/read-receipt', () => {
 
   test('a text PDF of separate receipts becomes one expense per page', async () => {
     const { r, e } = seed('application/pdf');
-    pdfPages.extractPages.mockResolvedValue({ pages: ['grab one', 'grab two'], numPages: 2, hasText: true, textPageCount: 2 });
+    pdfPages.extractPages.mockResolvedValue({ pages: ['GRAB receipt one: Orchard Rd to Changi Airport, SGD 18.40', 'GOJEK receipt two: Changi Airport to Raffles Place, SGD 25.00'], numPages: 2, hasText: true, textPageCount: 2 });
     pdfPages.splittablePages.mockReturnValue({ split: true, pageNumbers: [1, 2], reason: null });
     parser.parseReceiptText
       .mockResolvedValueOnce({ receipts: [{ merchant: 'Grab', total: 18.4, currency: 'SGD', category: 'Air & Transport', confidence: 'high', lineItems: [] }] })
@@ -224,7 +237,6 @@ describe('receipts/read-receipt', () => {
     const cover = 'EXPENSE CLAIM COVER SHEET Employee Aisha Rahman Department Sales Period September 2026 receipts attached';
     pdfPages.extractPages.mockResolvedValue({ pages: [cover, '', ''], numPages: 3, hasText: true, textPageCount: 1 });
     pdfPages.splittablePages.mockReturnValue({ split: false, pageNumbers: [], reason: 'fewer than two pages have readable text' });
-    pdfPages.MIN_PAGE_CHARS = 40;
     parser.parseReceiptText.mockResolvedValue({ split: false, receipts: [{ merchant: null, total: null, confidence: 'low', lineItems: [] }] });
     render.renderPdfPages.mockResolvedValue({ numPages: 3, pages: [1, 2, 3].map(p => ({ page: p, buffer: Buffer.from(`p${p}`) })) });
     parser.parseReceiptImage
