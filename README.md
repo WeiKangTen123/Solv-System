@@ -39,7 +39,7 @@ There are no managers and nobody approves anything. Solv records claims; it does
 
 `open → claimed`, and back again with **Reopen**. A case is open while receipts go in and claimed once its owner has put it through whatever actually reimburses them; claimed closes it to filing, checking, re-reading and deleting. Claiming refuses until every receipt in the case has been checked and priced. Once a case has been posted to Xero it is final and cannot be reopened, so the app and the books never disagree.
 
-The step belongs to the claimant. Solv does not move money, so it cannot know that anybody was paid — what it can know is that the person put the claim through, so they are the one who says so, and nobody can say it for them. A receipt can also be claimed on its own, once it is checked and priced, for a one-off put through outside any case.
+The step belongs to the claimant. Solv does not move money, so it cannot know that anybody was paid — what it can know is that the person put the claim through, so they are the one who says so, and nobody can say it for them. A receipt can also be claimed on its own, once it is checked and priced, for a one-off put through outside any case. A receipt in a case is claimed with its case and never on its own as well, and one claimed on its own cannot then go into a case, so nothing is claimed twice.
 
 **Accounts.** Self-registration is off unless an admin switches it on in Company & Policy; otherwise an admin adds people in Users & Monitoring. Removing a person ends their access and every session they have, and keeps their receipts, cases and totals; they can be restored. Passwords are at least 8 characters. A sign-in lasts 24 hours and ends early on sign-out or a password change.
 
@@ -49,7 +49,7 @@ The step belongs to the claimant. Solv does not move money, so it cannot know th
 
 ## The assistant
 
-The **Ask** button on every page opens a chat ([main/assistant/](main/assistant/)) that uses the same Gemini keys as the reader, from Settings → LLM API Setup.
+The **Ask** button on every page opens a chat ([main/assistant/](main/assistant/)) that uses the same Gemini keys as the reader, from Settings → LLM API Setup. Answers stream in as they are written. What the person most likely asks about (the receipt or case on screen, their open items, latest receipts and this month's spending) is looked up before the model is asked, so most questions take one model call. A person waiting for an answer goes ahead of receipts being read in the company's queue, the fast model is tried on every key before the slow fallback, and a key that ran out is left alone until Google says it may be asked again.
 
 - **What it does.** It finds and explains receipts and cases, checks a receipt for problems, looks at the receipt's picture or PDF to compare it with what was saved, summarises spending, and looks up exchange rates. An admin can ask about anyone in the company; a user, about their own.
 - **How it changes things.** It never changes anything itself. It proposes a change as a card, and nothing happens until the person presses **Apply**. Applying goes through the same rules as the page and is logged on the receipt as having come through the assistant. A card fails rather than overwrites if the receipt changed after it was proposed, and expires after a day.
@@ -122,7 +122,7 @@ Inter Tight carries the interface and IBM Plex Mono every figure, so amounts lin
 
 ## Exchange rates, stated
 
-A rate is how much of the base currency one unit of the foreign currency is worth, fetched for the receipt date (company policy; submission-date and monthly-fixed are the alternatives). The European Central Bank's reference rates come first, through Frankfurter, which publishes about thirty currencies with history by date. ExchangeRate-API covers the rest, around 160 in total, but only for today, so a currency the ECB does not publish is priced at the day's rate and the report says so. After both, whatever an admin types in.
+A rate is how much of the base currency one unit of the foreign currency is worth, fetched for the receipt date in the company's own calendar (company policy; submission-date, which is the day the receipt arrived, and monthly-fixed are the alternatives). The base currency cannot be changed once receipts have been converted to it. The European Central Bank's reference rates come first, through Frankfurter, which publishes about thirty currencies with history by date. ExchangeRate-API covers the rest, around 160 in total, but only for today, so a currency the ECB does not publish is priced at the day's rate and the report says so. After both, whatever an admin types in.
 
 Thirty-two currencies are offered by name in the claim screen and the rates page, from [main/intake/currencies.js](main/intake/currencies.js). That is a convenience, not a limit: any three-letter code can be typed, and the reader accepts whatever it reads off the receipt.
 
