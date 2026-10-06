@@ -4,11 +4,24 @@
 // day closes at the company's 23:55. Singapore runs eight hours ahead of UTC,
 // so between midnight and 08:00 there UTC is still on the previous day: asked
 // in UTC, "today" is yesterday for a third of every day.
+//
+// One formatter per zone, kept: building an Intl.DateTimeFormat costs about a
+// third of a millisecond, and the assistant's look across every receipt asked
+// for one per receipt — six seconds of a blocked server at 20,000 receipts.
+const _formatters = new Map();
+function _formatter(tz) {
+  let f = _formatters.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    });
+    _formatters.set(tz, f);
+  }
+  return f;
+}
 function _parts(tz, d) {
   try {
-    return Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
-      timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-    }).formatToParts(d).map(x => [x.type, x.value]));
+    return Object.fromEntries(_formatter(tz || 'UTC').formatToParts(d).map(x => [x.type, x.value]));
   } catch {
     // An unknown zone is a misconfiguration, not a reason to answer nothing.
     return _parts('UTC', d);

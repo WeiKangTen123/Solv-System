@@ -68,6 +68,14 @@ function run() {
   // that have no receipt file to be found by.
   _ensureColumn('expenses', 'import_id', 'import_id TEXT');
   db.exec('CREATE INDEX IF NOT EXISTS idx_expenses_import ON expenses(import_id)');
+  // "Duplicate of" points one expense at another with ON DELETE SET NULL, so
+  // every expense deleted made SQLite look through all of them for rows
+  // pointing at it: undoing a 500-receipt import froze the server for about
+  // five seconds at 20,000 receipts, against milliseconds with the index.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_expenses_duplicate_of ON expenses(duplicate_of)');
+  // The receipts a file was split into (a folio's pages, a photo of three),
+  // asked for every time one of them is opened, and by an import's undo.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_receipts_group ON receipts(group_id)');
   // When the sweeper last tried to price a line and failed, so a line that can
   // never be priced stops holding the batch (fx/sweeper.js).
   _ensureColumn('expense_lines', 'fx_tried_at', 'fx_tried_at TEXT');

@@ -40,23 +40,32 @@ CREATE TABLE IF NOT EXISTS company_credentials (
   xero_oauth_refresh_token TEXT,
   xero_oauth_connected_at  TEXT,
   xero_connection_type     TEXT,
-  default_account_code     TEXT
+  default_account_code     TEXT,
+  fx_oxr_app_id            TEXT       -- an Open Exchange Rates App ID, encrypted
 );
 
 CREATE TABLE IF NOT EXISTS company_gemini_keys (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  api_key    TEXT NOT NULL,
-  label      TEXT,
-  created_at TEXT NOT NULL
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id    TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  api_key       TEXT NOT NULL,
+  label         TEXT,
+  created_at    TEXT NOT NULL,
+  last_ok_at    TEXT,           -- what the reader last saw from this key
+  last_error_at TEXT,
+  last_error    TEXT,
+  last_model    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS user_gemini_keys (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  api_key    TEXT NOT NULL,
-  label      TEXT,
-  created_at TEXT NOT NULL
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  api_key       TEXT NOT NULL,
+  label         TEXT,
+  created_at    TEXT NOT NULL,
+  last_ok_at    TEXT,           -- what the reader last saw from this key
+  last_error_at TEXT,
+  last_error    TEXT,
+  last_model    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_user_gemini_keys ON user_gemini_keys(user_id);
 
@@ -181,6 +190,9 @@ CREATE TABLE IF NOT EXISTS fx_rates (
   fetched_at TEXT NOT NULL,
   divergence REAL,           -- how far the second provider was from this one, as a fraction
   moved      REAL,           -- how far this rate moved from the last one known for the pair
+  provider_date TEXT,        -- the day the provider actually priced (a weekend asks for Friday)
+  entered_by TEXT,           -- who typed a manual rate
+  closed_at  TEXT,           -- set when this row is the day's close (fx/live.js)
   PRIMARY KEY (base, quote, rate_date, source)
 );
 

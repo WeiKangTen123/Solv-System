@@ -102,4 +102,31 @@ describe('db/migrate', () => {
     db.prepare("INSERT INTO users (id, company_id, email, password, role, created_at) VALUES ('u1','c1','a@b.c','x','user','2026-01-01')").run();
     expect(() => db.prepare("INSERT INTO expenses (id, company_id, user_id, status, created_at) VALUES ('e1','c1','u1','bogus','2026-01-01')").run()).toThrow();
   });
+  // A rebuild (_rebuild) recreates a table from schema.sql's DDL and copies
+  // only the columns that DDL names. Twelve columns existed only through
+  // _ensureColumn, so rebuilding fx_rates or company_credentials would have
+  // dropped every close, every manual rate's author and the encrypted OXR key,
+  // and the next boot would have added the columns back empty.
+  test('every column a migration adds is also in schema.sql', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const Database = require('better-sqlite3');
+    const fresh = new Database(':memory:');
+    fresh.exec(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
+    const columns = t => fresh.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);
+    const src = fs.readFileSync(path.join(__dirname, 'migrate.js'), 'utf8');
+    const missing = [];
+    for (const [, table, col] of src.matchAll(/_ensureColumn\((\w+|'[^']+'),\s*'(\w+)'/g)) {
+      const tables = table === 'table' ? ['company_gemini_keys', 'user_gemini_keys'] : [table.replace(/'/g, '')];
+      for (const t of tables) if (!columns(t).includes(col)) missing.push(`${t}.${col}`);
+    }
+    expect(missing).toEqual([]);
+  });
+
+  test('deleting an expense does not scan every expense', () => {
+    const plan = db.prepare('EXPLAIN QUERY PLAN SELECT id FROM expenses WHERE duplicate_of = ?').all('x').map(r => r.detail).join(' ');
+    expect(plan).toMatch(/USING (COVERING )?INDEX idx_expenses_duplicate_of/);
+    const group = db.prepare('EXPLAIN QUERY PLAN SELECT id FROM receipts WHERE group_id = ?').all('x').map(r => r.detail).join(' ');
+    expect(group).toMatch(/USING (COVERING )?INDEX idx_receipts_group/);
+  });
 });
