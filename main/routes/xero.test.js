@@ -41,7 +41,10 @@ describe('routes/xero', () => {
     axios.get.mockResolvedValue({ data: [{ tenantId: 't1', tenantName: 'Solv Pte Ltd' }] });
     const r = await request(serverFor(app)).post('/api/xero/test').set(as(admin)).expect(200);
     expect(r.body.tenants).toEqual([{ tenantId: 't1', tenantName: 'Solv Pte Ltd' }]);
-    const t = await request(serverFor(app)).get('/api/xero/tenants').set(as(emp)).expect(200);
+    // The connection is an admin's to see; a claimant learns it from the case page.
+    await request(serverFor(app)).get('/api/xero/tenants').set(as(emp)).expect(403);
+    await request(serverFor(app)).get('/api/xero').set(as(emp)).expect(403);
+    const t = await request(serverFor(app)).get('/api/xero/tenants').set(as(admin)).expect(200);
     expect(t.body).toMatchObject({ connectionType: 'custom', tenants: [expect.objectContaining({ tenantId: 't1' })] });
   });
 

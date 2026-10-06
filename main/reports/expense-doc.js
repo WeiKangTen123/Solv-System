@@ -177,7 +177,17 @@ function expenseReportDoc(payload) {
 function expenseReportCsv(payload) {
   const m = buildModel(payload);
   const { report, lines = [] } = payload;
-  const esc = v => { const s = v === null || v === undefined ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  // A cell that starts with = + - @ or a tab is a formula to Excel, quoted or
+  // not, and merchants, descriptions and purposes come from receipts and from
+  // people. "=HYPERLINK(...)" read off a doctored receipt became a live link in
+  // finance's spreadsheet. Such text gets a leading apostrophe, which Excel
+  // shows as nothing and reads as text. A plain number such as -12.50 is left
+  // as it is.
+  const esc = v => {
+    let s = v === null || v === undefined ? '' : String(v);
+    if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = `'${s}`;
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
   const out = [['Report', 'Line', 'Date', 'Merchant', 'Description', 'Purpose', 'On behalf of', 'Category', 'Currency', 'Amount', 'Rate', 'Rate date', 'Rate source', m.base, 'Receipt'].join(',')];
   lines.forEach((l, i) => out.push([
     report.number, i + 1, l.date, l.merchant, l.description, l.purpose, l.onBehalfOf, l.category, l.currency, Number(l.amount).toFixed(2),

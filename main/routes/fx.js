@@ -19,7 +19,12 @@ router.get('/rate', requireAuth, asyncHandler(async (req, res) => {
   const to = String(req.query.to || users.getCompany(me.companyId).baseCurrency).toUpperCase();
   const from = String(req.query.from || '').toUpperCase();
   if (!CODE.test(from)) return res.status(400).json({ error: 'from must be a 3-letter currency code' });
-  const r = await rates.getRate({ from, to, date: req.query.date || undefined });
+  if (!CODE.test(to)) return res.status(400).json({ error: 'to must be a 3-letter currency code' });
+  // A lookup is stored, so the date has to be a real one and not far ahead:
+  // any signed-in user used to be able to file junk under any string at all.
+  const date = req.query.date ? String(req.query.date) : undefined;
+  if (date && (!require('../intake/document').isoDate(date))) return res.status(400).json({ error: 'date must be a real YYYY-MM-DD, not in the future' });
+  const r = await rates.getRate({ from, to, date });
   if (!r) return res.status(404).json({ error: `No rate for ${from} to ${to}` });
   res.json({ rate: r });
 }));

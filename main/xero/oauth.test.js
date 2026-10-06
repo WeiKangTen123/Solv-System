@@ -64,15 +64,8 @@ describe('xero/oauth', () => {
     test('requests every scope the app\'s features actually need', () => {
       getCompanyConfig.mockReturnValue({ XERO_OAUTH_CLIENT_ID: 'cid', XERO_OAUTH_CLIENT_SECRET: 'secret' });
       const scopes = new URL(oauth.buildAuthorizeUrl('user-1')).searchParams.get('scope').split(' ');
-      for (const required of [
-        'offline_access',
-        'accounting.invoices', 'accounting.contacts', 'accounting.settings.read',
-        'accounting.banktransactions.read', 'accounting.payments.read',
-        'accounting.reports.profitandloss.read', 'accounting.reports.banksummary.read',
-        'accounting.reports.budgetsummary.read', 'accounting.budgets.read',
-      ]) {
-        expect(scopes).toContain(required);
-      }
+      // Exactly what posting a claim needs, and nothing more.
+      expect(scopes.sort()).toEqual(['accounting.attachments', 'accounting.contacts', 'accounting.invoices', 'accounting.settings.read', 'offline_access']);
     });
   });
 

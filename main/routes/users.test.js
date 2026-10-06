@@ -17,7 +17,7 @@ describe('routes/users and routes/company', () => {
   });
   const as = t => ({ Authorization: `Bearer ${t}` });
 
-  test('admin creates staff as users or admins; a user cannot create, and sees the short directory', async () => {
+  test('admin creates staff as users or admins; a user can neither create staff nor list them', async () => {
     const m = await request(serverFor(app)).post('/api/users').set(as(token)).send({ email: 'm@solv.sg', password: 'password123', name: 'Henry', role: 'admin' }).expect(201);
     expect(m.body.user.role).toBe('admin');
     const e = await request(serverFor(app)).post('/api/users').set(as(token)).send({ email: 'e@solv.sg', password: 'password123', name: 'Aisha', department: 'Sales' }).expect(201);
@@ -25,9 +25,43 @@ describe('routes/users and routes/company', () => {
     await request(serverFor(app)).post('/api/users').set(as(token)).send({ email: 'x@solv.sg', password: 'password123', role: 'manager' }).expect(400);
     const login = await request(serverFor(app)).post('/api/auth/login').send({ email: 'e@solv.sg', password: 'password123' });
     await request(serverFor(app)).post('/api/users').set(as(login.body.token)).send({ email: 'x@solv.sg', password: 'password123' }).expect(403);
-    const list = await request(serverFor(app)).get('/api/users').set(as(login.body.token)).expect(200);
+    // The staff list is an admin's: colleagues' names and emails are not a
+    // user's to read.
+    await request(serverFor(app)).get('/api/users').set(as(login.body.token)).expect(403);
+    const list = await request(serverFor(app)).get('/api/users').set(as(token)).expect(200);
     expect(list.body.users.map(u => u.email).sort()).toEqual(['e@solv.sg', 'm@solv.sg', 'wk@solv.sg']);
-    expect(list.body.users[0].employeeId).toBeUndefined();   // the short directory shape
+    await request(serverFor(app)).post('/api/users').set(as(token)).send({ email: 'short@solv.sg', password: 'short12' }).expect(400);   // 8 at least
+  });
+
+  test('removing a person ends their access and keeps their records; restore brings them back; the last admin stays', async () => {
+    const e = (await request(serverFor(app)).post('/api/users').set(as(token)).send({ email: 'e@solv.sg', password: 'password123' }).expect(201)).body.user;
+    const login = await request(serverFor(app)).post('/api/auth/login').send({ email: 'e@solv.sg', password: 'password123' }).expect(200);
+    const store = require('../store/expenses');
+    store.createExpense({ companyId: e.companyId, userId: e.id, status: 'review-needed', merchant: 'Grab', currency: 'SGD', total: 10, lines: [{ category: 'Meals', amount: 10 }] });
+
+    await request(serverFor(app)).delete(`/api/users/${admin.id}`).set(as(token)).expect(400);           // not yourself
+    const gone = await request(serverFor(app)).delete(`/api/users/${e.id}`).set(as(token)).expect(200);
+    expect(gone.body.user.removed).toBe(true);
+    expect(store.listExpenses({ userId: e.id })).toHaveLength(1);                                         // records kept
+    await request(serverFor(app)).get('/api/auth/me').set(as(login.body.token)).expect(401);              // session ended
+    await request(serverFor(app)).post('/api/auth/login').send({ email: 'e@solv.sg', password: 'password123' }).expect(401);
+    const again = await request(serverFor(app)).post('/api/users').set(as(token)).send({ email: 'e@solv.sg', password: 'password123' }).expect(400);
+    expect(again.body.error).toMatch(/removed account/);
+
+    await request(serverFor(app)).post(`/api/users/${e.id}/restore`).set(as(token)).expect(200);
+    await request(serverFor(app)).post('/api/auth/login').send({ email: 'e@solv.sg', password: 'password123' }).expect(200);
+
+    // The only admin can be neither demoted nor removed.
+    const r = await request(serverFor(app)).patch(`/api/users/${admin.id}`).set(as(token)).send({ role: 'user' }).expect(400);
+    expect(r.body.error).toMatch(/only admin/);
+  });
+
+  test('a new password ends every other session and hands this device a fresh one', async () => {
+    const old = token;
+    const r = await request(serverFor(app)).post(`/api/users/${admin.id}/password`).set(as(old)).send({ currentPassword: 'password123', password: 'a-new-password' }).expect(200);
+    expect(r.body.token).toBeTruthy();
+    await request(serverFor(app)).get('/api/auth/me').set(as(old)).expect(401);
+    await request(serverFor(app)).get('/api/auth/me').set(as(r.body.token)).expect(200);
   });
 
   test('company settings are readable by all and writable by an admin; reader keys are masked', async () => {

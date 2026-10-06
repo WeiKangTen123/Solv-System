@@ -25,6 +25,10 @@ const morgan      = require('morgan');
 const logger      = require('./utils/logger');
 const { rateLimitKey } = require('./middleware/rate-limit-key');
 
+// No signing secret, no server: checked here rather than on the first login,
+// so a misconfigured box refuses to start instead of starting open.
+require('./middleware/auth-middleware').jwtSecret();
+
 require('./db/migrate').run();
 
 const app  = express();
@@ -43,12 +47,23 @@ app.use(helmet({
 }));
 app.use(compression());
 app.set('trust proxy', 1);
-app.use(morgan('combined', { stream: { write: msg => logger.info(msg.trim()) } }));
+// The access log records paths, never query strings, and never a phone-capture
+// link's token. Receipt-image links, export links and Xero's sign-in code all
+// travel in the query string, and every one of them used to be written to
+// combined.log for anyone who could read it to replay.
+morgan.token('safe-url', req => String(req.originalUrl || req.url || '').split('?')[0].replace(/\/capture\/[^/]+/, '/capture/[token]'));
+app.use(morgan(':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent"',
+  { stream: { write: msg => logger.info(msg.trim()) } }));
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, keyGenerator: rateLimitKey, standardHeaders: true, legacyHeaders: false,
                     message: { error: 'Too many requests — slow down' } }));
-// Files arrive as base64 inside JSON (4/3 inflation): 25 MB carries a 15 MB original.
-app.use(express.json({ limit: '25mb' }));
-app.use(express.urlencoded({ extended: true }));
+// 100 KB of JSON is plenty for everything except a file. The three routes that
+// take one parse their own 25 MB body after checking who is asking (receipts
+// and claims routes); a body parsed here, before any route, was 25 MB for
+// anyone at all, the login form included.
+const LARGE_BODY_ROUTE = /^\/api\/(receipts\/?$|receipts\/capture\/[^/]+\/?$|claims\/import\/?$)/;
+const smallJson = express.json({ limit: '100kb' });
+app.use((req, res, next) => (req.method === 'POST' && LARGE_BODY_ROUTE.test(req.path) ? next() : smallJson(req, res, next)));
+app.use(express.urlencoded({ extended: false, limit: '100kb' }));
 
 const authRoutes      = require('./routes/auth');
 const userRoutes      = require('./routes/users');
@@ -89,8 +104,15 @@ if (PROD) {
   app.get('/', (_req, res) => res.json({ app: 'Solv Expense Claims API', status: 'running', ui: 'npm run dev:ui', health: '/dashboard/health' }));
 }
 
-app.use((err, _req, res, _next) => {
-  logger.error('Unhandled error', { error: err.message });
+// A body that is too large or not JSON is the caller's mistake and says so;
+// everything else is ours, logged in full and answered without the details.
+app.use((err, req, res, _next) => {
+  const status = Number(err.status || err.statusCode) || 500;
+  if (status < 500) {
+    const msg = err.type === 'entity.too.large' ? 'That request is too large.' : err.type === 'entity.parse.failed' ? 'That request is not valid JSON.' : 'Bad request';
+    return res.status(status).json({ error: msg });
+  }
+  logger.error('Unhandled error', { method: req.method, path: String(req.originalUrl || '').split('?')[0], error: err.message, stack: err.stack });
   res.status(500).json({ error: 'Internal server error' });
 });
 

@@ -72,12 +72,31 @@ async function applyFx(expenseId, { force = false } = {}) {
 
 // The claimant or finance types a rate. It is written to every line with the
 // person and the reason, and survives a plain refresh.
+// How far a rate somebody types may sit from the day's published rate. Card
+// statements land within a couple of percent of the mid-market rate; a typed
+// rate further out than this is a mistake or an inflated claim, and either
+// way not one to freeze onto a line unasked. An admin is not held to it: they
+// set rates for the company, and a provider glitch is exactly when theirs
+// must differ.
+const TYPED_RATE_TOLERANCE = 0.05;
+
 async function overrideFx(expenseId, { rate, reason, actor }) {
   const e = store.getExpense(expenseId);
   if (!e) throw new Error('Expense not found');
   const n = Number(rate);
-  if (!(n > 0)) throw new Error('A rate must be a number above zero');
+  if (!(n > 0) || !Number.isFinite(n)) throw new Error('A rate must be a number above zero');
   if (!reason || !String(reason).trim()) throw new Error('Say why the rate is being changed');
+  if (!actor || actor.role !== 'admin') {
+    const company = users.getCompany(e.companyId);
+    const date = policyDate(company.fxPolicy, e);
+    const day = await rates.getRate({ from: e.currency, to: company.baseCurrency, date, today: localDate(company.timezone) }).catch(() => null);
+    const ref = day ? day.rate : null;
+    if (!(ref > 0)) throw new Error('There is no published rate for this day to check yours against. Ask an admin to set it.');
+    const off = Math.abs(n - ref) / ref;
+    if (off > TYPED_RATE_TOLERANCE) {
+      throw new Error(`That is ${(off * 100).toFixed(1)}% from the day's rate of ${Number(ref.toPrecision(6))}. A rate you type may differ by at most ${TYPED_RATE_TOLERANCE * 100}%; ask an admin for anything further.`);
+    }
+  }
   for (const l of e.lines) {
     store.updateLine(l.id, {
       fxRate: n, fxRateDate: e.receiptDate || today(), fxSource: 'manual', fxFetchedAt: new Date().toISOString(),
@@ -85,8 +104,8 @@ async function overrideFx(expenseId, { rate, reason, actor }) {
       fxCheck: null,
     });
   }
-  logger.info('Exchange rate overridden', { expenseId, rate: n, by: actor && actor.email, reason });
+  logger.info('Exchange rate overridden', { expenseId, rate: n, by: actor && actor.id });
   return store.getExpense(expenseId);
 }
 
-module.exports = { applyFx, overrideFx, policyDate, toBase };
+module.exports = { applyFx, overrideFx, policyDate, toBase, TYPED_RATE_TOLERANCE };

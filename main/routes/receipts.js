@@ -7,7 +7,13 @@ const { decodeBase64 } = require('../utils/base64');
 const { hashBuffer }   = require('../intake/dedup');
 const { requireAuth, jwtSecret } = require('../middleware/auth-middleware');
 const asyncHandler = require('../middleware/async-handler');
-const { canAccessUser } = require('../middleware/roles');
+const { canView } = require('../middleware/roles');
+const express_ = require('express');
+
+// Receipt files arrive as base64 inside JSON (4/3 inflation): 25 MB carries a
+// 15 MB original. Mounted on the two upload routes alone, and only after the
+// caller is known to be allowed; index.js keeps everything else to 100 KB.
+const bigJson = express_.json({ limit: '25mb' });
 const users        = require('../store/users');
 const store        = require('../store/expenses');
 const receiptStore = require('../receipts/receipt-store');
@@ -57,7 +63,8 @@ function checkCase(user, reportId) {
   return null;
 }
 
-function storeReceipt(user, { mime, data, filename, source, reportId }) {
+function storeReceipt(user, { mime: declaredMime, data, filename, source, reportId }) {
+  let mime = declaredMime;
   const noCase = checkCase(user, reportId);
   if (noCase) return { status: noCase.status, body: { error: noCase.error } };
   if (!receiptStore.isAcceptedMime(mime)) {
@@ -65,9 +72,19 @@ function storeReceipt(user, { mime, data, filename, source, reportId }) {
   }
   const buffer = decodeBase64(data);
   if (!buffer) return { status: 400, body: { error: 'File data is missing or not valid base64' } };
+  const mb = n => `${(n / 1024 / 1024).toFixed(1)}MB`;
   if (buffer.length > receiptStore.MAX_BYTES) {
-    const mb = n => `${(n / 1024 / 1024).toFixed(1)}MB`;
     return { status: 413, body: { error: `The file is ${mb(buffer.length)}; the limit is ${mb(receiptStore.MAX_BYTES)}.` } };
+  }
+  // What is stored, and later served, is decided by the bytes rather than by
+  // what the browser declared: a file that is not a JPEG, PNG or PDF is
+  // refused, and one declared as the wrong one of those is kept as what it is.
+  const actualMime = receiptStore.sniffMime(buffer);
+  if (!actualMime) return { status: 400, body: { error: 'That file is not a JPEG, PNG or PDF.' } };
+  mime = actualMime;
+  const used = store.bytesStoredBy(user.id);
+  if (used + buffer.length > receiptStore.QUOTA_BYTES) {
+    return { status: 413, body: { error: `Your receipts already take ${mb(used)} of the ${mb(receiptStore.QUOTA_BYTES)} allowed. Ask your administrator.` } };
   }
 
   const hash = hashBuffer(buffer);
@@ -100,14 +117,14 @@ function storeReceipt(user, { mime, data, filename, source, reportId }) {
   return { status: 201, body: { receipt, expense, imageToken: issueImageToken(user.id, receiptId) } };
 }
 
-router.post('/', requireAuth, (req, res) => {
+router.post('/', requireAuth, bigJson, (req, res) => {
   try {
     const me = users.findById(req.user.id);
     const { status, body } = storeReceipt(me, req.body || {});
     res.status(status).json(body);
   } catch (err) {
     logger.error('Receipt upload failed', { userId: req.user.id, error: err.message });
-    res.status(500).json({ error: err.message || 'Upload failed' });
+    res.status(500).json({ error: 'The upload failed. Try again.' });
   }
 });
 
@@ -127,8 +144,10 @@ router.post('/pair', requireAuth, async (req, res) => {
     }
     const token = pairing.create(req.user.id, { reportId });
     const url   = captureUrl(req, token);
-    const qrSvg = await QRCode.toString(url, { type: 'svg', margin: 1, width: 220, errorCorrectionLevel: 'M' });
-    res.status(201).json({ token, url, qrSvg, expiresInMs: pairing.TTL_MS, maxUploads: pairing.MAX_USES });
+    // A PNG data URL, drawn as an <img>. It used to be SVG markup the page put
+    // in with innerHTML — the one place the app rendered server text as HTML.
+    const qr = await QRCode.toDataURL(url, { margin: 1, width: 220, errorCorrectionLevel: 'M' });
+    res.status(201).json({ token, url, qr, expiresInMs: pairing.TTL_MS, maxUploads: pairing.MAX_USES });
   } catch (err) {
     res.status(500).json({ error: 'Could not create a pairing code' });
   }
@@ -181,7 +200,10 @@ router.get('/capture/:token/status', (req, res) => {
   res.json({ ok: true, usesLeft: state.usesLeft, expiresInMs: state.expiresInMs, reportId: state.reportId || null,
              receipts: _phoneView(state.receiptIds, false) });
 });
-router.post('/capture/:token', (req, res) => {
+// The token is checked BEFORE the body is read: an unknown link must not get
+// to make the server parse 25 MB.
+const captureGate = (req, res, next) => (pairing.verify(req.params.token) ? next() : res.status(401).json(EXPIRED));
+router.post('/capture/:token', captureGate, bigJson, (req, res) => {
   const state = pairing.verify(req.params.token);
   if (!state) return res.status(401).json(EXPIRED);
   try {
@@ -192,7 +214,8 @@ router.post('/capture/:token', (req, res) => {
     if (body.imageToken) delete body.imageToken;
     res.status(status).json(body);
   } catch (err) {
-    res.status(500).json({ error: err.message || 'Upload failed' });
+    logger.error('Phone upload failed', { userId: state.userId, error: err.message });
+    res.status(500).json({ error: 'The upload failed. Try again.' });
   }
 });
 
@@ -203,8 +226,7 @@ router.post('/capture/:token', (req, res) => {
 // reachable. Same rule as every other read: yourself, your reports, or finance.
 router.get('/:id/token', requireAuth, (req, res) => {
   const r = store.getReceipt(req.params.id);
-  const me = users.findById(req.user.id);
-  if (!r || r.companyId !== me.companyId || !canAccessUser(req.user, r.userId)) return res.status(404).json({ error: 'Receipt not found' });
+  if (!r || !canView(req.user, r.userId, r.companyId)) return res.status(404).json({ error: 'Receipt not found' });
   res.json({ token: issueImageToken(r.userId, r.id) });
 });
 

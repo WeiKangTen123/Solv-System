@@ -15,7 +15,13 @@ function ago(iso) {
   if (!Number.isFinite(d) || d < 0) return null;
   return d === 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`;
 }
-const thisMonth = iso => !!iso && String(iso).slice(0, 7) === new Date().toISOString().slice(0, 7);
+// Which month a moment falls in, where the company is. Asked in UTC, a case
+// claimed before 08:00 on the 1st in Singapore counted towards the month before.
+const monthIn = (d, tz) => {
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'Asia/Singapore', year: 'numeric', month: '2-digit' }).format(d).slice(0, 7); }
+  catch { return d.toISOString().slice(0, 7); }
+};
+const thisMonth = (iso, tz) => !!iso && monthIn(new Date(iso), tz) === monthIn(new Date(), tz);
 
 // The front door. Everyone's is the same shape — their cases, what those need,
 // where the money went — because everyone here does the same job. An admin
@@ -52,7 +58,7 @@ export default function Home() {
   const needing = expenses.filter(e => e.status === 'review-needed' || e.status === 'reading');
   const unfiled = expenses.filter(e => e.status === 'reviewed' && !e.reportId);
   const open = reports.filter(r => r.status === 'open');
-  const claimedThisMonth = reports.filter(r => r.status === 'claimed' && thisMonth(r.claimedAt));
+  const claimedThisMonth = reports.filter(r => r.status === 'claimed' && thisMonth(r.claimedAt, user?.timezone));
   // Ready means the claim button will work: every receipt checked, every line
   // priced. The list carries both counts so nothing has to be opened to know.
   const ready = r => r.expenseCount > 0 && !r.unreviewed && !r.pendingRates;
@@ -62,7 +68,7 @@ export default function Home() {
   const awaiting = open.some(r => r.pendingRates > 0) || unfiled.some(e => e.fxPending);
 
   const openEveryone = everyone.filter(r => r.status === 'open');
-  const claimedEveryone = everyone.filter(r => r.status === 'claimed' && thisMonth(r.claimedAt));
+  const claimedEveryone = everyone.filter(r => r.status === 'claimed' && thisMonth(r.claimedAt, user?.timezone));
   const stuck = everyone.filter(r => r.status === 'open' && r.pendingRates > 0);
 
   async function act(key, fn, done) {

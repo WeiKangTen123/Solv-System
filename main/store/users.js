@@ -16,12 +16,17 @@ const ONLINE_THRESHOLD_MS = 3 * 60 * 1000;
 
 function isOnline(lastSeenAt) { return !!lastSeenAt && Date.now() - new Date(lastSeenAt).getTime() < ONLINE_THRESHOLD_MS; }
 
+// The shortest password anyone may set from now on. Existing passwords keep
+// working until they are changed.
+const MIN_PASSWORD = 8;
+
 function sanitize(u) {
   if (!u) return null;
   return {
     id: u.id, companyId: u.company_id, email: u.email, role: u.role, name: u.name || null,
     employeeId: u.employee_id || null, department: u.department || null,
     createdAt: u.created_at, lastSeenAt: u.last_seen_at || null, online: isOnline(u.last_seen_at),
+    removedAt: u.disabled_at || null, removed: !!u.disabled_at,
   };
 }
 
@@ -33,6 +38,7 @@ function _companyRow(row) {
   return {
     id: row.id, name: row.name, baseCurrency: row.base_currency, fxPolicy: row.fx_policy, timezone: row.timezone,
     reportColumns: cols, logo: row.logo || null, nextReportNo: row.next_report_no, createdAt: row.created_at,
+    allowRegistration: !!row.allow_registration,
   };
 }
 
@@ -56,6 +62,7 @@ function updateCompany(id, patch) {
     if (patch[k] === undefined) continue;
     sets.push(`${col} = ?`); args.push(patch[k]);
   }
+  if (patch.allowRegistration !== undefined) { sets.push('allow_registration = ?'); args.push(patch.allowRegistration ? 1 : 0); }
   if (Array.isArray(patch.reportColumns)) {
     sets.push('report_columns = ?');
     args.push(JSON.stringify(patch.reportColumns.map(c => String(c).trim()).filter(Boolean)));
@@ -119,10 +126,13 @@ function touchLastSeen(userId) {
 // a role is given.
 async function createUser({ email, password, name = null, role = null, companyId = null, employeeId = null, department = null }) {
   if (!email || !password) throw new Error('Email and password are required');
+  if (String(password).length < MIN_PASSWORD) throw new Error(`Password must be at least ${MIN_PASSWORD} characters`);
   if (role && !ROLES.includes(role)) throw new Error(`Unknown role "${role}"`);
   const hash = await bcrypt.hash(password, 10);
   const create = db.transaction(() => {
-    if (_rawByEmail(email)) throw new Error('Email already exists');
+    const existing = _rawByEmail(email);
+    if (existing && existing.disabled_at) throw new Error('That email belongs to a removed account. Restore it in Users & Monitoring instead.');
+    if (existing) throw new Error('Email already exists');
     const first = !hasUsers();
     const company = companyId ? getCompany(companyId) : (first ? createCompany() : null);
     if (!company) throw new Error('A company is required');
@@ -139,10 +149,15 @@ async function createUser({ email, password, name = null, role = null, companyId
   return create();
 }
 
+// The same work whether or not the account exists. Answering an unknown email
+// at once and a known one after a bcrypt comparison told anyone timing the
+// login which emails had accounts: 0.1 ms against 75.
+const _DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
 async function validatePassword(email, password) {
   const raw = _rawByEmail(email);
-  if (!raw) return null;
-  return (await bcrypt.compare(password, raw.password)) ? sanitize(raw) : null;
+  const ok = await bcrypt.compare(String(password || ''), raw ? raw.password : _DUMMY_HASH);
+  if (!raw || raw.disabled_at || !ok) return null;
+  return sanitize(raw);
 }
 
 const USER_COLUMNS = { name: 'name', employeeId: 'employee_id', department: 'department', role: 'role' };
@@ -157,10 +172,18 @@ function updateUser(id, patch) {
   return findById(id);
 }
 
+// A new password ends every session signed in with the old one.
 async function setPassword(id, password) {
-  if (!password || password.length < 6) throw new Error('Password must be at least 6 characters');
-  db.prepare('UPDATE users SET password = ? WHERE id = ?').run(await bcrypt.hash(password, 10), id);
+  if (!password || String(password).length < MIN_PASSWORD) throw new Error(`Password must be at least ${MIN_PASSWORD} characters`);
+  db.prepare('UPDATE users SET password = ?, token_version = token_version + 1 WHERE id = ?').run(await bcrypt.hash(password, 10), id);
 }
+
+// ── Sessions ─────────────────────────────────────────────────────────────────
+function tokenVersion(id) {
+  const r = db.prepare('SELECT token_version FROM users WHERE id = ?').get(id);
+  return r ? r.token_version : null;
+}
+function endSessions(id) { db.prepare('UPDATE users SET token_version = token_version + 1 WHERE id = ?').run(id); }
 
 function getAllUsers(companyId) {
   const rows = db.prepare(`
@@ -170,10 +193,10 @@ function getAllUsers(companyId) {
       (SELECT COUNT(*) FROM expense_reports rep WHERE rep.user_id = u.id) AS case_count,
       (SELECT COUNT(*) FROM expense_reports rep WHERE rep.user_id = u.id AND rep.status = 'claimed') AS claimed_case_count,
       (SELECT COALESCE(SUM(l.base_cents), 0) FROM expenses e JOIN expense_lines l ON l.expense_id = e.id WHERE e.user_id = u.id AND e.claimed_at IS NOT NULL) AS claimed_cents,
-      (SELECT COALESCE(SUM(l.base_cents), 0) FROM expenses e JOIN expense_lines l ON l.expense_id = e.id) AS total_cents
+      (SELECT COALESCE(SUM(l.base_cents), 0) FROM expenses e JOIN expense_lines l ON l.expense_id = e.id WHERE e.user_id = u.id) AS total_cents
     FROM users u
     WHERE u.company_id = ?
-    ORDER BY u.created_at
+    ORDER BY u.disabled_at IS NOT NULL, u.created_at
   `).all(companyId);
 
   return rows.map(u => ({
@@ -207,8 +230,28 @@ function getUserMetrics(userId) {
   };
 }
 
-function deleteUser(id) { db.prepare('DELETE FROM users WHERE id = ?').run(id); }
+// Removing a person ends their access and keeps everything they claimed: the
+// row stays, so their receipts, cases and the company's totals do too, and
+// the email cannot be taken by somebody else. Restoring undoes it.
+function removeUser(id) {
+  db.prepare('UPDATE users SET disabled_at = ?, token_version = token_version + 1 WHERE id = ? AND disabled_at IS NULL').run(new Date().toISOString(), id);
+  return findById(id);
+}
+function restoreUser(id) {
+  db.prepare('UPDATE users SET disabled_at = NULL WHERE id = ?').run(id);
+  return findById(id);
+}
+// Active admins left in the company, so the last one cannot be removed or
+// demoted and leave nobody able to run it.
+function countAdmins(companyId) {
+  return db.prepare("SELECT COUNT(*) AS n FROM users WHERE company_id = ? AND role = 'admin' AND disabled_at IS NULL").get(companyId).n;
+}
 function readUsers() { return db.prepare('SELECT * FROM users ORDER BY created_at').all().map(sanitize); }
+// The company self-registration joins: the first one made.
+function firstCompanyId() {
+  const r = db.prepare('SELECT company_id FROM users ORDER BY created_at LIMIT 1').get();
+  return r ? r.company_id : null;
+}
 
 // ── Reader keys (per-user personal keys) ──────────────────────────────────
 // What the reader last saw from a key rides along with it, so Settings can
@@ -276,8 +319,9 @@ function getUserDefaults(userId) {
 function ensureUserDirectories() { /* nothing per user to provision yet; kept for index.js symmetry */ }
 
 module.exports = {
-  ROLES, DEFAULT_TIMEZONE, DEFAULT_REPORT_COLUMNS,
-  hasUsers, findById, findByEmail, createUser, validatePassword, updateUser, setPassword, getAllUsers, getUserMetrics, deleteUser, readUsers,
+  ROLES, DEFAULT_TIMEZONE, DEFAULT_REPORT_COLUMNS, MIN_PASSWORD,
+  hasUsers, findById, findByEmail, createUser, validatePassword, updateUser, setPassword, getAllUsers, getUserMetrics,
+  removeUser, restoreUser, countAdmins, firstCompanyId, tokenVersion, endSessions, readUsers,
   touchLastSeen, isOnline, sanitize,
   getCompany, createCompany, updateCompany, getCompanyConfig, saveCompanyConfig, ENCRYPTED_COLUMNS,
   getUserGeminiKeys, addUserGeminiKey, removeUserGeminiKey,

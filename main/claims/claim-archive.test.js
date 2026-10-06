@@ -49,9 +49,21 @@ describe('claims/claim-archive', () => {
     ]);
     const r = await readArchive(zip);
     expect(r.entries.map(e => e.name)).toEqual(['claims/a.png', 'claims/b.jpg']);
-    expect(r.entries[0].mime).toBe('image/png');
+    // The bytes decide the type, not the name: a JPEG saved as .png is a JPEG.
+    expect(r.entries[0].mime).toBe('image/jpeg');
     expect(r.entries[1].mime).toBe('image/jpeg');
     expect(r.error).toBeNull();
+  });
+
+  test('a file named like a receipt that is not one is skipped, and says why', async () => {
+    const zip = makeZip([
+      { name: 'claims/real.jpg', data: JPEG },
+      { name: 'claims/fake.jpg', data: Buffer.from('<html><script>alert(1)</script></html>') },
+      { name: 'claims/fake.pdf', data: Buffer.from('not a pdf at all') },
+    ]);
+    const r = await readArchive(zip);
+    expect(r.entries.map(e => e.name)).toEqual(['claims/real.jpg']);
+    expect(r.skipped.map(s => [s.name, s.reason])).toEqual([['claims/fake.jpg', 'not a real image or PDF'], ['claims/fake.pdf', 'not a real image or PDF']]);
   });
 
   test('filters the macOS shadow tree, which would otherwise double the count', async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Modal from '../Modal';
 import { api } from '../../api/client';
 import { fmtMoney } from '../../utils/format';
@@ -18,6 +18,12 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
   const [secsLeft, setSecs]   = useState(0);
   const [spent, setSpent]     = useState(false);
   const [error, setError]     = useState('');
+  // The parent's callback, held in a ref: passed inline it was a new function
+  // on every parent render, and as an effect dependency it tore the poll down
+  // and started it again each time.
+  const arrivedRef = useRef(onArrived);
+  arrivedRef.current = onArrived;
+  const seenRef = useRef(0);
 
   // Mint the pairing once, on open.
   useEffect(() => {
@@ -43,10 +49,10 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
         if (s.receipts) {
           // Parsed fields arrive over later polls, so replace wholesale rather
           // than appending — a row's merchant and total fill in as they are read.
-          setRcpts(prev => {
-            if (s.receipts.length !== prev.length) onArrived?.();
-            return s.receipts;
-          });
+          // The arrival is announced outside the state update: React may run
+          // an updater twice, and the parent then counted every photo twice.
+          if (s.receipts.length !== seenRef.current) { seenRef.current = s.receipts.length; arrivedRef.current?.(); }
+          setRcpts(s.receipts);
         }
       } catch { /* transient — the next tick tries again */ }
     }
@@ -54,7 +60,7 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
     poll();
     const timer = setInterval(poll, 3000);
     return () => { stop = true; clearInterval(timer); };
-  }, [pair, onArrived]);
+  }, [pair]);
 
   // Revoke on close so a code that was on screen dies immediately rather than
   // lingering for the rest of its ten minutes.
@@ -101,8 +107,10 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
               <div style={{ background: '#fff', padding: 12, borderRadius: 12, lineHeight: 0,
                             // An expired code must not look scannable.
-                            opacity: expired ? 0.25 : 1, transition: 'opacity .2s ease' }}
-                   dangerouslySetInnerHTML={{ __html: pair.qrSvg }} />
+                            opacity: expired ? 0.25 : 1, transition: 'opacity .2s ease' }}>
+                {/* An image from the server, never markup injected into the page. */}
+                <img src={pair.qr} alt="QR code to open the capture page on your phone" width={220} height={220} />
+              </div>
             </div>
 
             <ol style={{ margin: '0 0 16px', padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>

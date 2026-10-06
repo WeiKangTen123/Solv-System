@@ -6,16 +6,9 @@
     <meta name="color-scheme" content="light dark" />
     <title>Solv Expenses</title>
 
-    <!-- Stamp the stored theme before anything paints. Without this a viewer
-         who chose dark gets a frame of white on every load, which on a phone
-         reads as a flash. Light is the default, so anything but a stored
-         'dark' resolves to light. -->
-    <script>
-      try {
-        var t = localStorage.getItem('theme');
-        document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
-      } catch (e) { document.documentElement.setAttribute('data-theme', 'light'); }
-    </script>
+    <!-- Stamp the stored theme before anything paints. A file, not inline:
+         the content security policy blocks inline scripts. -->
+    <script src="/theme-init.js"></script>
 
   </head>
   <body>

@@ -68,7 +68,8 @@ export default function CaseCheck() {
       .then(d => { if (!gone) setImageUrl(`/api/receipts/${e.receipt.id}/image?token=${encodeURIComponent(d.token)}`); })
       .catch(() => { if (!gone) setImageUrl(null); });
     return () => { gone = true; };
-  }, [sel, view]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel, view?.report?.expenses?.find(x => x.id === sel)?.receipt?.id]);
 
   const set = (eid, k, v) => {
     dirtyRef.add(eid);
@@ -140,9 +141,9 @@ export default function CaseCheck() {
 
   if (!view) return <div style={{ color: 'var(--text-muted)' }}>{msg?.text || 'Loading…'}</div>;
   const r = view.report;
-  // Exactly what POST /reports/:id/review-all allows. Gating on `editable`
-  // alone gave a manager a live table and a button the server then refused.
-  const mayEdit = view.editable && (view.isOwner || user?.role === 'admin');
+  // Exactly what POST /reports/:id/review-all allows: the owner, while the
+  // case is open. An admin sees the table to monitor it.
+  const mayEdit = view.editable && view.isOwner;
   const left = r.expenses.filter(e => e.status !== 'reviewed').length;
   const selected = r.expenses.find(e => e.id === sel) || null;
 
@@ -169,7 +170,7 @@ export default function CaseCheck() {
 
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
       {!view.editable && <div className="alert alert-info">This case has been claimed; reopen it to change anything.</div>}
-      {view.editable && !mayEdit && <div className="alert alert-info">This is {view.report.ownerName || 'someone else'}&rsquo;s case. You can read it; only they can check their own receipts.</div>}
+      {view.editable && !mayEdit && <div className="alert alert-info">This is {view.report.ownerName || view.report.ownerEmail || 'someone else'}&rsquo;s case. You can read it; only they can check their own receipts.</div>}
 
       <div style={{ display: 'grid', gridTemplateColumns: selected ? 'minmax(0, 1fr) 360px' : '1fr', gap: 16, alignItems: 'start' }}>
         <div className="card" style={{ padding: 0, overflowX: 'auto' }}>

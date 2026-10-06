@@ -31,8 +31,13 @@ function _sweepExpired() {
 // `reportId` points the session at one case: everything photographed while it
 // is open lands there instead of in the loose pile. Open the case, scan once,
 // and every receipt at the airport is in the right place before you land.
+// Live codes one person may hold at once. Opening the dialog again mints a new
+// one; past this the oldest is retired, so a script cannot fill memory.
+const MAX_LIVE_PER_USER = 3;
 function create(userId, { reportId = null } = {}) {
   _sweepExpired();
+  const mine = [..._pairings.entries()].filter(([, e]) => e.userId === String(userId)).sort((a, b) => a[1].expiresAt - b[1].expiresAt);
+  while (mine.length >= MAX_LIVE_PER_USER) _pairings.delete(mine.shift()[0]);
   // 32 bytes: this is a bearer credential, not a nonce, so it is sized to resist
   // guessing rather than just collision.
   const token = crypto.randomBytes(32).toString('base64url');

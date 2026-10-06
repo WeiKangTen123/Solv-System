@@ -87,12 +87,16 @@ function xeroErrMsg(err) {
   );
 }
 
-// Every accounting scope the app uses, in one place. OAuth adds offline_access
-// (refresh tokens); a Custom Connection has no refresh token to ask for. The
-// two lists had drifted: budgets were added to OAuth only, so Custom
-// Connection users got insufficient_scope on the whole dashboard.
-const SCOPES = 'accounting.invoices accounting.contacts accounting.settings.read '
-  + 'accounting.banktransactions.read accounting.reports.profitandloss.read accounting.reports.banksummary.read '
-  + 'accounting.payments.read accounting.reports.budgetsummary.read accounting.budgets.read';
+// Every accounting scope the app uses, in one place, and nothing more. OAuth
+// adds offline_access (refresh tokens); a Custom Connection has no refresh
+// token to ask for.
+//
+// What posting a claim needs: create the bill (invoices), find or create the
+// claimant as a contact (contacts), read the chart of accounts and tax rates
+// (settings.read), and attach the receipts (attachments). The list used to
+// carry bank, report, payment and budget read access copied from a dashboard
+// app — none of it used here — and to lack attachments, without which every
+// receipt is refused on the first real post.
+const SCOPES = 'accounting.invoices accounting.contacts accounting.settings.read accounting.attachments';
 
 module.exports = { withRetry, xeroErrMsg, _parseXeroErr, isScopeError, SCOPES };

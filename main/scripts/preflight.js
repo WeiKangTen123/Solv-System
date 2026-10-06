@@ -137,11 +137,12 @@ check('reader key', () => {
   warn('reader key', 'no Gemini_API_KEY — each company must add its own in Settings or no receipt can be read');
 });
 
+// Self-registration is an admin's switch in Company settings now. The old
+// environment variable is no longer read, so a box still carrying it is told
+// so rather than left believing it does something.
 check('self-registration', () => {
-  const open = String(process.env.ALLOW_REGISTRATION || '').toLowerCase() === 'true';
-  if (!open) return ok('self-registration', 'closed — only an admin can add staff');
-  return PROD ? warn('self-registration', 'ALLOW_REGISTRATION=true on a production box: anyone who reaches the URL can create an account')
-              : ok('self-registration', 'open (development)');
+  if (process.env.ALLOW_REGISTRATION !== undefined) return warn('self-registration', 'ALLOW_REGISTRATION is set but no longer read — registration is switched in Company settings; remove it from main/.env');
+  return ok('self-registration', 'controlled in Company settings (off unless an admin opens it)');
 });
 
 check('Xero redirect URI', () => {

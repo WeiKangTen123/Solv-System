@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS companies (
   report_columns TEXT NOT NULL DEFAULT '[]',   -- JSON array of category names, in report column order
   logo           TEXT,
   next_report_no INTEGER NOT NULL DEFAULT 1,
+  allow_registration INTEGER NOT NULL DEFAULT 0,   -- may people create their own account (Company settings)
   created_at     TEXT NOT NULL
 );
 
@@ -22,7 +23,9 @@ CREATE TABLE IF NOT EXISTS users (
   department   TEXT,
   role         TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   created_at   TEXT NOT NULL,
-  last_seen_at TEXT
+  last_seen_at TEXT,
+  disabled_at  TEXT,                                -- removed: cannot sign in, records kept
+  token_version INTEGER NOT NULL DEFAULT 0          -- bumped to end every session (sign-out, new password, removal)
 );
 CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id);
 

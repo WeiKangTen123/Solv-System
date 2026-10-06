@@ -1,8 +1,15 @@
-const bcrypt = require('bcryptjs');
 const db = require('../db');
 const users = require('../store/users');
 
+// The password comes from DEMO_PASSWORD, never from this file: the repository
+// is public, and a password written here is a password for anyone.
+const DEMO_PASSWORD = process.env.DEMO_PASSWORD;
+
 async function main() {
+  if (!DEMO_PASSWORD || DEMO_PASSWORD.length < 8) {
+    console.error('Set DEMO_PASSWORD (at least 8 characters) to seed the demo user.');
+    process.exit(1);
+  }
   const company = db.prepare('SELECT id, name FROM companies LIMIT 1').get();
   if (!company) {
     console.error('No company found in database.');
@@ -18,14 +25,14 @@ async function main() {
 
   if (existing) {
     console.log(`User ${demoEmail} exists. Updating password...`);
-    await users.setPassword(existing.id, '***REMOVED***');
+    await users.setPassword(existing.id, DEMO_PASSWORD);
     users.updateUser(existing.id, { role: 'user' });
-    console.log(`Updated ${demoEmail} password to ***REMOVED*** (role: user)`);
+    console.log(`Updated ${demoEmail} password (role: user)`);
   } else {
     console.log(`Creating user ${demoEmail}...`);
     const created = await users.createUser({
       email: demoEmail,
-      password: '***REMOVED***',
+      password: DEMO_PASSWORD,
       role: 'user',
       companyId: company.id,
     });

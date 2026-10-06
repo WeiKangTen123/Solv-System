@@ -106,9 +106,30 @@ function locateHeader(sheet, headers = FIELD_HEADERS, minHits = 3) {
 
 // Returns { rows, categories, title }. Never throws: a form that cannot be read
 // must degrade to "no rows" so the receipts alone can still be imported.
+// A spreadsheet is a zip of XML, and the library opens all of it in memory.
+// An 18 MB upload that compresses well can unpack to gigabytes, so the sizes
+// its own directory declares are added up first and anything past this is
+// refused before it is opened. A real claim form is a few hundred kilobytes.
+const MAX_UNPACKED_BYTES = 30 * 1024 * 1024;
+function unpackedSize(buffer) {
+  return new Promise(resolve => {
+    require('yauzl').fromBuffer(buffer, { lazyEntries: true }, (err, zip) => {
+      if (err || !zip) return resolve(null);
+      let total = 0;
+      zip.on('entry', e => { total += e.uncompressedSize; if (total > MAX_UNPACKED_BYTES) { zip.close(); resolve(total); } else zip.readEntry(); });
+      zip.on('end', () => resolve(total));
+      zip.on('error', () => resolve(null));
+      zip.readEntry();
+    });
+  });
+}
+
 async function parseClaimForm(buffer) {
   const empty = { rows: [], categories: [], title: null, error: null };
   if (!Buffer.isBuffer(buffer) || !buffer.length) return { ...empty, error: 'empty file' };
+  const size = await unpackedSize(buffer);
+  if (size === null) return { ...empty, error: 'not a readable spreadsheet' };
+  if (size > MAX_UNPACKED_BYTES) return { ...empty, error: 'the spreadsheet unpacks to far more than a claim form does' };
 
   let workbook;
   try {
@@ -169,4 +190,4 @@ async function parseClaimForm(buffer) {
   return { rows, categories: header.categories.map(c => c.label), title, error: null };
 }
 
-module.exports = { parseClaimForm, locateHeader, excelSerialToISO, cellText, cellDate, cellNumber, normaliseHeader };
+module.exports = { MAX_UNPACKED_BYTES, parseClaimForm, locateHeader, excelSerialToISO, cellText, cellDate, cellNumber, normaliseHeader };

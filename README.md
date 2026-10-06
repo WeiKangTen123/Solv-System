@@ -28,18 +28,22 @@ Checking happens in one table at `/reports/:id/check`: a row per receipt, the fi
 
 ## Roles and flow
 
-Two roles, because everyone here does the same job.
+Two roles, like most systems: people who claim, and the person who runs it.
 
 | Role | Does |
 |---|---|
-| user | adds receipts, checks the reader's fields and lines, keeps them in cases, marks a case claimed, exports it |
-| admin | everything a user does on their own cases, and the company's seat: sees every case, staff, settings, manual exchange rates, the reader key, Xero |
+| user | their own receipts and cases, start to finish: adds receipts, checks the reader's fields and lines, keeps them in cases, marks a case claimed, posts it to Xero, exports it. Sees nobody else's claims and no staff list |
+| admin | runs the system: adds and removes people, roles, passwords, company settings, LLM keys, exchange rates, the Xero connection, and Users & Monitoring. Sees everyone's claims to monitor them, but files, checks, claims, reopens, deletes and posts only their own |
 
 There are no managers and nobody approves anything. Solv records claims; it does not route them.
 
-`open → claimed`, and back again with **Reopen**. A case is open while receipts go in and claimed once its owner has put it through whatever actually reimburses them; claimed locks it and every receipt in it. Claiming refuses until every receipt in the case has been checked and priced.
+`open → claimed`, and back again with **Reopen**. A case is open while receipts go in and claimed once its owner has put it through whatever actually reimburses them; claimed locks it and every receipt in it. Claiming refuses until every receipt in the case has been checked and priced. Once a case has been posted to Xero it is final and cannot be reopened, so the app and the books never disagree.
 
-The step belongs to the claimant. Solv does not move money, so it cannot know that anybody was paid — what it can know is that the person put the claim through, so they are the one who says so. An admin may claim or reopen anybody's case, to tidy up after someone who has left. A receipt can also be claimed on its own, for a one-off put through outside any case, and claiming one receipt inside a case says nothing about the case.
+The step belongs to the claimant. Solv does not move money, so it cannot know that anybody was paid — what it can know is that the person put the claim through, so they are the one who says so, and nobody can say it for them. A receipt can also be claimed on its own, once it is checked and priced, for a one-off put through outside any case.
+
+**Accounts.** Self-registration is off unless an admin switches it on in Company & Policy; otherwise an admin adds people in Users & Monitoring. Removing a person ends their access and every session they have, and keeps their receipts, cases and totals; they can be restored. Passwords are at least 8 characters. A sign-in lasts 24 hours and ends early on sign-out or a password change.
+
+**A typed exchange rate** must be within 5% of the day's published rate, with a reason; an admin is not held to that.
 
 ## Where things are
 

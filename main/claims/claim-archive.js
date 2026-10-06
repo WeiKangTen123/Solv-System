@@ -1,5 +1,6 @@
 const yauzl  = require('yauzl');
 const logger = require('../utils/logger');
+const { sniffMime } = require('../receipts/receipt-store');
 
 // Opens a .zip of receipt images in memory.
 //
@@ -72,7 +73,13 @@ function readArchive(buffer) {
           stream.on('data', c => chunks.push(c));
           stream.on('error', () => { skipped.push({ name, reason: 'could not be read' }); zip.readEntry(); });
           stream.on('end', () => {
-            entries.push({ name, mime, buffer: Buffer.concat(chunks) });
+            const buffer = Buffer.concat(chunks);
+            // The name is a claim and the bytes are the answer. A phone photo
+            // saved as .png is still a JPEG, and is kept as one; anything that
+            // is not a JPEG, PNG or PDF whatever it is called is not kept.
+            const actual = sniffMime(buffer);
+            if (!actual) skipped.push({ name, reason: 'not a real image or PDF' });
+            else entries.push({ name, mime: actual, buffer });
             zip.readEntry();
           });
         });

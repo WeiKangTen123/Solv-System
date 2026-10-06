@@ -2,7 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const jwt     = require('jsonwebtoken');
 const { requireAuth, jwtSecret } = require('../middleware/auth-middleware');
-const { canAccessUser } = require('../middleware/roles');
+const { canView, isOwner } = require('../middleware/roles');
 const asyncHandler = require('../middleware/async-handler');
 const users   = require('../store/users');
 const store   = require('../store/expenses');
@@ -14,12 +14,16 @@ const doc     = require('../reports/expense-doc');
 const logger  = require('../utils/logger');
 
 // Cases: the cover, the receipts filed under it, open or claimed, and the
-// exports. Access: the owner, and an admin.
+// exports. Seeing one: the owner, and an admin of the same company monitoring.
+// Doing anything to one — the cover, filing, checking, claiming, reopening,
+// deleting, posting to Xero — the owner alone.
 function _load(req, res) {
   const r = reports.getReport(req.params.id);
-  if (!r || !canAccessUser(req.user, r.userId)) { res.status(404).json({ error: 'Report not found' }); return null; }
+  if (!r || !canView(req.user, r.userId, r.companyId)) { res.status(404).json({ error: 'Report not found' }); return null; }
   return r;
 }
+const OWNER_ONLY = 'Only the person whose case this is can change it.';
+const _owns = (req, r) => isOwner(req.user, r.userId, r.companyId);
 function _view(r, req) {
   const tenant = require('../xero/token-cache').getPersistedTenants(r.companyId)[0] || null;
   return { report: r, editable: wf.isEditable(r), isOwner: r.userId === req.user.id,
@@ -67,7 +71,7 @@ router.get('/:id', requireAuth, (req, res) => { const r = _load(req, res); if (r
 
 router.patch('/:id', requireAuth, (req, res) => {
   const r = _load(req, res); if (!r) return;
-  if (r.userId !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Only the report owner can edit it' });
+  if (!_owns(req, r)) return res.status(403).json({ error: OWNER_ONLY });
   if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} report cannot be edited` });
   try { res.json(_view(reports.updateReport(r.id, _coverPatch(req.body || {})), req)); }
   catch (err) { res.status(400).json({ error: err.message }); }
@@ -75,10 +79,10 @@ router.patch('/:id', requireAuth, (req, res) => {
 
 router.delete('/:id', requireAuth, (req, res) => {
   const r = _load(req, res); if (!r) return;
-  if (r.userId !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Only the report owner can delete it' });
+  if (!_owns(req, r)) return res.status(403).json({ error: OWNER_ONLY });
   if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} report cannot be deleted` });
   reports.deleteReport(r.id);
-  logger.info('Report deleted', { id: r.id, number: r.number, by: req.user.email });
+  logger.info('Report deleted', { id: r.id, number: r.number, by: req.user.id });
   res.json({ ok: true });
 });
 
@@ -86,7 +90,7 @@ router.delete('/:id', requireAuth, (req, res) => {
 // another report; the rest come back in `skipped` with a reason.
 router.post('/:id/expenses', requireAuth, (req, res) => {
   const r = _load(req, res); if (!r) return;
-  if (r.userId !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Only the report owner can file expenses' });
+  if (!_owns(req, r)) return res.status(403).json({ error: OWNER_ONLY });
   if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} report cannot take more expenses` });
   const ids = Array.isArray((req.body || {}).expenseIds) ? req.body.expenseIds : [];
   const skipped = [];
@@ -102,7 +106,7 @@ router.post('/:id/expenses', requireAuth, (req, res) => {
 
 router.delete('/:id/expenses/:expenseId', requireAuth, (req, res) => {
   const r = _load(req, res); if (!r) return;
-  if (r.userId !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Only the report owner can remove expenses' });
+  if (!_owns(req, r)) return res.status(403).json({ error: OWNER_ONLY });
   if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} report cannot be changed` });
   if (!reports.removeExpense(r.id, req.params.expenseId)) return res.status(404).json({ error: 'That expense is not in this report' });
   res.json(_view(reports.getReport(r.id), req));
@@ -113,18 +117,21 @@ router.delete('/:id/expenses/:expenseId', requireAuth, (req, res) => {
 function _transition(action, fn) {
   return (req, res) => {
     const r = _load(req, res); if (!r) return;
-    try { const out = fn(r, req); logger.info(`Report ${action}`, { id: r.id, number: r.number, by: req.user.email }); res.json(_view(out, req)); }
+    try { const out = fn(r, req); logger.info(`Report ${action}`, { id: r.id, number: r.number, by: req.user.id }); res.json(_view(out, req)); }
     catch (err) { _fail(res, err); }
   };
 }
 router.post('/:id/claimed', requireAuth, _transition('claimed',  (r, req) => wf.markClaimed(r.id, req.user)));
 router.post('/:id/reopen',  requireAuth, _transition('reopened', (r, req) => wf.reopen(r.id, req.user)));
 
-// POST /:id/post — an admin sends a claimed case to Xero as one draft bill.
+// POST /:id/post — the claimant sends their own claimed case to Xero as one
+// draft bill, through the connection an admin set up in Settings. Posting is
+// part of putting a claim through, which is the claimant's; the admin runs
+// the connection and does not handle anybody's claim.
 // ?dryRun=1 answers with the bill that would be sent and sends nothing.
 router.post('/:id/post', requireAuth, asyncHandler(async (req, res) => {
   const r = _load(req, res); if (!r) return;
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Only an admin can post a case to Xero' });
+  if (!_owns(req, r)) return res.status(403).json({ error: 'Only the claimant can post their own case to Xero' });
   try {
     const out = await require('../xero/bills').postReport(r.id, req.user, { dryRun: req.query.dryRun === '1' });
     res.json({ ...out, ...(_view(reports.getReport(r.id), req)) });
@@ -140,7 +147,7 @@ router.post('/:id/post', requireAuth, asyncHandler(async (req, res) => {
 // receipts one page at a time is the slowest part of a claim.
 router.post('/:id/review-all', requireAuth, (req, res) => {
   const r = _load(req, res); if (!r) return;
-  if (r.userId !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Only the claimant can check their own receipts' });
+  if (!_owns(req, r)) return res.status(403).json({ error: 'Only the claimant can check their own receipts' });
   if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} case cannot be changed` });
 
   const store = require('../store/expenses');
@@ -164,7 +171,7 @@ router.post('/:id/review-all', requireAuth, (req, res) => {
     reviewed.push(e.id);
   }
   if (reviewed.length) reports.addEvent(r.id, req.user.id, 'checked', `${reviewed.length} receipt${reviewed.length === 1 ? '' : 's'}`);
-  logger.info('Case checked in bulk', { id: r.id, number: r.number, reviewed: reviewed.length, skipped: skipped.length, by: req.user.email });
+  logger.info('Case checked in bulk', { id: r.id, number: r.number, reviewed: reviewed.length, skipped: skipped.length, by: req.user.id });
   res.json({ ..._view(reports.getReport(r.id), req), reviewed: reviewed.length, skipped });
 });
 

@@ -29,6 +29,23 @@ function extensionFor(mime) { return MIME_EXT[String(mime || '').toLowerCase()] 
 function isAcceptedMime(mime) { return extensionFor(mime) !== null; }
 function acceptedMimes() { return Object.keys(MIME_EXT); }
 
+// What the bytes actually are, from their first few, or null. The type a
+// browser or a zip entry's name declares is a claim; this is the check. A
+// file whose content does not match what it says it is never stored.
+function sniffMime(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4) return null;
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return 'image/png';
+  // %PDF- may sit after a little leading junk; readers accept it within 1 KB.
+  if (buffer.subarray(0, 1024).includes('%PDF-')) return 'application/pdf';
+  return null;
+}
+function contentMatches(buffer, mime) { return sniffMime(buffer) === String(mime || '').toLowerCase(); }
+
+// How much one person may keep. A receipt is at most 15 MB, so this is room
+// for a few hundred of the largest, and stops one account filling the disk.
+const QUOTA_BYTES = Math.max(50, Number(process.env.RECEIPT_QUOTA_MB) || 2048) * 1024 * 1024;
+
 function forUser(userId) {
   if (_stores.has(userId)) return _stores.get(userId);
 
@@ -101,4 +118,4 @@ function forUser(userId) {
   return store;
 }
 
-module.exports = { forUser, extensionFor, isAcceptedMime, acceptedMimes, MAX_BYTES, MIME_EXT };
+module.exports = { forUser, extensionFor, isAcceptedMime, acceptedMimes, sniffMime, contentMatches, MAX_BYTES, QUOTA_BYTES, MIME_EXT };

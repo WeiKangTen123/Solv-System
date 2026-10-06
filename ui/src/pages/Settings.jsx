@@ -53,6 +53,8 @@ export default function Settings() {
   const [msg, setMsg] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [pwFor, setPwFor] = useState(null);
+  const [adding, setAdding] = useState(false);
+  const [newPerson, setNewPerson] = useState({ email: '', name: '', password: '', role: 'user' });
   const isAdmin = user?.role === 'admin';
 
   useEffect(() => {
@@ -116,11 +118,23 @@ export default function Settings() {
         baseCurrency: company.baseCurrency.toUpperCase(),
         fxPolicy: company.fxPolicy,
         timezone: company.timezone,
-        reportColumns: columns.split(',').map(s => s.trim()).filter(Boolean)
+        reportColumns: columns.split(',').map(s => s.trim()).filter(Boolean),
+        allowRegistration: !!company.allowRegistration,
       });
       await loadAll();
       await refreshUser();
       ok('Company settings saved.');
+    } catch (err) { fail(err); }
+  }
+
+  async function addPerson(e) {
+    e.preventDefault();
+    try {
+      await api.post('/users', { ...newPerson, name: newPerson.name.trim() || null });
+      ok(`${newPerson.email} added. Tell them their first password.`);
+      setNewPerson({ email: '', name: '', password: '', role: 'user' });
+      setAdding(false);
+      await loadAll();
     } catch (err) { fail(err); }
   }
 
@@ -240,7 +254,23 @@ export default function Settings() {
               <div className="card-title">Users & Usage Monitoring</div>
               <div className="card-subtitle">Real-time overview of user activity, receipts uploaded, and expense claims.</div>
             </div>
+            <button className="btn btn-primary btn-sm" type="button" onClick={() => setAdding(a => !a)}>{adding ? 'Close' : '+ Add a person'}</button>
           </div>
+
+          {/* Adding someone is an admin's job: self-registration is off unless
+              switched on in Company & Policy. */}
+          {adding && (
+            <form onSubmit={addPerson} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 8, marginTop: 12, padding: 12, borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+              <input className="form-input" type="email" required placeholder="Email" value={newPerson.email} onChange={e => setNewPerson({ ...newPerson, email: e.target.value })} aria-label="Email" autoComplete="off" />
+              <input className="form-input" placeholder="Name" value={newPerson.name} onChange={e => setNewPerson({ ...newPerson, name: e.target.value })} aria-label="Name" />
+              <input className="form-input" type="password" required minLength={8} placeholder="First password, 8+ characters" value={newPerson.password} onChange={e => setNewPerson({ ...newPerson, password: e.target.value })} aria-label="First password" autoComplete="new-password" />
+              <select className="form-input" value={newPerson.role} onChange={e => setNewPerson({ ...newPerson, role: e.target.value })} aria-label="Role">
+                {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+              <button className="btn btn-primary" type="submit">Add</button>
+              <div style={{ gridColumn: '1 / -1', fontSize: 11.5, color: 'var(--text-muted)' }}>Tell them the first password yourself; it is not emailed. They can change it in My Profile.</div>
+            </form>
+          )}
 
           {/* Aggregated Usage Overview Metrics */}
           <div style={{
@@ -296,7 +326,7 @@ export default function Settings() {
               </thead>
               <tbody>
                 {users.map(u => (
-                  <tr key={u.id}>
+                  <tr key={u.id} style={u.removed ? { opacity: 0.6 } : undefined}>
                     <td>
                       <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{u.email}</div>
                       {u.name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{u.name}</div>}
@@ -307,7 +337,7 @@ export default function Settings() {
                         style={{ padding: '3px 8px', fontSize: 12, width: 'auto' }}
                         value={u.role}
                         onChange={e => patchUser(u.id, { role: e.target.value })}
-                        disabled={u.id === user.id}
+                        disabled={u.id === user.id || u.removed}
                       >
                         {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
                       </select>
@@ -325,7 +355,9 @@ export default function Settings() {
                       {company.baseCurrency} {((u.claimedCents || 0) / 100).toFixed(2)}
                     </td>
                     <td>
-                      {u.online ? (
+                      {u.removed ? (
+                        <span className="badge badge-gray" style={{ fontSize: 11 }}>Removed</span>
+                      ) : u.online ? (
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: 'var(--success, #10b981)', fontWeight: 600 }}>
                           <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--success, #10b981)' }} />
                           Online
@@ -337,13 +369,21 @@ export default function Settings() {
                       )}
                     </td>
                     <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
-                      <button className="btn btn-ghost btn-sm" onClick={() => setPwFor(u)} title="Set or reset password">
-                        Password
-                      </button>
-                      {u.id !== user.id && (
-                        <button className="btn btn-ghost btn-sm" onClick={() => setConfirm(u)} style={{ color: 'var(--danger, #ef4444)' }} title="Remove user account">
-                          Remove
+                      {u.removed ? (
+                        <button className="btn btn-ghost btn-sm" onClick={() => api.post(`/users/${u.id}/restore`, {}).then(() => { ok(`${u.name || u.email} can sign in again.`); return loadAll(); }).catch(fail)} title="Let them sign in again">
+                          Restore
                         </button>
+                      ) : (
+                        <>
+                          <button className="btn btn-ghost btn-sm" onClick={() => setPwFor(u)} title="Set or reset password">
+                            Password
+                          </button>
+                          {u.id !== user.id && (
+                            <button className="btn btn-ghost btn-sm" onClick={() => setConfirm(u)} style={{ color: 'var(--danger, #ef4444)' }} title="End their access; their claims stay">
+                              Remove
+                            </button>
+                          )}
+                        </>
                       )}
                     </td>
                   </tr>
@@ -367,6 +407,15 @@ export default function Settings() {
               <select id="c-fx" className="form-input" value={company.fxPolicy} onChange={e => setCompany({ ...company, fxPolicy: e.target.value })}>{POLICIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
           </div>
           <div className="form-group"><label className="form-label" htmlFor="c-cols">Report columns (in order, comma separated)</label><input id="c-cols" className="form-input" value={columns} onChange={e => setColumns(e.target.value)} /></div>
+          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 13, margin: '4px 0 14px', cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!company.allowRegistration} onChange={e => setCompany({ ...company, allowRegistration: e.target.checked })} style={{ marginTop: 3 }} />
+            <span>
+              Let people create their own account
+              <span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>
+                Off: only an admin can add people, in Users &amp; Monitoring. On: anyone who reaches the sign-in page can join this company as a user.
+              </span>
+            </span>
+          </label>
           <button className="btn btn-primary" type="submit">Save company settings</button>
         </form>
       )}
@@ -375,7 +424,7 @@ export default function Settings() {
       {isAdmin && adminTab === 'xero' && xero && (
         <form className="card" onSubmit={saveXero}>
           <div className="card-title">Xero Integration</div>
-          <div className="card-subtitle">Approved reports post to Xero as draft bills payable to the claimant. Connect with a Custom Connection (client id and secret) or with the OAuth web-app flow.</div>
+          <div className="card-subtitle">Once connected, each person can send their own claimed case to Xero as a draft bill payable to them. Connect with a Custom Connection (client id and secret) or with the OAuth web-app flow. Solv asks Xero only for bills, contacts, account settings and attachments.</div>
           <div style={{ fontSize: 13, marginBottom: 12 }}>
             {xero.tenants.length ? <span style={{ color: 'var(--success)' }}>Connected to {xero.tenants.map(t => t.tenantName).join(', ')} ({xero.connectionType || 'custom'})</span> : <span style={{ color: 'var(--text-muted)' }}>Not connected.</span>}
           </div>
@@ -457,7 +506,7 @@ export default function Settings() {
       {confirm && (
         <ConfirmDialog
           title={`Remove ${confirm.name || confirm.email}?`}
-          message="Their expenses stay; they can no longer sign in."
+          message="They can no longer sign in, and any session they have ends now. Their receipts, cases and totals stay, and you can restore them later."
           confirmLabel="Remove"
           danger
           onConfirm={() => api.delete(`/users/${confirm.id}`).then(loadAll).catch(fail).finally(() => setConfirm(null))}
@@ -597,8 +646,11 @@ function PasswordDialog({ target, self, onDone, onCancel }) {
     e.preventDefault();
     setBusy(true); setErr(null);
     try {
-      await api.post(`/users/${target.id}/password`, self ? { password, currentPassword } : { password });
-      onDone({ tone: 'success', text: self ? 'Your password has been changed.' : `Password set for ${target.name || target.email}.` });
+      const r = await api.post(`/users/${target.id}/password`, self ? { password, currentPassword } : { password });
+      // A new password ends every session, this one included; the server
+      // hands back a fresh one so this device stays signed in.
+      if (self && r.token) localStorage.setItem('token', r.token);
+      onDone({ tone: 'success', text: self ? 'Your password has been changed, and every other device has been signed out.' : `Password set for ${target.name || target.email}. Any session they had has ended.` });
     } catch (e2) { setErr(e2.message); setBusy(false); }
   }
 
@@ -618,7 +670,7 @@ function PasswordDialog({ target, self, onDone, onCancel }) {
         )}
         <div className="form-group" style={{ marginBottom: 0 }}>
           <label className="form-label" htmlFor="pw-new">New password</label>
-          <input id="pw-new" className="form-input" type="password" required minLength={6} value={password} onChange={e => setNext(e.target.value)} placeholder="At least 6 characters" autoComplete="new-password" />
+          <input id="pw-new" className="form-input" type="password" required minLength={8} value={password} onChange={e => setNext(e.target.value)} placeholder="At least 8 characters" autoComplete="new-password" />
         </div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button className="btn btn-ghost" type="button" onClick={onCancel}>Cancel</button>
@@ -874,7 +926,7 @@ function UserGeminiSection({ onNotify }) {
                 id="user-gemini-key"
                 className="form-input"
                 type={showKey ? 'text' : 'password'}
-                placeholder="AIzaSy..."
+                placeholder="Paste a Gemini API key"
                 required
                 value={newKey.apiKey}
                 onChange={e => {

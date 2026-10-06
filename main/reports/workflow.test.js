@@ -39,14 +39,26 @@ describe('reports/workflow', () => {
     expect(store.getExpense(e.id).claimed).toBe(true);
   });
 
-  test('an admin may mark somebody else\'s case claimed, to tidy up', () => {
+  // An admin watches claims; whether one went through is the claimant's to say.
+  test('an admin cannot claim or reopen somebody else\'s case', () => {
     const r = fresh(); reports.addExpense(r.id, ready().id);
-    expect(wf.markClaimed(r.id, admin).status).toBe('claimed');
+    expect(() => wf.markClaimed(r.id, admin)).toThrow(/claimant/);
+    wf.markClaimed(r.id, owner);
+    expect(() => wf.reopen(r.id, admin)).toThrow(/claimant/);
+  });
+
+  // In Xero it is in the books: reopening it would let the amounts change
+  // under a bill that already exists.
+  test('a case posted to Xero is final', () => {
+    const r = fresh(); reports.addExpense(r.id, ready().id);
+    wf.markClaimed(r.id, owner);
+    reports.setState(r.id, { xeroInvoiceId: 'INV-1' });
+    expect(() => wf.reopen(r.id, owner)).toThrow(/Xero/);
   });
 
   // Mistakes happen, and record-only means nothing downstream breaks when one
   // is undone.
-  test('a claimed case can be reopened by its owner or an admin, and its receipts with it', () => {
+  test('a claimed case can be reopened by its owner, and its receipts with it', () => {
     const r = fresh(); const e = ready(); reports.addExpense(r.id, e.id);
     expect(() => wf.reopen(r.id, owner)).toThrow(/already open/);
     wf.markClaimed(r.id, owner);
@@ -58,13 +70,17 @@ describe('reports/workflow', () => {
     expect(wf.isEditable(out)).toBe(true);
     expect(store.getExpense(e.id).claimed).toBe(false);
     wf.markClaimed(r.id, owner);
-    expect(wf.reopen(r.id, admin).status).toBe('open');
+    expect(() => wf.reopen(r.id, admin)).toThrow(/claimant/);
+    expect(wf.reopen(r.id, owner).status).toBe('open');
   });
 
-  test('a receipt can be claimed on its own, and unclaimed again', () => {
+  test('a receipt can be claimed on its own, and unclaimed again, once it is checked and priced', () => {
     const e = ready();
     expect(store.getExpense(e.id).claimed).toBe(false);
     expect(() => wf.markExpenseClaimed(e.id, other)).toThrow(/claimant/);
+    expect(() => wf.markExpenseClaimed(e.id, admin)).toThrow(/claimant/);
+    expect(() => wf.markExpenseClaimed(ready({ status: 'review-needed' }).id, owner)).toThrow(/Check this receipt/);
+    expect(() => wf.markExpenseClaimed(ready({ lines: [{ category: 'Meals', amount: 10 }] }).id, owner)).toThrow(/exchange rate/);
     expect(wf.markExpenseClaimed(e.id, owner).claimed).toBe(true);
     expect(wf.markExpenseClaimed(e.id, owner, false).claimed).toBe(false);
   });

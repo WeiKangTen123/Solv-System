@@ -57,10 +57,25 @@ describe('store/users', () => {
     expect(users.getGeminiKeysForUser(admin.id)).toHaveLength(1);
   });
 
-  test('deleteUser removes the row', async () => {
+  test('removing a person keeps the row and their records, and stops their password working', async () => {
     const admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
     const e = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId });
-    users.deleteUser(e.id);
-    expect(users.findById(e.id)).toBeNull();
+    const v = users.tokenVersion(e.id);
+    users.removeUser(e.id);
+    expect(users.findById(e.id)).toMatchObject({ removed: true });
+    expect(users.tokenVersion(e.id)).toBe(v + 1);
+    expect(await users.validatePassword('e@solv.sg', 'password123')).toBeNull();
+    users.restoreUser(e.id);
+    expect(await users.validatePassword('e@solv.sg', 'password123')).toMatchObject({ id: e.id });
+  });
+
+  test("each person's totals are their own", async () => {
+    const admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
+    const e = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId });
+    const store = require('./expenses');
+    store.createExpense({ companyId: admin.companyId, userId: e.id, status: 'reviewed', currency: 'SGD', total: 10, lines: [{ category: 'Meals', amount: 10, baseAmount: 10 }] });
+    const list = users.getAllUsers(admin.companyId);
+    expect(list.find(u => u.id === e.id).totalCents).toBe(1000);
+    expect(list.find(u => u.id === admin.id).totalCents).toBe(0);     // was the whole database's total
   });
 });

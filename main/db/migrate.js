@@ -9,11 +9,18 @@ function _ensureColumn(table, column, ddl) {
   if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
 }
 
+// A step that fails stops the boot. It used to log a warning and carry on, so
+// the server ran on a half-migrated schema and failed later, somewhere less
+// obvious; refusing to start is what pm2, the deploy's health check and the
+// crash alert can all see.
 function _step(n, name, fn) {
   const current = db.pragma('user_version', { simple: true });
   if (current >= n) return;
   try { fn(); db.pragma(`user_version = ${n}`); }
-  catch (err) { require('../utils/logger').warn(`migration step ${n} (${name}) skipped`, { error: err.message }); }
+  catch (err) {
+    require('../utils/logger').error(`migration step ${n} (${name}) failed`, { error: err.message });
+    throw new Error(`Migration step ${n} (${name}) failed: ${err.message}`);
+  }
 }
 
 function run() {
@@ -42,6 +49,17 @@ function run() {
     _ensureColumn(table, 'last_error', 'last_error TEXT');
     _ensureColumn(table, 'last_model', 'last_model TEXT');
   }
+  // Removing a person ends their access and keeps their records: deleting the
+  // row cascaded through every receipt and case they ever made, while the
+  // screen promised "their expenses stay".
+  _ensureColumn('users', 'disabled_at', 'disabled_at TEXT');
+  // Bumped on sign-out, on a password change and on removal; a session token
+  // carries the number it was issued under and dies when they differ.
+  _ensureColumn('users', 'token_version', 'token_version INTEGER NOT NULL DEFAULT 0');
+  // Whether people may create their own account, set by an admin in Company
+  // settings. It used to be an environment variable, which meant closing it
+  // took a server login.
+  _ensureColumn('companies', 'allow_registration', 'allow_registration INTEGER NOT NULL DEFAULT 0');
 
   // Steps run in ascending order, because each one stamps the database with its
   // own number and a lower number is then skipped for good.
@@ -147,6 +165,13 @@ function run() {
     if (reports && !/'open'/.test(reports.sql)) {
       _rebuild('expense_reports', { status: "CASE status WHEN 'claimed' THEN 'claimed' WHEN 'posted' THEN 'claimed' ELSE 'open' END" });
     }
+  });
+
+  // 6. Sessions became revocable and expire in a day. Every token issued
+  // before carries no version, which reads as 0; moving everyone to 1 signs
+  // each of them out once rather than leaving week-long tokens alive.
+  _step(6, 'end every session issued before revocable sign-in', () => {
+    db.prepare('UPDATE users SET token_version = token_version + 1').run();
   });
 }
 

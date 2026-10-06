@@ -1,18 +1,11 @@
-jest.mock('pdf-parse');
-const pdfParse = require('pdf-parse');
+jest.mock('./text-extract');
+const textExtract = require('./text-extract');
 const { extractPages, splittablePages, MIN_PAGE_CHARS } = require('./pages');
 
-// Builds a fake pdf-parse that feeds the given page texts through pagerender,
-// which is how the real library hands pages over one at a time.
+// The child-process extractor, answering with the given page texts.
+const pdfParse = textExtract.extractText;
 function fakePdf(pageTexts) {
-  return async (buffer, options) => {
-    for (const text of pageTexts) {
-      await options.pagerender({
-        getTextContent: async () => ({ items: text.split(' ').map(str => ({ str })) }),
-      });
-    }
-    return { numpages: pageTexts.length, text: pageTexts.join('\n') };
-  };
+  return async () => ({ numPages: pageTexts.length, pages: pageTexts });
 }
 
 const LONG = 'Receipt total 18.40 SGD merchant Grab date 2026-08-24 thank you for riding';
@@ -111,4 +104,22 @@ describe('pdf-pages — sameDocument', () => {
     expect(sameDocument([`${head} page one lines and charges`, `${head} page two totals and taxes`])).toBe(true);
     expect(sameDocument(['Grab ride 18.40 on Monday from home to the office', 'Gojek ride 25.00 on Tuesday from the office back'])).toBe(false);
   });
+});
+
+// The real extractor, in its child process, on a PDF with a text layer — the
+// kind the old in-process library could not even open ("bad XRef entry").
+describe('pdf/text-extract — the real child process', () => {
+  const { extractText } = jest.requireActual('./text-extract');
+  test('reads each page of a generated PDF and refuses a file that is not one', async () => {
+    const { pdfBuffer } = require('../reports/expense-export');
+    const buf = await pdfBuffer({ defaultStyle: { font: 'Helvetica' }, content: [
+      { text: 'GRAB Receipt No: A1-77812 Total SGD 18.40 from Orchard Rd to Changi Airport' },
+      { text: 'GOJEK Receipt No: B2-99120 Total SGD 22.10 from Changi Airport to Raffles Place', pageBreak: 'before' },
+    ] });
+    const out = await extractText(buf);
+    expect(out.numPages).toBe(2);
+    expect(out.pages[0]).toMatch(/A1-77812.*18\.40/);
+    expect(out.pages[1]).toMatch(/B2-99120.*22\.10/);
+    await expect(extractText(Buffer.from('this is not a pdf'))).rejects.toThrow();
+  }, 60000);
 });

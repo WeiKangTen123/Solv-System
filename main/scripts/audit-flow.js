@@ -319,7 +319,7 @@ function expectStatus(r, want, what) {
   await check('POST /api/receipts/pair returns a code and a QR', async () => {
     const r = await call('POST', '/api/receipts/pair', { token: S.E });
     expectStatus(r, [200, 201], 'pair');
-    expect(r.json.token && /<svg/.test(r.json.qrSvg || ''), 'no token or QR came back');
+    expect(r.json.token && String(r.json.qr || '').startsWith('data:image/png;base64,'), 'no token or QR came back');
     S.pair = r.json.token;
     return `expires in ${Math.round((r.json.expiresInMs || 0) / 60000)} min, ${r.json.maxUploads} uploads`;
   });

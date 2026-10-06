@@ -7,11 +7,8 @@ const { SCOPES } = require('./xero-utils');
 const connect = require('./connect');
 const oauth   = require('./oauth');
 
-test('one scope list, budgets included; OAuth adds only offline_access', () => {
-  expect(typeof SCOPES).toBe('string');
-  for (const s of ['accounting.reports.budgetsummary.read', 'accounting.budgets.read', 'accounting.invoices']) {
-    expect(SCOPES.split(' ')).toContain(s);
-  }
+test('one scope list, exactly what posting a claim needs; OAuth adds only offline_access', () => {
+  expect(SCOPES.split(' ').sort()).toEqual(['accounting.attachments', 'accounting.contacts', 'accounting.invoices', 'accounting.settings.read']);
   expect(connect.SCOPES).toBe(SCOPES);
   expect(oauth.SCOPES).toBe(`offline_access ${SCOPES}`);
 });

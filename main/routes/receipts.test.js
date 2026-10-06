@@ -58,6 +58,26 @@ describe('routes/receipts', () => {
     expect(store.listExpenses({ userId: u.id })).toHaveLength(0);
   });
 
+  // The bytes decide what a file is. Declared as a PDF, an HTML page is
+  // refused; declared as a JPEG, a PNG is kept as the PNG it is.
+  test('a file is stored as what its bytes are, and refused when they are none of JPEG, PNG or PDF', async () => {
+    const html = Buffer.from('<html><script>alert(1)</script></html>').toString('base64');
+    const bad = await upload({ mime: 'application/pdf', data: html }).expect(400);
+    expect(bad.body.error).toMatch(/not a JPEG, PNG or PDF/);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7]).toString('base64');
+    const ok = await upload({ mime: 'image/jpeg', data: png }).expect(201);
+    expect(ok.body.receipt).toMatchObject({ mime: 'image/png' });
+    expect(ok.body.receipt.file).toMatch(/\.png$/);
+  });
+
+  test('one person cannot fill the disk', async () => {
+    const db = require('../db');
+    db.prepare('INSERT INTO receipts (id, company_id, user_id, file, mime, size_bytes, received_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('big', u.companyId, u.id, 'big.jpg', 'image/jpeg', receiptStore.QUOTA_BYTES, new Date().toISOString());
+    const r = await upload({ mime: 'image/jpeg', data: jpeg() }).expect(413);
+    expect(r.body.error).toMatch(/allowed/);
+  });
+
   test('the image is served to a scoped token and refused without one', async () => {
     const { body } = await upload({ mime: 'image/jpeg', data: jpeg() });
     await request(serverFor(app)).get(`/api/receipts/${body.receipt.id}/image?token=${body.imageToken}`).expect(200).expect('Content-Type', /image\/jpeg/);
@@ -68,7 +88,9 @@ describe('routes/receipts', () => {
 
   test('phone pairing: mint, check, upload without login, poll from both sides, revoke', async () => {
     const pair = await request(serverFor(app)).post('/api/receipts/pair').set(auth()).expect(201);
-    expect(pair.body.qrSvg).toMatch(/<svg/);
+    // An image, never markup the page would have to inject.
+    expect(pair.body.qr).toMatch(/^data:image\/png;base64,/);
+    expect(pair.body.qrSvg).toBeUndefined();
     await request(serverFor(app)).get(`/api/receipts/capture/${pair.body.token}`).expect(200);
     parser.parseReceiptImage.mockResolvedValue({ split: false, receipts: [{ merchant: 'Gojek', total: 25, currency: 'SGD', category: 'Air & Transport', confidence: 'high', lineItems: [] }] });
     const up = await request(serverFor(app)).post(`/api/receipts/capture/${pair.body.token}`).send({ mime: 'image/jpeg', data: jpeg() }).expect(201);

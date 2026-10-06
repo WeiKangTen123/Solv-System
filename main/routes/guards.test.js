@@ -126,18 +126,26 @@ describe('guards that the case lock depends on', () => {
 
   // ── who owns the only step ──────────────────────────────────────────────
   // Claiming is the claimant saying they put it through, so nobody may declare
-  // that on somebody else's behalf. An admin still may, to tidy up after
-  // someone who has left.
-  test('only the claimant, or an admin, can mark a case claimed or reopen it', async () => {
+  // that on somebody else's behalf — an admin included. An admin watches
+  // claims; they do not handle them.
+  test('only the claimant can mark a case claimed or reopen it', async () => {
     const r = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'Trip' });
     reports.addExpense(r.id, seed(emp).id);
     expect(() => wf.markClaimed(r.id, other)).toThrow(/claimant/i);
+    expect(() => wf.markClaimed(r.id, admin)).toThrow(/claimant/i);
     expect(wf.markClaimed(r.id, emp).status).toBe('claimed');
     expect(() => wf.reopen(r.id, other)).toThrow(/claimant/i);
-    expect(wf.reopen(r.id, admin).status).toBe('open');
+    expect(() => wf.reopen(r.id, admin)).toThrow(/claimant/i);
+    expect(wf.reopen(r.id, emp).status).toBe('open');
+  });
 
-    const theirs = reports.createReport({ companyId: other.companyId, userId: other.id, title: 'Theirs' });
-    reports.addExpense(theirs.id, seed(other).id);
-    expect(wf.markClaimed(theirs.id, admin).status).toBe('claimed');
+  // A record from another company is invisible to everyone, admins included.
+  test('an admin sees their own company only', async () => {
+    const outsider = await users.createUser({ email: 'x@else.sg', password: 'password123', companyId: users.createCompany({ name: 'Else' }).id, role: 'admin' });
+    const secret = require('../middleware/auth-middleware').jwtSecret();
+    const tok = require('jsonwebtoken').sign({ id: outsider.id, email: outsider.email, role: 'admin' }, secret);
+    const e = seed(emp);
+    await request(serverFor(app)).get(`/api/expenses/${e.id}`).set({ Authorization: `Bearer ${tok}` }).expect(404);
+    await request(serverFor(app)).get(`/api/receipts/${e.receipt.id}/token`).set({ Authorization: `Bearer ${tok}` }).expect(404);
   });
 });

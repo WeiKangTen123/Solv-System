@@ -6,6 +6,13 @@ const POLL_MS = 5000;
 // Per-user worker state
 const _workers = new Map();
 
+// One import runs at a time across the whole server. Each user's queue was
+// already one-at-a-time, but ten people importing at once was ten archives of
+// up to 150 MB unpacked in memory together. The next one starts when the slot
+// frees; nobody's import is refused, only queued.
+const MAX_RUNNING = 1;
+let _running = 0;
+
 function _getWorker(userId) {
   if (!_workers.has(userId)) {
     _workers.set(userId, { deps: null, pollId: null, running: false, busy: false });
@@ -46,8 +53,12 @@ async function _processNext(userId) {
   // 2. Fetch pending jobs
   const pending = claimQueue.getPending(userId);
   if (!pending.length) return;
+  if (_running >= MAX_RUNNING) return;     // the poll comes back for it
 
   w.busy = true;
+  _running++;
+  let released = false;
+  const release = () => { if (!released) { released = true; _running = Math.max(0, _running - 1); } };
   const job = pending[0];
 
   try {
@@ -57,6 +68,7 @@ async function _processNext(userId) {
       // Set aside with a reason rather than retried three times into poison.
       claimQueue.markFailed(userId, job.id, `No handler is registered for job type "${job.type}"`);
       w.busy = false;
+      release();
       if (claimQueue.getPending(userId).length > 0) setImmediate(() => _safeProcessNext(userId));
       return;
     }
@@ -89,6 +101,7 @@ async function _processNext(userId) {
           logger.warn(`[claim-worker:${userId}] Could not persist final settled state`, { jobId: job.id, error: err.message });
         } finally {
           w.busy = false;
+          release();
           const remaining = claimQueue.getPending(userId);
           if (remaining.length > 0) setImmediate(() => _safeProcessNext(userId));
         }
@@ -100,6 +113,7 @@ async function _processNext(userId) {
     logger.error(`[claim-worker:${userId}] Job ${job.id} failed to launch`, { error: err.message });
     claimQueue.markFailed(userId, job.id, err.message);
     w.busy = false;
+    release();
     const remaining = claimQueue.getPending(userId);
     if (remaining.length > 0) setImmediate(() => _safeProcessNext(userId));
   }
@@ -160,6 +174,7 @@ function _reset() {
     if (w.pollId) clearInterval(w.pollId);
   }
   _workers.clear();
+  _running = 0;
 }
 
 module.exports = {

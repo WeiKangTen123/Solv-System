@@ -1,6 +1,7 @@
 const axios = require('axios');
 
 async function testAll() {
+  if (!process.env.VERIFY_PASSWORD) throw new Error('Set VERIFY_PASSWORD (and VERIFY_EMAIL if not the demo account)');
   const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:4000';
   console.log(`Verifying production on ${baseUrl}...`);
 
@@ -10,8 +11,8 @@ async function testAll() {
 
   // 2. Login as demo user
   const loginRes = await axios.post(`${baseUrl}/api/auth/login`, {
-    email: 'demo@example.com',
-    password: '***REMOVED***'
+    email: process.env.VERIFY_EMAIL || 'demo@example.com',
+    password: process.env.VERIFY_PASSWORD
   });
   console.log(`[PASS] Demo login successful: ${loginRes.data.user.email} (${loginRes.data.user.role})`);
   const token = loginRes.data.token;

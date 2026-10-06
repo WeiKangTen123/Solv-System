@@ -1,11 +1,24 @@
 const jwt = require('jsonwebtoken');
 
+// The signing secret. Required everywhere but the test suite: it used to fall
+// back to a string printed in this public repository whenever NODE_ENV was
+// anything but exactly "production" — "prod", or unset — and with it anybody
+// could sign a login, an image link or an export link. index.js asks for it at
+// boot so a box without one refuses to start rather than starting open.
+const TEST_SECRET = 'test-secret-not-for-use-outside-jest';
 function jwtSecret() {
   const secret = process.env.JWT_SECRET;
-  if (!secret && process.env.NODE_ENV === 'production') {
-    throw new Error('FATAL SECURITY ERROR: JWT_SECRET must be explicitly set in production environment.');
-  }
-  return secret || 'dev-secret-change-in-production';
+  if (secret) return secret;
+  if (process.env.NODE_ENV === 'test') return TEST_SECRET;
+  throw new Error('FATAL SECURITY ERROR: JWT_SECRET must be set. Generate one with: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"');
+}
+
+// A session lasts a day, and ends early on sign-out, a password change or
+// removal: each bumps the person's token_version, and a token issued under an
+// older number is refused.
+const SESSION_TTL = '24h';
+function signSession(user, version) {
+  return jwt.sign({ id: user.id, email: user.email, role: user.role, tv: version ?? 0, typ: 'session' }, jwtSecret(), { expiresIn: SESSION_TTL });
 }
 
 function requireAuth(req, res, next) {
@@ -13,21 +26,25 @@ function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
   let claims;
   try {
-    claims = jwt.verify(token, jwtSecret());
+    claims = jwt.verify(token, jwtSecret(), { algorithms: ['HS256'] });
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
-  // The token says who; the database says whether they still exist and what
-  // they may do. Tokens live seven days, and role/existence used to be read
-  // from the token alone, so a deleted or demoted user kept their access for
-  // up to a week. One indexed primary-key read per request is cheap.
+  // Receipt-image and export links are signed with the same secret. They carry
+  // a purpose and no id; only a session may sign anybody in.
+  if (!claims || !claims.id || claims.purpose) return res.status(401).json({ error: 'Invalid or expired token' });
+  // The token says who; the database says whether they still exist, whether
+  // they were removed, and what they may do. Role is read from here, never
+  // from the token, so a demotion takes effect on the next request.
   //
   // users.js is required lazily to avoid a require-cycle at module load
   // (users.js doesn't need this module, but plenty of routes require both).
   const users = require('../store/users');
   const live  = users.findById(claims.id);
   if (!live) return res.status(401).json({ error: 'Account no longer exists' });
-  req.user = { ...claims, id: live.id, email: live.email, role: live.role };
+  if (live.removed) return res.status(401).json({ error: 'This account has been removed. Ask your administrator.' });
+  if ((claims.tv ?? 0) !== users.tokenVersion(live.id)) return res.status(401).json({ error: 'Your session has ended. Sign in again.' });
+  req.user = { id: live.id, email: live.email, role: live.role, companyId: live.companyId };
   // Throttled to at most one DB write per user per minute — see
   // users.js#touchLastSeen. Failure here must never turn into a 401 — it's
   // presence tracking, not auth.
@@ -44,4 +61,4 @@ function requireAdmin(req, res, next) {
   });
 }
 
-module.exports = { requireAuth, requireAdmin, jwtSecret };
+module.exports = { requireAuth, requireAdmin, jwtSecret, signSession, SESSION_TTL };

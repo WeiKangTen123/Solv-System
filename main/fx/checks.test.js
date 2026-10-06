@@ -82,7 +82,7 @@ describe('fx checks', () => {
     const e = exp('INR', 1000);
     await apply.applyFx(e.id);
 
-    await apply.overrideFx(e.id, { rate: 0.0135, reason: 'card statement', actor: { email: 'finance@solv.sg' } });
+    await apply.overrideFx(e.id, { rate: 0.0135, reason: 'card statement', actor: { email: 'finance@solv.sg', role: 'admin' } });
     const line = store.getExpense(e.id).lines[0];
     expect(line.fxRate).toBe(0.0135);
     expect(line.baseAmount).toBe(13.5);
@@ -157,7 +157,7 @@ describe('fx checks', () => {
     providers.erapi.mockResolvedValue(null);
     const e = exp('INR', 1000);
     await apply.applyFx(e.id);
-    await apply.overrideFx(e.id, { rate: 0.0135, reason: 'card statement', actor: { email: 'finance@solv.sg' } });
+    await apply.overrideFx(e.id, { rate: 0.0135, reason: 'card statement', actor: { email: 'finance@solv.sg', role: 'admin' } });
 
     providers.frankfurter.mockResolvedValue(ecb(0.0134, '2026-09-04'));
     await require('./sweeper').sweep();

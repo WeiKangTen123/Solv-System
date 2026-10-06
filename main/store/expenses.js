@@ -40,6 +40,10 @@ function updateReceipt(id, patch) {
 }
 function deleteReceipt(id) { db.prepare('DELETE FROM receipts WHERE id = ?').run(id); }
 function countExpensesForReceipt(receiptId) { return db.prepare('SELECT COUNT(*) AS n FROM expenses WHERE receipt_id = ?').get(receiptId).n; }
+// What one person's receipt files take on disk, for the upload quota.
+function bytesStoredBy(userId) {
+  return db.prepare('SELECT COALESCE(SUM(size_bytes), 0) AS n FROM receipts WHERE user_id = ?').get(userId).n;
+}
 function countExpensesForFile(userId, file) {
   return db.prepare('SELECT COUNT(*) AS n FROM expenses e JOIN receipts r ON r.id = e.receipt_id WHERE r.user_id = ? AND r.file = ?').get(userId, file).n;
 }
@@ -202,7 +206,7 @@ function dedupView(companyId) {
 }
 
 module.exports = {
-  createReceipt, getReceipt, findReceiptByHash, updateReceipt, deleteReceipt, countExpensesForReceipt, countExpensesForFile,
+  createReceipt, getReceipt, findReceiptByHash, updateReceipt, deleteReceipt, countExpensesForReceipt, countExpensesForFile, bytesStoredBy,
   createExpense, getExpense, updateExpense, listExpenses, expensesForReceipt, deleteExpense,
   getLines, replaceLines, updateLine, linesReconcile, dedupView, toCents, toDollars,
 };

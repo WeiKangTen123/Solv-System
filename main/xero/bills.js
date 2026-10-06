@@ -101,22 +101,20 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
   // clicks on Post used to make two draft bills for one report.
   if (!reports.claimForPost(reportId)) throw new Error('This report is already being posted to Xero. Give it a moment and reload.');
 
-  const { AccountingApi } = require('xero-node');
-  const token = await tokenCache.forCompany(company.id).getValidToken(tenant.tenantId);
-  const api = new AccountingApi();
-  api.accessToken = token;
-
-  let contactID;
-  try {
-    contactID = await getOrCreateContact(company.id, tenant.tenantId, { vendorName: bill.contact.name, email: bill.contact.email, invoiceType: 'ACCPAY' });
-  } catch (err) {
-    reports.releasePost(reportId, xeroErrMsg(err));
-    throw err;
-  }
+  // Everything up to the bill existing either succeeds or releases the claim.
+  // The token fetch used to sit outside this, so a failed refresh left the
+  // case marked "being posted" for good and every later attempt refused.
   let created;
+  let api;
   try {
+    const { AccountingApi } = require('xero-node');
+    const token = await tokenCache.forCompany(company.id).getValidToken(tenant.tenantId);
+    api = new AccountingApi();
+    api.accessToken = token;
+    const contactID = await getOrCreateContact(company.id, tenant.tenantId, { vendorName: bill.contact.name, email: bill.contact.email, invoiceType: 'ACCPAY' });
     const res = await withRetry(() => api.createInvoices(tenant.tenantId, { invoices: [{ ...bill.invoice, contact: { contactID } }] }));
     created = res.body.invoices[0];
+    if (!created || !created.invoiceID) throw new Error('Xero answered without a bill');
   } catch (err) {
     const msg = xeroErrMsg(err);
     reports.releasePost(reportId, msg);
@@ -146,7 +144,7 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
   // The status stays claimed: xero_invoice_id is what records the posting.
   reports.setState(reportId, { xeroInvoiceId: created.invoiceID, xeroError: warnings.length ? `Attachments: ${warnings.join('; ')}` : null });
   reports.addEvent(reportId, actor.id, 'posted', `Xero bill ${created.invoiceID}`);
-  logger.info('Report posted to Xero', { reportId, number: r.number, invoiceID: created.invoiceID, lines: bill.invoice.lineItems.length, by: actor.email });
+  logger.info('Report posted to Xero', { reportId, number: r.number, invoiceID: created.invoiceID, lines: bill.invoice.lineItems.length, by: actor.id });
   return { dryRun: false, tenantId: tenant.tenantId, tenantName: tenant.tenantName, xeroInvoiceId: created.invoiceID, warnings, bill };
 }
 

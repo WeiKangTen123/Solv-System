@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -56,6 +56,13 @@ export default function ReportDetail() {
   const [msg, setMsg] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [preview, setPreview] = useState(null);
+  // Set once the cover is touched, cleared by Save. Every upload and phone
+  // photo reloads the page, and that used to overwrite whatever was being typed.
+  const coverDirty = useRef(false);
+
+  // The same page is reused when the case in the address changes, so what was
+  // picked, previewed or about to be confirmed on the last one is cleared.
+  useEffect(() => { setPicked([]); setPreview(null); setConfirm(null); coverDirty.current = false; }, [id]);
 
   // The receipts are read after the upload answers, so the page has to come
   // back on its own: without this, dropping ten receipts in and pressing Check
@@ -69,16 +76,11 @@ export default function ReportDetail() {
   const load = useCallback(async () => {
     const d = await api.get(`/reports/${id}`);
     setView(d);
-    setCover(Object.fromEntries(COVER.map(([k]) => [k, d.report[k] ?? ''])));
-    // An admin fixing someone else's report may file into it (the server allows
-    // it); before this they could take expenses out and never put any back.
-    // For that case the list has to be the report owner's, not the admin's.
-    const mayFile = d.editable && (d.isOwner || user?.role === 'admin');
-    if (mayFile) {
-      const q = d.isOwner ? '' : `&userId=${d.report.userId}`;
-      setUnfiled((await api.get(`/expenses?unfiled=1&status=reviewed${q}`)).expenses);
-    } else setUnfiled([]);
-  }, [id, user?.role]);
+    if (!coverDirty.current) setCover(Object.fromEntries(COVER.map(([k]) => [k, d.report[k] ?? ''])));
+    // Filing is the owner's: an admin sees the case to monitor it.
+    if (d.editable && d.isOwner) setUnfiled((await api.get('/expenses?unfiled=1&status=reviewed')).expenses);
+    else setUnfiled([]);
+  }, [id]);
   useEffect(() => { setMsg(null); load().catch(e => setMsg({ tone: 'error', text: e.message })); }, [load]);
   const reading = !!view?.report?.expenses?.some(e => e.status === 'reading');
   // Not 0 when nothing is being read: the hook schedules a timeout with whatever
@@ -91,7 +93,11 @@ export default function ReportDetail() {
     // afterwards the user gesture is spent and Safari blocks it outright, with
     // nothing shown to say why. If the browser blocks it anyway, fall back to
     // navigating this tab rather than failing silently.
-    const w = window.open('', '_blank', 'noopener');
+    // Opened without 'noopener' because with it the browser returns null, so
+    // the tab could never be pointed at the file: every export left a blank
+    // tab and navigated this one away. The opener is cut by hand instead.
+    const w = window.open('', '_blank');
+    if (w) w.opener = null;
     try {
       const d = await api.get(`/reports/${id}/export-url?format=${format}`);
       if (w) w.location = d.url; else window.location.assign(d.url);
@@ -103,11 +109,12 @@ export default function ReportDetail() {
 
   if (!view) return <div style={{ color: 'var(--text-muted)' }}>{msg?.text || 'Loading…'}</div>;
   const { report: r, editable, isOwner, xero } = view;
-  const canEdit = editable && (isOwner || user?.role === 'admin');
+  // Only the owner changes a case; an admin's view is for monitoring.
+  const canEdit = editable && isOwner;
   const rates = [...new Map(r.expenses.flatMap(e => e.lines).filter(l => l.fxRate && l.fxSource !== 'base').map(l => [`${l.currency}|${l.fxRate}|${l.fxRateDate}|${l.fxSource}`, l])).values()];
   const cats = Object.entries(r.totals.byCategory);
   const isAdmin = user?.role === 'admin';
-  const mayAct = isOwner || isAdmin;
+  const mayAct = isOwner;
 
   return (
     <div>
@@ -168,7 +175,7 @@ export default function ReportDetail() {
                 <div className="form-group" key={k} style={{ gridColumn: k === 'title' || k === 'purpose' || k === 'notes' ? '1 / -1' : 'auto' }}>
                   <label className="form-label" htmlFor={canEdit ? `c-${k}` : undefined}>{label}</label>
                   {canEdit
-                    ? <input id={`c-${k}`} className="form-input" type={type} step={type === 'number' ? '0.01' : undefined} value={cover[k] ?? ''} onChange={e => setCover({ ...cover, [k]: e.target.value })} />
+                    ? <input id={`c-${k}`} className="form-input" type={type} step={type === 'number' ? '0.01' : undefined} value={cover[k] ?? ''} onChange={e => { coverDirty.current = true; setCover({ ...cover, [k]: e.target.value }); }} />
                     // Once it is out of your hands the cover is a finished
                     // document. A row of disabled boxes reads as a form you are
                     // not allowed to use; this reads as what was submitted.
@@ -179,7 +186,7 @@ export default function ReportDetail() {
                 </div>
               ))}
             </div>
-            {canEdit && <button className="btn btn-outline btn-sm" disabled={!!busy} onClick={() => act('cover', () => api.patch(`/reports/${id}`, cover))}>{busy === 'cover' ? 'Saving…' : 'Save cover'}</button>}
+            {canEdit && <button className="btn btn-outline btn-sm" disabled={!!busy} onClick={() => act('cover', async () => { await api.patch(`/reports/${id}`, cover); coverDirty.current = false; })}>{busy === 'cover' ? 'Saving…' : 'Save cover'}</button>}
           </div>
 
           <div className="card">
@@ -244,19 +251,21 @@ export default function ReportDetail() {
               {/* Two states, one button each way. Claiming carries the checks
                   submitting used to: every receipt checked, every line priced. */}
               {mayAct && r.status === 'open' && <button className="btn btn-primary" disabled={!!busy} onClick={() => act('claimed', () => api.post(`/reports/${id}/claimed`, {}))}>{busy === 'claimed' ? 'Marking…' : 'I have claimed this'}</button>}
-              {mayAct && r.status === 'claimed' && <button className="btn btn-outline" disabled={!!busy} onClick={() => act('reopen', () => api.post(`/reports/${id}/reopen`, {}))}>{busy === 'reopen' ? 'Reopening…' : 'Reopen'}</button>}
-              {isAdmin && r.status === 'claimed' && !r.xeroInvoiceId && (
+              {mayAct && r.status === 'claimed' && !r.xeroInvoiceId && <button className="btn btn-outline" disabled={!!busy} onClick={() => act('reopen', () => api.post(`/reports/${id}/reopen`, {}))}>{busy === 'reopen' ? 'Reopening…' : 'Reopen'}</button>}
+              {/* Posting is part of putting the claim through, so it is the
+                  claimant's, through the connection an admin set up. */}
+              {mayAct && r.status === 'claimed' && !r.xeroInvoiceId && (
                 xero?.connected ? (
                   <>
                     <button className="btn btn-outline" disabled={!!busy} onClick={() => act('preview', async () => { setPreview(await api.post(`/reports/${id}/post?dryRun=1`, {})); })}>Preview Xero bill</button>
                     <button className="btn btn-primary" disabled={!!busy} onClick={() => setConfirm('post')}>Post to Xero</button>
                   </>
-                ) : <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Connect Xero in Settings to post this case as a bill.</div>
+                ) : <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{isAdmin ? 'Connect Xero in Settings to post cases as bills.' : 'Xero is not connected yet. Ask your admin if this case should go to Xero.'}</div>
               )}
-              {r.xeroInvoiceId && <div style={{ fontSize: 12.5, color: 'var(--success)' }}>In Xero as draft bill {r.xeroInvoiceId}{xero?.tenantName ? ` (${xero.tenantName})` : ''}.</div>}
+              {r.xeroInvoiceId && <div style={{ fontSize: 12.5, color: 'var(--success)' }}>In Xero as draft bill {r.xeroInvoiceId}{xero?.tenantName ? ` (${xero.tenantName})` : ''}. A case in Xero is final.</div>}
               {r.status === 'open' && mayAct && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Check every receipt, then put the claim through however your company reimburses you and mark it claimed.</div>}
               {r.status === 'claimed' && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Claimed {formatDateTime(r.claimedAt, user?.timezone)}.</div>}
-              {!mayAct && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>This is {r.ownerName || 'someone else'}&rsquo;s case. You can read and export it.</div>}
+              {!mayAct && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>This is {r.ownerName || r.ownerEmail || 'someone else'}&rsquo;s case. You can read and export it; changes are theirs to make.</div>}
             </div>
             {preview && (
               <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10, fontSize: 12 }}>

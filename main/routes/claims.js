@@ -18,6 +18,8 @@ const reports      = require('../store/reports');
 // A batch claim: a zip of receipts plus the claim-form spreadsheet, as they
 // arrive by email. Runs as a background job; the client polls.
 const MAX_UPLOAD_BYTES = 18 * 1024 * 1024;
+// Parsed only on this route, after sign-in; index.js keeps the rest to 100 KB.
+const bigJson = express.json({ limit: '25mb' });
 
 // Images are read five to a call; a PDF in the archive goes through the same
 // classify-and-read the upload path uses (text, or rendered pages).
@@ -48,7 +50,7 @@ claimWorker.registerJobType('claim-import', {
   run: ({ userId, job, payload, deps: d }) => claimImport.startImport({ userId, archives: payload.archives, forms: payload.forms, label: job.label, id: job.id }, d),
 });
 
-router.post('/import', requireAuth, (req, res) => {
+router.post('/import', requireAuth, bigJson, (req, res) => {
   try {
     const { archives = [], forms = [], label } = req.body || {};
     if (!Array.isArray(archives) || !Array.isArray(forms) || (!archives.length && !forms.length)) return res.status(400).json({ error: 'Attach at least a claim archive or a claim form' });
@@ -75,7 +77,8 @@ router.post('/import', requireAuth, (req, res) => {
     logger.info('Claim import enqueued', { userId: req.user.id, jobId: enq.job.id });
     res.status(202).json({ jobId: enq.job.id, stage: enq.job.stage });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Claim import could not start', { userId: req.user.id, error: err.message });
+    res.status(500).json({ error: 'The import could not start. Try again.' });
   }
 });
 

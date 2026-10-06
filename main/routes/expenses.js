@@ -1,7 +1,7 @@
 const express = require('express');
 const router  = express.Router();
 const { requireAuth } = require('../middleware/auth-middleware');
-const { canAccessUser } = require('../middleware/roles');
+const { canView, isOwner } = require('../middleware/roles');
 const users   = require('../store/users');
 const store   = require('../store/expenses');
 const receiptStore = require('../receipts/receipt-store');
@@ -27,15 +27,21 @@ const logger  = require('../utils/logger');
 // handler, which took the whole server down with it.
 const EDITABLE = ['merchant', 'receiptDate', 'receiptTime', 'invoiceNo', 'currency', 'total', 'tax', 'subTotal', 'purpose', 'description', 'category'];
 
+// Seeing a receipt: its owner, or an admin of the same company monitoring.
 function _load(req, res) {
   const e = store.getExpense(req.params.id);
-  if (!e || !canAccessUser(req.user, e.userId)) { res.status(404).json({ error: 'Expense not found' }); return null; }
+  if (!e || !canView(req.user, e.userId, e.companyId)) { res.status(404).json({ error: 'Expense not found' }); return null; }
   return e;
 }
 const LOCKED = 'This receipt is in a case that has been claimed. Reopen the case to change it.';
+const NOT_YOURS = 'Only the person who claimed this receipt can change it.';
+// Changing it: the owner only. An admin's view of somebody else's claim is
+// for monitoring; the claim stays the claimant's.
 function _loadEditable(req, res) {
   const e = _load(req, res);
-  if (e && isLocked(e)) { res.status(409).json({ error: LOCKED }); return null; }
+  if (!e) return null;
+  if (!isOwner(req.user, e.userId, e.companyId)) { res.status(403).json({ error: NOT_YOURS }); return null; }
+  if (isLocked(e)) { res.status(409).json({ error: LOCKED }); return null; }
   return e;
 }
 // Moving an expense into or out of a report. Both ends have to be open: you
@@ -53,8 +59,7 @@ function _file(e, reportId, actor) {
   if (reportId === e.reportId) return;
   const r = reports.getReport(reportId);
   if (!r || r.companyId !== e.companyId) fail(404, 'Case not found');
-  if (r.userId !== e.userId) fail(403, 'That case belongs to someone else');
-  if (r.userId !== actor.id && actor.role !== 'admin') fail(403, 'Only the case owner can file receipts into it');
+  if (r.userId !== e.userId || r.userId !== actor.id) fail(403, 'That case belongs to someone else');
   if (!wf.isEditable(r)) fail(409, `A ${r.status} case cannot take more receipts`);
   leaving();
   reports.addExpense(r.id, e.id);
@@ -63,15 +68,15 @@ function _file(e, reportId, actor) {
 function _out(e) { return { expense: e, locked: isLocked(e), imageToken: e.receipt ? issueImageToken(e.receipt.userId, e.receipt.id) : null }; }
 
 router.get('/', requireAuth, (req, res) => {
-  const me = users.findById(req.user.id);
   const wide = req.query.all === '1' && req.user.role === 'admin';
   const filter = { status: req.query.status || undefined, reportId: req.query.reportId || undefined, unfiled: req.query.unfiled === '1',
                    from: req.query.from || undefined, to: req.query.to || undefined };
   let list;
-  if (wide) list = store.listExpenses({ companyId: me.companyId, userId: req.query.userId || undefined, ...filter });
+  if (wide) list = store.listExpenses({ companyId: req.user.companyId, userId: req.query.userId || undefined, ...filter });
   else if (req.query.userId && req.query.userId !== req.user.id) {
-    if (!canAccessUser(req.user, req.query.userId)) return res.status(403).json({ error: 'Not your report' });
-    list = store.listExpenses({ userId: req.query.userId, ...filter });
+    const owner = users.findById(req.query.userId);
+    if (!owner || !canView(req.user, owner.id, owner.companyId)) return res.status(404).json({ error: 'Not found' });
+    list = store.listExpenses({ userId: owner.id, ...filter });
   } else list = store.listExpenses({ userId: req.user.id, ...filter });
   res.json({ expenses: list });
 });
@@ -209,6 +214,11 @@ router.post('/:id/merge', requireAuth, (req, res) => {
   if (!e.receiptId) return res.status(400).json({ error: 'This expense was not split' });
   const siblings = store.expensesForReceipt(e.receiptId).filter(x => x.id !== e.id);
   if (!siblings.length) return res.status(400).json({ error: 'This expense was not split' });
+  // Merging deletes the siblings, so each must be one this person could delete
+  // on its own: theirs, and not in a claimed case. One sitting in a claimed
+  // case used to vanish from it, changing a total that had been put through.
+  if (siblings.some(x => x.userId !== e.userId || isLocked(x))) return res.status(409).json({ error: 'Part of this receipt is in a claimed case. Reopen that case first.' });
+  if (siblings.some(x => (x.reportId || null) !== (e.reportId || null))) return res.status(409).json({ error: 'The parts of this receipt are in different cases. Move them into one case first.' });
   for (const s of siblings) store.deleteExpense(s.id);
   res.json(_out(store.updateExpense(e.id, { box: null, page: null })));
 });
@@ -220,7 +230,7 @@ router.delete('/:id', requireAuth, (req, res) => {
     if (store.countExpensesForFile(e.receipt.userId, e.receipt.file) === 0) receiptStore.forUser(e.receipt.userId).remove(e.receipt.file);
     store.deleteReceipt(e.receipt.id);
   }
-  logger.info('Expense deleted', { id: e.id, by: req.user.email });
+  logger.info('Expense deleted', { id: e.id, by: req.user.id });
   res.json({ ok: true });
 });
 

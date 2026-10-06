@@ -1,17 +1,19 @@
-const pdfParse = require('pdf-parse');
-const logger   = require('../utils/logger');
+const textExtract = require('./text-extract');
+const logger      = require('../utils/logger');
 
 // Splits a PDF into per-page text.
 //
 // A PDF of scanned receipts is usually one receipt per page, so each page should
-// become its own record. Doing that needs the pages separated, and pdf-parse's
-// `pagerender` hook already hands us one page at a time — no PDF renderer and no
-// new dependency.
+// become its own record. Doing that needs the pages separated.
+//
+// The text is read in a child process by text-extract.js. It used to be read
+// here, in the server, by pdf-parse — a library that bundles a PDF engine from
+// 2017. One crafted PDF could hang every request, and the same engine could
+// not open some perfectly valid modern PDFs at all ("bad XRef entry").
 //
 // The limit: this reads the TEXT LAYER. A digital receipt (emailed, generated)
 // has one. A photographed page scanned into a PDF does not, and comes back
-// empty — which is reported honestly rather than guessed at, because rendering
-// those pages to images would need a real PDF renderer.
+// empty, which read-receipt.js answers by rendering the pages to images.
 
 // Below this a "page" is a header or a stray mark, not a receipt.
 const MIN_PAGE_CHARS = 40;
@@ -19,23 +21,13 @@ const MIN_PAGE_CHARS = 40;
 async function extractPages(buffer) {
   if (!Buffer.isBuffer(buffer) || !buffer.length) return { pages: [], numPages: 0, hasText: false };
 
-  const pages = [];
   try {
-    const data = await pdfParse(buffer, {
-      // Called once per page, in order. Returning the text also lets pdf-parse
-      // build its usual combined output, which we ignore.
-      pagerender: async (pageData) => {
-        const content = await pageData.getTextContent({ normalizeWhitespace: true, disableCombineTextItems: false });
-        const text = content.items.map(i => i.str).join(' ').replace(/\s+/g, ' ').trim();
-        pages.push(text);
-        return text;
-      },
-    });
-
+    const data = await textExtract.extractText(buffer);
+    const pages = data.pages;
     const withText = pages.filter(p => p.length >= MIN_PAGE_CHARS);
     return {
       pages,
-      numPages: data.numpages || pages.length,
+      numPages: data.numPages || pages.length,
       // False for a scan: every page is images, so there is nothing to read.
       hasText: withText.length > 0,
       textPageCount: withText.length,

@@ -54,7 +54,7 @@ describe('routes/expenses', () => {
     expect(r.body.expense.purpose).toBe('Client site visit');
     expect(r.body.expense.lines[0].amount).toBe(120.5);
     await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ currency: 'rupees' }).expect(400);
-    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(admin)).send({ purpose: 'x' }).expect(200);   // admin may edit
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(admin)).send({ purpose: 'x' }).expect(403);   // an admin views, the claimant changes
   });
 
   test('lines must reconcile; a good split is stored with on-behalf', async () => {
@@ -107,11 +107,14 @@ describe('routes/expenses', () => {
     const e = seed(emp, { currency: 'INR', total: 100, lines: [{ category: 'Meals', amount: 100 }] });
     let r = await request(serverFor(app)).post(`/api/expenses/${e.id}/fx`).set(as(emp)).expect(200);
     expect(r.body.expense.baseTotal).toBe(1.34);
-    await request(serverFor(app)).patch(`/api/expenses/${e.id}/fx`).set(as(emp)).send({ rate: 0.02 }).expect(400);
-    r = await request(serverFor(app)).patch(`/api/expenses/${e.id}/fx`).set(as(emp)).send({ rate: 0.02, reason: 'card statement' }).expect(200);
-    expect(r.body.expense.lines[0]).toMatchObject({ fxRate: 0.02, fxSource: 'manual', baseAmount: 2 });
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}/fx`).set(as(emp)).send({ rate: 0.0136 }).expect(400);   // no reason
+    // A claimant's rate may sit at most 5% from the day's: 0.02 is 49% off 0.0134.
+    const far = await request(serverFor(app)).patch(`/api/expenses/${e.id}/fx`).set(as(emp)).send({ rate: 0.02, reason: 'card statement' }).expect(400);
+    expect(far.body.error).toMatch(/49.3% from the day's rate/);
+    r = await request(serverFor(app)).patch(`/api/expenses/${e.id}/fx`).set(as(emp)).send({ rate: 0.0136, reason: 'card statement' }).expect(200);
+    expect(r.body.expense.lines[0]).toMatchObject({ fxRate: 0.0136, fxSource: 'manual', baseAmount: 1.36 });
     r = await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ total: 200 }).expect(200);
-    expect(r.body.expense.lines[0]).toMatchObject({ fxRate: 0.02, baseAmount: 4 });   // an override survives an edit
+    expect(r.body.expense.lines[0]).toMatchObject({ fxRate: 0.0136, baseAmount: 2.72 });   // an override survives an edit
   });
 
   test('an expense in a claimed case cannot be edited', async () => {
@@ -129,7 +132,8 @@ describe('routes/expenses', () => {
     const name = files.save('del1', Buffer.from([0xff, 0xd8, 0xff]), 'image/jpeg');
     const r = store.createReceipt({ id: 'del1', companyId: emp.companyId, userId: emp.id, file: name, mime: 'image/jpeg', sha256: 'del' });
     const e = store.createExpense({ companyId: emp.companyId, userId: emp.id, receiptId: r.id, status: 'review-needed', total: 1 });
-    await request(serverFor(app)).delete(`/api/expenses/${e.id}`).set(as(admin)).expect(200);
+    await request(serverFor(app)).delete(`/api/expenses/${e.id}`).set(as(admin)).expect(403);   // not an admin's to delete
+    await request(serverFor(app)).delete(`/api/expenses/${e.id}`).set(as(emp)).expect(200);
     expect(store.getExpense(e.id)).toBeNull();
     expect(files.exists(name)).toBe(false);
     expect(store.getReceipt(r.id)).toBeNull();
@@ -137,14 +141,14 @@ describe('routes/expenses', () => {
 
   test('correcting the currency drops a typed rate, which was typed for the other currency', async () => {
     const e = seed(emp);
-    await request(serverFor(app)).patch(`/api/expenses/${e.id}/fx`).set(as(emp)).send({ rate: 0.02, reason: 'card statement' }).expect(200);
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}/fx`).set(as(emp)).send({ rate: 0.0136, reason: 'card statement' }).expect(200);
     const r = await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ currency: 'USD' }).expect(200);
     expect(r.body.expense.currency).toBe('USD');
     expect(r.body.expense.lines[0]).toMatchObject({ currency: 'USD', fxSource: 'frankfurter', fxRate: 0.0134, fxOverrideBy: null, baseAmount: 1.34 });
     // The same currency sent again — every save sends it — is not a change.
-    await request(serverFor(app)).patch(`/api/expenses/${e.id}/fx`).set(as(emp)).send({ rate: 0.02, reason: 'card statement' }).expect(200);
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}/fx`).set(as(emp)).send({ rate: 0.0136, reason: 'card statement' }).expect(200);
     const same = await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ currency: 'USD', purpose: 'x' }).expect(200);
-    expect(same.body.expense.lines[0]).toMatchObject({ fxSource: 'manual', fxRate: 0.02 });
+    expect(same.body.expense.lines[0]).toMatchObject({ fxSource: 'manual', fxRate: 0.0136 });
   });
 
   test('the note that a currency was assumed goes when the currency is set, or the receipt is marked reviewed', async () => {

@@ -16,13 +16,36 @@ router.get('/', requireAuth, (req, res) => {
   res.json({ company: users.getCompany(me.companyId), categories: CATEGORY_NAMES, currencies: CURRENCIES });
 });
 
+// Only the fields an admin edits here, each checked: the whole body used to
+// be handed to the store.
 router.patch('/', requireAuth, requireRole('admin'), (req, res) => {
   try {
-    const me = users.findById(req.user.id);
     const b = req.body || {};
-    if (b.fxPolicy && !['receipt_date', 'submission_date', 'monthly_fixed'].includes(b.fxPolicy)) return res.status(400).json({ error: 'Unknown exchange-rate policy' });
-    if (b.baseCurrency && !/^[A-Z]{3}$/.test(b.baseCurrency)) return res.status(400).json({ error: 'Base currency must be a 3-letter code' });
-    const company = users.updateCompany(me.companyId, b);
+    const patch = {};
+    if (b.name !== undefined) {
+      if (typeof b.name !== 'string' || !b.name.trim()) return res.status(400).json({ error: 'The company needs a name' });
+      patch.name = b.name.trim().slice(0, 120);
+    }
+    if (b.fxPolicy !== undefined) {
+      if (!['receipt_date', 'submission_date', 'monthly_fixed'].includes(b.fxPolicy)) return res.status(400).json({ error: 'Unknown exchange-rate policy' });
+      patch.fxPolicy = b.fxPolicy;
+    }
+    if (b.baseCurrency !== undefined) {
+      if (typeof b.baseCurrency !== 'string' || !/^[A-Z]{3}$/.test(b.baseCurrency)) return res.status(400).json({ error: 'Base currency must be a 3-letter code' });
+      patch.baseCurrency = b.baseCurrency;
+    }
+    if (b.timezone !== undefined) {
+      try { new Intl.DateTimeFormat('en', { timeZone: String(b.timezone) }); } catch { return res.status(400).json({ error: 'Unknown timezone' }); }
+      patch.timezone = String(b.timezone);
+    }
+    if (b.reportColumns !== undefined) {
+      if (!Array.isArray(b.reportColumns) || b.reportColumns.some(c => typeof c !== 'string')) return res.status(400).json({ error: 'Report columns must be a list of names' });
+      patch.reportColumns = b.reportColumns.slice(0, 20).map(c => c.slice(0, 60));
+    }
+    // Whether people may create their own account. Off unless an admin says.
+    if (b.allowRegistration !== undefined) patch.allowRegistration = b.allowRegistration === true;
+    const company = users.updateCompany(req.user.companyId, patch);
+    if (patch.allowRegistration !== undefined) require('../utils/logger').info('Self-registration changed', { by: req.user.id, open: patch.allowRegistration });
     res.json({ company });
   } catch (err) { res.status(400).json({ error: err.message }); }
 });

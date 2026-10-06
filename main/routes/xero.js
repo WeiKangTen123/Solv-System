@@ -22,8 +22,11 @@ function _frontendSettingsUrl() {
 const KEYS = ['XERO_CLIENT_ID', 'XERO_CLIENT_SECRET', 'XERO_OAUTH_CLIENT_ID', 'XERO_OAUTH_CLIENT_SECRET', 'DEFAULT_ACCOUNT_CODE'];
 const SECRETS = new Set(['XERO_CLIENT_SECRET', 'XERO_OAUTH_CLIENT_SECRET']);
 
-// GET /api/xero — status: which method, which orgs, which fields are set (secrets never returned).
-router.get('/', requireAuth, (req, res) => {
+// GET /api/xero — status: which method, which orgs, which fields are set
+// (secrets never returned). An admin's: the client IDs and default account
+// are configuration, and a claimant learns whether Xero is connected from
+// the case page instead.
+router.get('/', requireAuth, FINANCE, (req, res) => {
   const u = me(req);
   const config = users.getCompanyConfig(u.companyId);
   const fields = Object.fromEntries(KEYS.map(k => [k, { value: SECRETS.has(k) ? '' : (config[k] || ''), isSet: !!config[k] }]));
@@ -41,7 +44,7 @@ router.patch('/credentials', requireAuth, FINANCE, (req, res) => {
     patch[k] = v;
   }
   users.saveCompanyConfig(u.companyId, patch);
-  logger.info('Xero credentials saved', { by: req.user.email, keys: Object.keys(patch) });
+  logger.info('Xero credentials saved', { by: req.user.id, keys: Object.keys(patch) });
   res.json({ ok: true });
 });
 
@@ -81,11 +84,11 @@ router.delete('/oauth/disconnect', requireAuth, FINANCE, (req, res) => {
   const cache = tokenCache.forCompany(u.companyId);
   for (const t of cache.getAllTenants()) cache.removeTenant(t.tenant_id);
   users.saveCompanyConfig(u.companyId, { XERO_OAUTH_REFRESH_TOKEN: '', XERO_CONNECTION_TYPE: '' });
-  logger.info('Xero disconnected', { by: req.user.email });
+  logger.info('Xero disconnected', { by: req.user.id });
   res.json({ ok: true });
 });
 
-router.get('/tenants', requireAuth, (req, res) => {
+router.get('/tenants', requireAuth, FINANCE, (req, res) => {
   const u = me(req);
   res.json({ connectionType: users.getCompanyConfig(u.companyId).XERO_CONNECTION_TYPE || null, tenants: tokenCache.getPersistedTenants(u.companyId) });
 });

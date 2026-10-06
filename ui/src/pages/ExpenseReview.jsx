@@ -8,6 +8,7 @@ import CroppedImage from '../components/receipts/CroppedImage';
 import ConfirmDialog from '../components/ConfirmDialog';
 import StatusBadge from '../components/StatusBadge';
 import { fmtMoney, fmtRate } from '../utils/format';
+import { useVisiblePolling } from '../utils/useVisiblePolling';
 
 // Image on the left, fields on the right, so a figure is checked against the
 // receipt without switching context. Below the fields, the split into report
@@ -46,8 +47,19 @@ export default function ExpenseReview() {
   // without this it overwrote whatever was being typed at the time.
   const dirty = useRef(false);
 
+  // The receipt on screen, and when its link was issued. The link is kept for
+  // four of its five minutes: renewing it on every poll made the browser
+  // download the whole receipt again every two and a half seconds.
+  const image = useRef({ receiptId: null, at: 0 });
+  // The id this page is showing now. A reply for another one — a poll still in
+  // flight when Prev or Next was pressed — is dropped rather than painted over
+  // the new receipt, where Save would then have written it.
+  const current = useRef(id);
+
   const load = useCallback(async ({ preserveEdits } = {}) => {
-    const d = await api.get(`/expenses/${id}`);
+    const asked = id;
+    const d = await api.get(`/expenses/${asked}`);
+    if (current.current !== asked) return;
     setExp(d.expense);
     setLocked(!!d.locked);
     if (!(preserveEdits && dirty.current)) {
@@ -55,21 +67,31 @@ export default function ExpenseReview() {
       setLines(d.expense.lines.map(l => ({ category: l.category || '', description: l.description || '', amount: l.amount, onBehalfOf: l.onBehalfOf || '' })));
       dirty.current = false;
     }
-    setImageUrl(d.expense.receipt && d.imageToken ? `/api/receipts/${d.expense.receipt.id}/image?token=${encodeURIComponent(d.imageToken)}` : null);
-    api.get(`/expenses/${id}/group`).then(setGroup).catch(() => setGroup(null));
+    const rid = d.expense.receipt ? d.expense.receipt.id : null;
+    if (!rid || !d.imageToken) { image.current = { receiptId: null, at: 0 }; setImageUrl(null); }
+    else if (image.current.receiptId !== rid || Date.now() - image.current.at > 4 * 60 * 1000) {
+      image.current = { receiptId: rid, at: Date.now() };
+      setImageUrl(`/api/receipts/${rid}/image?token=${encodeURIComponent(d.imageToken)}`);
+    }
   }, [id]);
 
-  useEffect(() => { setMsg(null); load().catch(e => setMsg({ tone: 'error', text: e.message })); }, [load]);
+  // A different receipt is a fresh page: nothing from the last one carries over.
+  useEffect(() => {
+    current.current = id;
+    dirty.current = false;
+    image.current = { receiptId: null, at: 0 };
+    setExp(null); setGroup(null); setRot(0); setRateEdit(null); setConfirm(null); setMsg(null);
+    load().catch(e => setMsg({ tone: 'error', text: e.message }));
+    api.get(`/expenses/${id}/group`).then(g => { if (current.current === id) setGroup(g); }).catch(() => setGroup(null));
+  }, [id, load]);
   // Every case in the company for an admin, the person's own for anyone else
   // (the server answers scope=all with your own unless you are an admin).
   // Which of them may take this receipt is decided at render, once the
   // expense and its owner are known.
   useEffect(() => { api.get('/company').then(d => { setCategories(d.categories); setCurrencies(d.currencies || []); }).catch(() => {}); api.get('/reports?scope=all').then(d => setCases(d.reports || [])).catch(() => {}); }, []);
-  useEffect(() => {
-    // The image token lives five minutes; refresh it, and keep polling while the reader works.
-    const t = setInterval(() => load({ preserveEdits: true }).catch(() => {}), exp?.status === 'reading' ? 2500 : 4 * 60 * 1000);
-    return () => clearInterval(t);
-  }, [exp?.status, load]);
+  // Quickly while the reader works, slowly after; and not at all in a tab
+  // nobody is looking at.
+  useVisiblePolling(() => load({ preserveEdits: true }).catch(() => {}), () => (exp?.status === 'reading' ? 2500 : 4 * 60 * 1000));
 
   const totalCents = cents(form.total);
   const linesCents = lines.reduce((s, l) => s + cents(l.amount), 0);
@@ -133,6 +155,8 @@ export default function ExpenseReview() {
   }
 
   if (!exp) return <div style={{ color: 'var(--text-muted)' }}>{msg?.text || 'Loading…'}</div>;
+  const viewOnly = !!user && exp.userId !== user.id;
+  const readOnly = locked || viewOnly;
   const isPdf = exp.receipt?.mime === 'application/pdf';
   const idx = group?.siblings?.findIndex(s => s.id === id) ?? -1;
   const prev = idx > 0 ? group.siblings[idx - 1] : null;
@@ -155,7 +179,7 @@ export default function ExpenseReview() {
         <div style={{ display: 'flex', gap: 8 }}>
           {prev && <button className="btn btn-outline btn-sm" onClick={() => navigate(`/expenses/${prev.id}`)}>← Prev</button>}
           {next && <button className="btn btn-outline btn-sm" onClick={() => navigate(`/expenses/${next.id}`)}>Next →</button>}
-          <button className="btn btn-outline btn-sm" disabled={locked} title={locked ? 'The case it is in has been claimed' : ''} onClick={() => setConfirm('delete')}>Delete</button>
+          <button className="btn btn-outline btn-sm" disabled={readOnly} title={viewOnly ? 'Only the person who claimed this receipt can change it' : locked ? 'The case it is in has been claimed' : ''} onClick={() => setConfirm('delete')}>Delete</button>
         </div>
       </div>
 
@@ -166,7 +190,8 @@ export default function ExpenseReview() {
       </datalist>
 
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
-      {locked && <div className="alert alert-info">This receipt is in a case that has been claimed. Reopen the case to change it.</div>}
+      {viewOnly && <div className="alert alert-info">You are viewing someone else&rsquo;s receipt. Only they can change it.</div>}
+      {locked && !viewOnly && <div className="alert alert-info">This receipt is in a case that has been claimed. Reopen the case to change it.</div>}
       {exp.errorMsg && <div className="alert alert-warning"><span className="alert-icon">!</span><span>{exp.errorMsg}{exp.duplicateOf && <> · <Link to={`/expenses/${exp.duplicateOf}`}>see the other one</Link></>}</span></div>}
       {group?.split && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>{group.groupType === 'batch' ? 'Batch import' : 'Split from one file'} · {group.index} of {group.total}</div>}
 
@@ -180,7 +205,7 @@ export default function ExpenseReview() {
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               {!isPdf && <button className="btn btn-outline btn-sm" onClick={() => setRot(r => (r + 90) % 360)}>Rotate</button>}
-              <button className="btn btn-outline btn-sm" disabled={busy === 'reread' || !exp.receipt || locked} onClick={reread}>{busy === 'reread' ? 'Reading…' : 'Re-read'}</button>
+              <button className="btn btn-outline btn-sm" disabled={busy === 'reread' || !exp.receipt || readOnly} onClick={reread}>{busy === 'reread' ? 'Reading…' : 'Re-read'}</button>
               {imageUrl && <a className="btn btn-outline btn-sm" href={imageUrl} target="_blank" rel="noopener noreferrer">Open original</a>}
             </div>
           </div>
@@ -198,7 +223,7 @@ export default function ExpenseReview() {
               {FIELDS.map(([k, label, type]) => (
                 <div className="form-group" key={k} style={{ gridColumn: k === 'merchant' || k === 'purpose' ? '1 / -1' : 'auto' }}>
                   <label className="form-label" htmlFor={`f-${k}`}>{label}</label>
-                  <input id={`f-${k}`} className="form-input" type={type} step={type === 'number' ? '0.01' : undefined} value={form[k] ?? ''} disabled={locked}
+                  <input id={`f-${k}`} className="form-input" type={type} step={type === 'number' ? '0.01' : undefined} value={form[k] ?? ''} disabled={readOnly}
                          list={k === 'currency' ? 'currency-options' : undefined}
                          onChange={e => set(k, k === 'currency' ? e.target.value.toUpperCase().slice(0, 3) : e.target.value)}
                          placeholder={k === 'purpose' ? 'Client site visit, Chakan plant' : k === 'currency' ? 'IDR' : ''} />
@@ -212,7 +237,7 @@ export default function ExpenseReview() {
             </div>
             <div className="form-group">
               <label className="form-label" htmlFor="f-report">Case</label>
-              <select id="f-report" className="form-input" value={form.reportId || ''} onChange={e => set('reportId', e.target.value)} disabled={locked}>
+              <select id="f-report" className="form-input" value={form.reportId || ''} onChange={e => set('reportId', e.target.value)} disabled={readOnly}>
                 <option value="">Not in a case</option>
                 {!caseKnown && <option value={exp.reportId}>Its case</option>}
                 {caseOptions.map(r => <option key={r.id} value={r.id}>{r.number} {r.title || ''}</option>)}
@@ -253,8 +278,8 @@ export default function ExpenseReview() {
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                  <button className="btn btn-outline btn-sm" disabled={!!busy || locked} onClick={refreshFx}>{busy === 'fx' ? 'Working…' : 'Refresh rate'}</button>
-                  <button className="btn btn-outline btn-sm" disabled={!!busy || locked} onClick={() => setRateEdit({ rate: fx?.fxRate || '', reason: '' })}>Change rate…</button>
+                  <button className="btn btn-outline btn-sm" disabled={!!busy || readOnly} onClick={refreshFx}>{busy === 'fx' ? 'Working…' : 'Refresh rate'}</button>
+                  <button className="btn btn-outline btn-sm" disabled={!!busy || readOnly} onClick={() => setRateEdit({ rate: fx?.fxRate || '', reason: '' })}>Change rate…</button>
                 </div>
                 {rateEdit && (
                   <form onSubmit={submitRate} style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -273,23 +298,23 @@ export default function ExpenseReview() {
             <div className="card-subtitle">One line per category on the report. They must add up to the total{form.currency ? ` in ${form.currency}` : ''}.</div>
             {lines.map((l, i) => (
               <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.4fr 0.9fr auto', gap: 6, marginBottom: 6, alignItems: 'center' }}>
-                <select className="form-input" value={l.category} disabled={locked} onChange={e => setLine(i, 'category', e.target.value)} aria-label="Category">
+                <select className="form-input" value={l.category} disabled={readOnly} onChange={e => setLine(i, 'category', e.target.value)} aria-label="Category">
                   <option value="">Category…</option>
                   {categories.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
-                <input className="form-input" value={l.description} placeholder="Rooms, 3 nights" disabled={locked} onChange={e => setLine(i, 'description', e.target.value)} aria-label="Description" />
-                <input className="form-input" type="number" step="0.01" value={l.amount} disabled={locked} onChange={e => setLine(i, 'amount', e.target.value)} style={{ textAlign: 'right' }} aria-label="Amount" />
-                <button className="btn btn-ghost btn-sm" disabled={locked} onClick={() => editLines(ls => ls.filter((_, j) => j !== i))} aria-label="Remove line" title="Remove line">✕</button>
+                <input className="form-input" value={l.description} placeholder="Rooms, 3 nights" disabled={readOnly} onChange={e => setLine(i, 'description', e.target.value)} aria-label="Description" />
+                <input className="form-input" type="number" step="0.01" value={l.amount} disabled={readOnly} onChange={e => setLine(i, 'amount', e.target.value)} style={{ textAlign: 'right' }} aria-label="Amount" />
+                <button className="btn btn-ghost btn-sm" disabled={readOnly} onClick={() => editLines(ls => ls.filter((_, j) => j !== i))} aria-label="Remove line" title="Remove line">✕</button>
                 <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <input type="checkbox" checked={!!l.onBehalfOf} disabled={locked} onChange={e => setLine(i, 'onBehalfOf', e.target.checked ? (l.onBehalfOf || ' ') : '')} /> paid on behalf of
+                    <input type="checkbox" checked={!!l.onBehalfOf} disabled={readOnly} onChange={e => setLine(i, 'onBehalfOf', e.target.checked ? (l.onBehalfOf || ' ') : '')} /> paid on behalf of
                   </label>
-                  {!!l.onBehalfOf && <input className="form-input" style={{ padding: '4px 8px', fontSize: 12, maxWidth: 220 }} value={l.onBehalfOf.trim()} disabled={locked} placeholder="Colleague's name" onChange={e => setLine(i, 'onBehalfOf', e.target.value || ' ')} />}
+                  {!!l.onBehalfOf && <input className="form-input" style={{ padding: '4px 8px', fontSize: 12, maxWidth: 220 }} value={l.onBehalfOf.trim()} disabled={readOnly} placeholder="Colleague's name" onChange={e => setLine(i, 'onBehalfOf', e.target.value || ' ')} />}
                 </div>
               </div>
             ))}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, fontSize: 12.5 }}>
-              <button className="btn btn-outline btn-sm" disabled={locked} onClick={() => editLines(ls => [...ls, { category: '', description: '', amount: Math.max(0, (totalCents - linesCents) / 100).toFixed(2), onBehalfOf: '' }])}>+ Line</button>
+              <button className="btn btn-outline btn-sm" disabled={readOnly} onClick={() => editLines(ls => [...ls, { category: '', description: '', amount: Math.max(0, (totalCents - linesCents) / 100).toFixed(2), onBehalfOf: '' }])}>+ Line</button>
               <span style={{ color: reconciled ? 'var(--success)' : 'var(--danger)', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>
                 lines {fmtMoney(linesCents / 100, form.currency)} {reconciled ? '✓' : `≠ total ${fmtMoney(totalCents / 100, form.currency)}`}
               </span>
@@ -297,8 +322,8 @@ export default function ExpenseReview() {
           </div>
 
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-            <button className="btn btn-outline" disabled={!!busy || locked} onClick={() => save()}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
-            <button className="btn btn-primary" disabled={!!busy || !reconciled || locked || exp.status === 'reviewed'} title={reconciled ? '' : 'The lines must add up to the total first'} onClick={markReviewed}>
+            <button className="btn btn-outline" disabled={!!busy || readOnly} onClick={() => save()}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
+            <button className="btn btn-primary" disabled={!!busy || !reconciled || readOnly || exp.status === 'reviewed'} title={reconciled ? '' : 'The lines must add up to the total first'} onClick={markReviewed}>
               {busy === 'review' ? 'Saving…' : (next ? 'Mark reviewed → next' : 'Mark reviewed')}
             </button>
           </div>
