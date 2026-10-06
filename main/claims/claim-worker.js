@@ -170,7 +170,7 @@ async function recoverPendingJobs(makeDeps = null) {
 }
 
 function _reset() {
-  for (const [userId, w] of _workers) {
+  for (const w of _workers.values()) {
     if (w.pollId) clearInterval(w.pollId);
   }
   _workers.clear();

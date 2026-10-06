@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS expenses (
   ai_read_at     TEXT,
   ai_confidence  TEXT,
   ai_read        TEXT,      -- JSON: what the reader first read off the receipt, kept beside later edits
+  import_id      TEXT,      -- the claim import that made it (claims/claim-import.js), so a retry or an undo finds every row
   box            TEXT,      -- JSON [ymin,xmin,ymax,xmax] 0-1000 when one photo held several receipts
   page           INTEGER,   -- 1-based page when one PDF page is its own receipt
   source         TEXT NOT NULL DEFAULT 'upload',
@@ -162,6 +163,7 @@ CREATE TABLE IF NOT EXISTS expense_lines (
   fx_override_reason TEXT,
   fx_asked_date      TEXT,   -- the date the policy asked for, which is not always the date the provider priced
   fx_check           TEXT,   -- a sentence when the rate could not be trusted as it came
+  fx_tried_at        TEXT,   -- when the sweeper last asked for a rate it did not get (fx/sweeper.js)
   base_cents         INTEGER,
   on_behalf_of       TEXT,
   account_code       TEXT

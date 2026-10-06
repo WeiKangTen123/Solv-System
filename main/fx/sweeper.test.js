@@ -47,4 +47,14 @@ describe('fx/sweeper', () => {
     expect(await sweeper.sweep()).toMatchObject({ looked: 0, priced: 0 });
     expect(rates.getRate).not.toHaveBeenCalled();
   });
+
+  test('a line that cannot be priced waits an hour, so newer lines behind it are reached', async () => {
+    const stuck = expense([{ category: 'Meals', amount: 100 }], { currency: 'XYZ' });
+    const later = expense([{ category: 'Meals', amount: 100 }]);
+    rates.getRate.mockImplementation(async ({ from }) => (from === 'XYZ' ? null : { rate: 0.0134, rateDate: '2026-09-04', providerDate: '2026-09-04', source: 'frankfurter', fetchedAt: 'x' }));
+    await sweeper.sweep();
+    expect(store.getExpense(later.id).baseTotal).toBe(1.34);
+    expect(sweeper.pendingExpenseIds()).toEqual([]);                                   // tried a moment ago
+    expect(sweeper.pendingExpenseIds(25, Date.now() + 61 * 60 * 1000)).toEqual([stuck.id]);
+  });
 });

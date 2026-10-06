@@ -121,7 +121,7 @@ const EXPENSE_COLS = {
   receiptId: 'receipt_id', reportId: 'report_id', merchant: 'merchant', receiptDate: 'receipt_date', receiptTime: 'receipt_time',
   invoiceNo: 'invoice_no', currency: 'currency', purpose: 'purpose', description: 'description', category: 'category', status: 'status',
   duplicateOf: 'duplicate_of', errorMsg: 'error_msg', aiReadAt: 'ai_read_at', aiConfidence: 'ai_confidence', page: 'page', source: 'source',
-  claimedAt: 'claimed_at',
+  claimedAt: 'claimed_at', importId: 'import_id',
 };
 const MONEY = { total: 'total_cents', tax: 'tax_cents', subTotal: 'subtotal_cents' };
 
@@ -142,7 +142,7 @@ function _expense(row, lines, receipt) {
     total: toDollars(row.total_cents) ?? 0, tax: toDollars(row.tax_cents), subTotal: toDollars(row.subtotal_cents),
     purpose: row.purpose, description: row.description, category: row.category, status: row.status, duplicateOf: row.duplicate_of,
     errorMsg: row.error_msg, aiReadAt: row.ai_read_at, aiConfidence: row.ai_confidence, aiRead, box, page: row.page, source: row.source,
-    claimedAt: row.claimed_at, claimed: !!row.claimed_at,
+    claimedAt: row.claimed_at, claimed: !!row.claimed_at, importId: row.import_id || null,
     createdAt: row.created_at, updatedAt: row.updated_at, lines: lines || [], receipt: receipt || null,
   };
 }
@@ -174,7 +174,7 @@ function updateExpense(id, patch) {
   return getExpense(id);
 }
 
-function listExpenses({ companyId, userId, status, reportId, unfiled, from, to, receiptId, groupId } = {}) {
+function listExpenses({ companyId, userId, status, reportId, unfiled, from, to, receiptId, groupId, importId } = {}) {
   const where = [], args = [];
   if (companyId) { where.push('e.company_id = ?'); args.push(companyId); }
   if (userId)    { where.push('e.user_id = ?'); args.push(userId); }
@@ -185,6 +185,7 @@ function listExpenses({ companyId, userId, status, reportId, unfiled, from, to, 
   if (to)        { where.push('e.receipt_date <= ?'); args.push(to); }
   if (receiptId) { where.push('e.receipt_id = ?'); args.push(receiptId); }
   if (groupId)   { where.push('e.receipt_id IN (SELECT id FROM receipts WHERE group_id = ?)'); args.push(groupId); }
+  if (importId)  { where.push('(e.import_id = ? OR e.receipt_id IN (SELECT id FROM receipts WHERE group_id = ?))'); args.push(importId, importId); }
   const sql = `SELECT e.* FROM expenses e ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY e.receipt_date DESC, e.created_at DESC`;
   return db.prepare(sql).all(...args).map(_hydrate);
 }

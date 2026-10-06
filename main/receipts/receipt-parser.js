@@ -376,9 +376,17 @@ async function _readWith(userId, userContent, maxAttempts, { maxTokens = READ_MA
     } catch (err) {
       if (err.truncated) budget = Math.min(budget * 2, CEILING_TOKENS);
       logger.warn('Receipt parse attempt failed', { userId, attempt, error: err.message, ...(err.truncated ? { nextMaxTokens: budget } : {}) });
+      // Asking again cannot help when the request itself was refused, no key
+      // is set, or every key and model is out of quota (the client has
+      // already tried them all): it only spends another call.
+      if (!err.truncated && _hopeless(err)) break;
     }
   }
   return null;
+}
+function _hopeless(err) {
+  const status = err && err.response && err.response.status;
+  return [400, 401, 403, 404, 429].includes(status) || /No Gemini API key/.test(String(err && err.message));
 }
 
 
@@ -423,15 +431,18 @@ async function _readBatch(userId, images) {
   const list = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.receipts) ? parsed.receipts : null);
   // A reply that does not account for every image cannot be attributed safely.
   if (!list || list.length !== images.length) return null;
+  // Nor can one whose indexes are not each image exactly once. [1,2,2,4,5]
+  // has the right count, and put the third receipt's figures on the second.
+  // Every index given, each once and in range, or none at all (by position).
+  const idx = list.map(item => Number(item && item.index));
+  const given = idx.filter(n => Number.isInteger(n));
+  if (given.length) {
+    if (given.length !== list.length) return null;
+    if (new Set(given).size !== list.length || given.some(n => n < 1 || n > images.length)) return null;
+  }
 
   const out = new Array(images.length).fill(null);
-  for (const item of list) {
-    const idx = Number(item && item.index);
-    // Fall back to position when the model omits the index, but never overwrite.
-    const at = Number.isInteger(idx) && idx >= 1 && idx <= images.length ? idx - 1 : list.indexOf(item);
-    if (at < 0 || at >= images.length || out[at]) continue;
-    out[at] = normalise(item);
-  }
+  list.forEach((item, k) => { out[given.length ? idx[k] - 1 : k] = normalise(item); });
   return out.some(x => x) ? out : null;
 }
 
@@ -452,6 +463,15 @@ async function parseReceiptBatch(userId, images, { batchSize = BATCH_SIZE, onPro
 
     if (batch) {
       batch.forEach((r, i) => { results[start + i] = r; });
+      // A slot the batch could not read is read on its own: one bad photo in a
+      // batch of five used to be reported unreadable without a second look.
+      for (let i = 0; i < slice.length; i++) {
+        const got = results[start + i];
+        // An answer with neither a merchant nor a total read nothing.
+        if (got && (got.merchant || (got.total !== null && got.total !== undefined))) continue;
+        const single = await parseReceiptImage(userId, slice[i].buffer, slice[i].mime);
+        results[start + i] = single && single.receipts ? single.receipts[0] : null;
+      }
       done += slice.length;
       onProgress && onProgress(done);
       continue;

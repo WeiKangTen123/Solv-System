@@ -3,7 +3,6 @@ const logger = require('../utils/logger');
 const { readArchive }    = require('./claim-archive');
 const { parseClaimForm } = require('./claim-form');
 const { matchClaims }    = require('./claim-matcher');
-const { suggestCategories } = require('./claim-categories');
 const reports = require('../store/reports');
 const users   = require('../store/users');
 
@@ -165,7 +164,7 @@ function startImport({ userId, archives = [], forms = [], label = 'Expense claim
 }
 
 async function _run(job, { archives, forms }, deps) {
-  const { parseReceipts, storeReceipt, createRecord, suggest,
+  const { parseReceipts, storeReceipt, createRecord, suggest, clearPartial,
           waitMs = READ_INTERVAL_MS, batch = BATCH_SIZE } = deps;
 
   // ── 1. Unpack ────────────────────────────────────────────────────────────
@@ -228,12 +227,20 @@ async function _run(job, { archives, forms }, deps) {
       parsed = new Array(slice.length).fill(null);
     }
 
+    const BLANK = { merchant: null, date: null, time: null, category: null, total: null, currency: null, description: null };
     slice.forEach((e, i) => {
       const r = parsed && parsed[i];
+      // A PDF can hold several receipts: each part is a read of its own, on
+      // its page of the one file (fileKey lets the parts share it).
+      if (r && Array.isArray(r.parts)) {
+        const parts = r.parts.length ? r.parts : [{ r: null, page: null, box: null }];
+        parts.forEach((p, k) => reads.push({ ...(p.r || BLANK), file: e.name, mime: e.mime, buffer: e.buffer, readable: !!p.r,
+          page: p.page || null, box: p.box || null, part: k, fileKey: `${e.archive || ''}/${e.name}` }));
+        return;
+      }
       // A receipt that cannot be read still takes part: it is stored, and it is
       // reported as unreadable rather than silently dropped.
-      reads.push({ ...(r || { merchant: null, date: null, time: null, category: null, total: null, currency: null, description: null }),
-                   file: e.name, mime: e.mime, buffer: e.buffer, readable: !!r });
+      reads.push({ ...(r || BLANK), file: e.name, mime: e.mime, buffer: e.buffer, readable: !!r });
     });
     _update(job, { receiptsRead: Math.min(start + slice.length, entries.length) });
 
@@ -256,8 +263,19 @@ async function _run(job, { archives, forms }, deps) {
   }
 
   // ── 6. Create the records ────────────────────────────────────────────────
+  // A cancel that arrived while the receipts were read is honoured here, the
+  // last point before anything is saved.
+  if (job.cancelled) return _update(job, { stage: 'cancelled' });
   _stage(job, 'saving');
   const groupId = job.id;
+  // A job that ran before and died part-way through saving runs again from
+  // the top with the same id: what its last attempt saved goes first.
+  if (clearPartial) {
+    try { const out = clearPartial(job.userId, job.id); if (out && out.removed) logger.info('Cleared a part-saved import before saving it again', { jobId: job.id, removed: out.removed }); }
+    catch (err) { logger.warn('Could not clear a part-saved import', { jobId: job.id, error: err.message }); }
+  }
+  // Files already stored by this import, so the parts of one PDF share it.
+  const files = new Map();
   const created = [];
   // Duplicates are counted as they are created rather than re-queried, because
   // createRecord is the only place that knows what the store said.
@@ -282,14 +300,14 @@ async function _run(job, { archives, forms }, deps) {
       row: m.row, receipt: m.receipt, match: m,
       category: m.row.category || (suggestion && suggestion.category) || null,
       categorySuggested: !m.row.category && !!suggestion,
-      store: storeReceipt,
+      store: storeReceipt, files,
     });
     note(rec);
   }
   // Claim lines with no receipt still become records — they are part of the
   // claim and somebody has to resolve them.
   for (const row of matched.unmatchedRows) {
-    const rec = await createRecord({ userId: job.userId, groupId, row, receipt: null, match: null, category: row.category || null, store: storeReceipt });
+    const rec = await createRecord({ userId: job.userId, groupId, row, receipt: null, match: null, category: row.category || null, store: storeReceipt, files });
     note(rec);
   }
 
@@ -311,7 +329,7 @@ async function _run(job, { archives, forms }, deps) {
         amount: receipt.total ?? null,
         category: receipt.category || null,
       },
-      receipt, match: null, category: receipt.category || null, store: storeReceipt,
+      receipt, match: null, category: receipt.category || null, store: storeReceipt, files,
     });
     note(rec);
   }

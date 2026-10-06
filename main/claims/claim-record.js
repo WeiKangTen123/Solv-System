@@ -11,10 +11,14 @@ const logger = require('../utils/logger');
 // amount and date — and because one record at a time means a repeat inside a
 // single archive is caught too: the first row is committed before the second
 // is checked.
-async function createClaimRecord({ userId, groupId, row, receipt, match, category, store: storeFile }) {
+async function createClaimRecord({ userId, groupId, row, receipt, match, category, store: storeFile, files = null }) {
   const me = users.findById(userId);
   const companyId = me.companyId;
-  const hash = receipt && receipt.buffer ? hashBuffer(receipt.buffer) : null;
+  // A later part of a PDF already stored by this import shares its file. Its
+  // bytes are the first part's, so a hash check would call it a duplicate of
+  // its own sibling: parts are checked by their figures only.
+  const shared = receipt && receipt.fileKey && files ? files.get(receipt.fileKey) : null;
+  const hash = receipt && receipt.buffer && !(receipt.part > 0) ? hashBuffer(receipt.buffer) : null;
   const dup = findDuplicate({
     store: store.dedupView(companyId), profile: { dedup: { byHash: true, byNumber: false, byFields: true } }, hash,
     vendorName: (receipt && receipt.merchant) || null,
@@ -22,7 +26,16 @@ async function createClaimRecord({ userId, groupId, row, receipt, match, categor
   });
 
   let receiptId = null;
-  if (dup && dup.certain && dup.match.receiptFile) {
+  let storeNote = null;
+  const remember = (file, mime) => { if (receipt && receipt.fileKey && files) files.set(receipt.fileKey, { file, mime }); };
+  if (shared) {
+    const rec = store.createReceipt({ companyId, userId, file: shared.file, mime: shared.mime, sizeBytes: 0, sha256: null, source: 'import', groupId, originalName: receipt.file || null });
+    store.updateReceipt(rec.id, { parsedAt: new Date().toISOString() });
+    receiptId = rec.id;
+  } else if (dup && dup.certain && dup.match.receiptFile && dup.match.userId === userId) {
+    // A file is shared only within one person's storage: a colleague's file
+    // lives in their directory, where this person's receipt would never find
+    // it, so a duplicate of a colleague's receipt keeps its own copy.
     // Byte-identical to a file already held: a receipt row of its own (so this
     // import's group owns it) pointing at the SAME file. countExpensesForFile
     // keeps the file until the last expense on it is gone.
@@ -30,14 +43,26 @@ async function createClaimRecord({ userId, groupId, row, receipt, match, categor
       sizeBytes: receipt && receipt.buffer ? receipt.buffer.length : 0, sha256: hash, source: 'import', groupId, originalName: receipt && receipt.file || null });
     store.updateReceipt(rec.id, { parsedAt: new Date().toISOString() });
     receiptId = rec.id;
+    remember(dup.match.receiptFile, dup.match.receiptMime || receipt.mime);
   } else if (receipt && receipt.buffer) {
-    try {
-      const rec = store.createReceipt({ companyId, userId, file: 'pending', mime: receipt.mime, sizeBytes: receipt.buffer.length, sha256: hash, source: 'import', groupId, originalName: receipt.file || null });
-      const name = await storeFile(userId, rec.id, receipt.buffer, receipt.mime);
-      store.updateReceipt(rec.id, { file: name, parsedAt: new Date().toISOString() });
-      receiptId = rec.id;
-    } catch (err) {
-      logger.warn('Claim receipt could not be stored', { userId, error: err.message });
+    const { QUOTA_BYTES } = require('../receipts/receipt-store');
+    if (store.bytesStoredBy(userId) + receipt.buffer.length > QUOTA_BYTES) {
+      storeNote = 'The receipt file was not kept: your receipt storage is full. Ask your administrator.';
+    } else {
+      let rec = null;
+      try {
+        rec = store.createReceipt({ companyId, userId, file: 'pending', mime: receipt.mime, sizeBytes: receipt.buffer.length, sha256: hash, source: 'import', groupId, originalName: receipt.file || null });
+        const name = await storeFile(userId, rec.id, receipt.buffer, receipt.mime);
+        store.updateReceipt(rec.id, { file: name, parsedAt: new Date().toISOString() });
+        receiptId = rec.id;
+        remember(name, receipt.mime);
+      } catch (err) {
+        logger.warn('Claim receipt could not be stored', { userId, error: err.message });
+        // A row left on 'pending' carried the file's hash, and every later
+        // upload of that file was refused as already held.
+        if (rec) store.deleteReceipt(rec.id);
+        storeNote = 'The receipt file could not be kept. Upload it again on this receipt.';
+      }
     }
   }
 
@@ -46,6 +71,7 @@ async function createClaimRecord({ userId, groupId, row, receipt, match, categor
     : dup ? `Duplicate of ${ref} — ${dup.reason}`
     : match && match.discrepancy ? `Claimed ${match.discrepancy.claimed} but the receipt says ${match.discrepancy.onReceipt}`
     : (!receipt && row.no ? 'No receipt found for this claim line' : null);
+  const errorMsg = [note, storeNote].filter(Boolean).join(' ') || null;
 
   const cat = canonicalCategory(category) || canonicalCategory(receipt && receipt.category) || null;
   const total = row.amount != null ? row.amount : (receipt && receipt.total != null ? receipt.total : 0);
@@ -57,7 +83,8 @@ async function createClaimRecord({ userId, groupId, row, receipt, match, categor
     merchant: (receipt && receipt.merchant) || null, receiptDate: row.date || (receipt && receipt.date) || null, receiptTime: (receipt && receipt.time) || null,
     invoiceNo: (receipt && receipt.invoiceNumber) || null, currency, total, tax: receipt && receipt.tax != null ? receipt.tax : null,
     subTotal: receipt && receipt.subTotal != null ? receipt.subTotal : null, description, category: cat,
-    status: dup && dup.certain ? 'duplicate' : 'review-needed', duplicateOf: dup && dup.match.id ? dup.match.id : null, errorMsg: note,
+    status: dup && dup.certain ? 'duplicate' : 'review-needed', duplicateOf: dup && dup.match.id ? dup.match.id : null, errorMsg,
+    importId: groupId || null, page: (receipt && receipt.page) || undefined, box: (receipt && receipt.box) || null,
     aiReadAt: receipt && receipt.readable !== false ? new Date().toISOString() : null, aiConfidence: (receipt && receipt.confidence) || null,
     lines: total > 0 ? [{ category: cat || 'Other', description, amount: total, currency }] : [],
   });

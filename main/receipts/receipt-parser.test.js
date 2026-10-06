@@ -351,6 +351,29 @@ describe('receipt-parser — reading several at once', () => {
     expect(out.every(r => r.merchant === 'Single')).toBe(true);
   });
 
+  test('a reply that names one image twice is discarded, not trusted by its count', async () => {
+    callGemini
+      .mockResolvedValueOnce(JSON.stringify([read(1, 'A', 1), read(2, 'B', 2), read(2, 'C', 3)]))   // image 3 never answered
+      .mockResolvedValue(JSON.stringify({ receipts: [read(1, 'Single', 9.9)] }));
+    const out = await parser.parseReceiptBatch('u1', [img(1), img(2), img(3)]);
+    expect(callGemini).toHaveBeenCalledTimes(4);
+    expect(out.map(r => r.merchant)).toEqual(['Single', 'Single', 'Single']);
+  });
+
+  test('a slot a trusted batch could not read is read again on its own', async () => {
+    callGemini
+      .mockResolvedValueOnce(JSON.stringify([read(1, 'A', 1), { index: 2 }, read(3, 'C', 3)]))
+      .mockResolvedValue(JSON.stringify({ receipts: [read(1, 'Second look', 4)] }));
+    const out = await parser.parseReceiptBatch('u1', [img(1), img(2), img(3)]);
+    expect(out.map(r => r && r.merchant)).toEqual(['A', 'Second look', 'C']);
+  });
+
+  test('a request the API refused is not asked again', async () => {
+    callGemini.mockRejectedValue(Object.assign(new Error('bad request'), { response: { status: 400 } }));
+    expect(await parser.parseReceiptImage('u1', Buffer.from([0xff, 0xd8, 1]), 'image/jpeg')).toBeNull();
+    expect(callGemini).toHaveBeenCalledTimes(1);
+  });
+
   test('a batch that throws falls back rather than losing the receipts', async () => {
     callGemini
       .mockRejectedValueOnce(new Error('quota'))

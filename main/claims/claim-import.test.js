@@ -369,4 +369,48 @@ describe('claims/claim-import — everything that arrives together becomes a cas
     await settle(job);
     expect(job.result.caseId).toBeNull();
   });
+
+  test('a PDF of several receipts in the archive becomes a record per receipt, sharing the one file', async () => {
+    const zip = makeZip([{ name: 'c/receipts.pdf', data: Buffer.from('%PDF-1.4 four receipts') }]);
+    const d = deps();
+    d.parseReceipts = jest.fn(async (u, images) => images.map(() => ({ parts: [
+      { r: { merchant: 'A', date: '2026-09-01', total: 10, currency: 'SGD' }, page: 1, box: null },
+      { r: { merchant: 'B', date: '2026-09-02', total: 20, currency: 'SGD' }, page: 2, box: null },
+      { r: null, page: 3, box: null },
+    ] })));
+    const seen = [];
+    d.createRecord = jest.fn(async ({ receipt, files }) => { seen.push({ ...receipt, files: !!files }); return { id: `rec-${seen.length}` }; });
+    const job = claimImport.startImport({ userId: 'u1', archives: [{ name: 'c.zip', buffer: zip }], forms: [] }, d);
+    await settle(job);
+    expect(job.stage).toBe('done');
+    expect(seen.map(r => [r.merchant, r.page, r.part, r.readable])).toEqual([['A', 1, 0, true], ['B', 2, 1, true], [null, 3, 2, false]]);
+    expect(new Set(seen.map(r => r.fileKey)).size).toBe(1);
+    expect(seen.every(r => r.files)).toBe(true);
+  });
+
+  test('an interrupted import clears what its last attempt saved before saving again', async () => {
+    const zip = makeZip([{ name: 'c/a.png', data: JPEG }]);
+    const d = deps();
+    const order = [];
+    d.clearPartial = jest.fn(() => { order.push('clear'); return { removed: 2 }; });
+    d.createRecord = jest.fn(async () => { order.push('create'); return { id: 'r1' }; });
+    const job = claimImport.startImport({ userId: 'u1', archives: [{ name: 'c.zip', buffer: zip }], forms: [], id: 'job-7' }, d);
+    await settle(job);
+    expect(d.clearPartial).toHaveBeenCalledWith('u1', 'job-7');
+    expect(order).toEqual(['clear', 'create']);
+  });
+
+  test('a cancel that arrives while receipts are read is honoured before anything is saved', async () => {
+    const zip = makeZip([{ name: 'c/a.png', data: JPEG }]);
+    const d = deps();
+    let release;
+    d.parseReceipts = jest.fn(() => new Promise(r => { release = () => r([null]); }));
+    const job = claimImport.startImport({ userId: 'u1', archives: [{ name: 'c.zip', buffer: zip }], forms: [] }, d);
+    for (let i = 0; i < 100 && !release; i++) await new Promise(r => setTimeout(r, 5));
+    claimImport.cancel(job.id, 'u1');
+    release();
+    await settle(job);
+    expect(job.stage).toBe('cancelled');
+    expect(d.createRecord).not.toHaveBeenCalled();
+  });
 });

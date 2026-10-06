@@ -2,18 +2,16 @@ const express      = require('express');
 const router       = express.Router();
 const { decodeBase64 } = require('../utils/base64');
 const { requireAuth } = require('../middleware/auth-middleware');
-const store        = require('../store/expenses');
 const receiptStore = require('../receipts/receipt-store');
 const claimImport  = require('../claims/claim-import');
 const claimQueue   = require('../claims/claim-queue');
 const claimWorker  = require('../claims/claim-worker');
 const { parseReceiptBatch } = require('../receipts/receipt-parser');
-const { readOne }  = require('../receipts/read-receipt');
+const { readParts } = require('../receipts/read-receipt');
 const { suggestCategories } = require('../claims/claim-categories');
 const { createClaimRecord } = require('../claims/claim-record');
+const { undoImport } = require('../claims/claim-undo');
 const logger       = require('../utils/logger');
-const wf           = require('../reports/workflow');
-const reports      = require('../store/reports');
 
 // A batch claim: a zip of receipts plus the claim-form spreadsheet, as they
 // arrive by email. Runs as a background job; the client polls.
@@ -21,14 +19,17 @@ const MAX_UPLOAD_BYTES = 18 * 1024 * 1024;
 // Parsed only on this route, after sign-in; index.js keeps the rest to 100 KB.
 const bigJson = express.json({ limit: '25mb' });
 
-// Images are read five to a call; a PDF in the archive goes through the same
-// classify-and-read the upload path uses (text, or rendered pages).
+// Images are read five to a call. A PDF in the archive goes through exactly
+// the read the upload path uses (receipts/read-receipt.js readParts), so a PDF
+// of several receipts becomes several records, each knowing its page.
 async function parseEntries(userId, entries) {
   const out = new Array(entries.length).fill(null);
   const imageIdx = [];
   for (let i = 0; i < entries.length; i++) {
-    if (entries[i].mime === 'application/pdf') { try { out[i] = await readOne(userId, entries[i].buffer, entries[i].mime); } catch { out[i] = null; } }
-    else imageIdx.push(i);
+    if (entries[i].mime === 'application/pdf') {
+      try { const read = await readParts(userId, entries[i].buffer, entries[i].mime); out[i] = { parts: read.parts, notes: read.notes }; }
+      catch { out[i] = null; }
+    } else imageIdx.push(i);
   }
   if (imageIdx.length) {
     const read = await parseReceiptBatch(userId, imageIdx.map(i => ({ buffer: entries[i].buffer, mime: entries[i].mime })));
@@ -43,6 +44,9 @@ function deps() {
     storeReceipt: (uid, id, buffer, mime) => receiptStore.forUser(uid).save(id, buffer, mime),
     createRecord: createClaimRecord,
     suggest: (uid, matches, categories) => suggestCategories(uid, matches, categories),
+    // An import that runs again after a restart first clears what its last
+    // attempt saved: it used to make every row twice.
+    clearPartial: (uid, importId) => undoImport(uid, importId),
   };
 }
 claimWorker.registerJobType('claim-import', {
@@ -107,35 +111,12 @@ router.delete('/import/:jobId', requireAuth, (req, res) => {
 
 // Undo a whole import: every expense from it, and every file nothing else uses.
 router.delete('/group/:groupId', requireAuth, (req, res) => {
-  const members = store.listExpenses({ groupId: req.params.groupId, userId: req.user.id });
-  if (!members.length) return res.status(404).json({ error: 'Nothing found for that import' });
-  let files = 0;
-  // Undo only reaches what is still the claimant's to undo. This route used to
-  // delete every member outright, which pulled expenses out of reports that had
-  // already been approved — and posted to Xero — leaving the report's total
-  // quietly smaller than the bill and nothing in the audit trail to say why.
-  const kept = members.filter(e => wf.isLocked(e));
-  // The case the import created is part of the import. If undoing empties it
-  // and nobody has submitted it, it goes too rather than being left behind as
-  // an empty case with a number.
-  const cases = [...new Set(members.map(e => e.reportId).filter(Boolean))];
-  for (const e of members) {
-    if (wf.isLocked(e)) continue;
-    store.deleteExpense(e.id);
-    if (e.receipt && store.countExpensesForReceipt(e.receipt.id) === 0) {
-      if (store.countExpensesForFile(e.receipt.userId, e.receipt.file) === 0 && receiptStore.forUser(e.receipt.userId).remove(e.receipt.file)) files++;
-      store.deleteReceipt(e.receipt.id);
-    }
-  }
-  let casesRemoved = 0;
-  for (const id of cases) {
-    const c = reports.getReport(id);
-    if (c && c.userId === req.user.id && c.kind === 'case' && wf.isEditable(c) && !c.expenses.length) { reports.deleteReport(id); casesRemoved++; }
-  }
-  logger.info('Claim import undone', { userId: req.user.id, groupId: req.params.groupId, removed: members.length - kept.length, kept: kept.length, files, casesRemoved });
+  const out = undoImport(req.user.id, req.params.groupId);
+  if (!out.found) return res.status(404).json({ error: 'Nothing found for that import' });
+  logger.info('Claim import undone', { userId: req.user.id, groupId: req.params.groupId, removed: out.removed, kept: out.kept.length, files: out.files, casesRemoved: out.casesRemoved });
   res.json({
-    removed: members.length - kept.length,
-    kept: kept.map(e => ({ id: e.id, merchant: e.merchant, why: 'it is in a report that has been submitted' })),
+    removed: out.removed,
+    kept: out.kept.map(e => ({ id: e.id, merchant: e.merchant, why: 'it is in a case that has been claimed' })),
   });
 });
 

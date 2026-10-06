@@ -75,11 +75,6 @@ const FIELD_HEADERS = {
   baseAmount:   ['SGD AMOUNT', 'BASE AMOUNT', 'AMOUNT SGD'],
 };
 
-// Anything that is not one of the fields above and sits between them is a
-// category column — the buckets the claimant is meant to tick.
-function isFieldHeader(norm) {
-  return Object.values(FIELD_HEADERS).some(list => list.includes(norm));
-}
 
 // Finds the header row: the first row carrying at least three known field
 // headings. Forms carry a title, a company name and a claim period above it, so
@@ -156,10 +151,13 @@ async function parseClaimForm(buffer) {
 
     // Real forms end with a totals line, a declaration and a signature block,
     // then a finance-only section. Reading past that turns "I declared the
-    // expense claimed above..." into a claim line. Stop at the first marker.
+    // expense claimed above..." into a claim line. Stop at the first marker,
+    // on a row that is not itself a claim line: "Petrol at Total Energies"
+    // on a dated row used to end the form there and drop every row after it.
     const wholeRow = [];
     row.eachCell({ includeEmpty: false }, cell => wholeRow.push(cellText(cell.value)));
-    if (FOOTER_MARKERS.test(wholeRow.join(' '))) { reachedFooter = true; return; }
+    const isLine = !!cellDate(get('date')) || /^\d+(\.0)?$/.test(cellText(get('no')));
+    if (!isLine && FOOTER_MARKERS.test(wholeRow.join(' '))) { reachedFooter = true; return; }
 
     const amount = cellNumber(get('amount'));
     const description = cellText(get('description'));

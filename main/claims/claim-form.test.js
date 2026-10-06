@@ -137,4 +137,14 @@ describe('claims/claim-form', () => {
       expect(normaliseHeader('  Amount  ')).toBe('AMOUNT');
     });
   });
+
+  test('the word "total" in a dated claim line does not end the form', async () => {
+    const buf = await makeForm({ rows: [
+      { no: 1, date: new Date('2026-09-01T00:00:00Z'), description: 'Grab to client', amount: 18.4 },
+      { no: 2, date: new Date('2026-09-02T00:00:00Z'), description: 'Petrol at Total Energies station', amount: 60 },
+      { no: 3, date: new Date('2026-09-03T00:00:00Z'), description: 'Parking', amount: 5 },
+    ] });
+    const out = await parseClaimForm(buf);
+    expect(out.rows.map(r => r.description)).toEqual(['Grab to client', 'Petrol at Total Energies station', 'Parking']);
+  });
 });

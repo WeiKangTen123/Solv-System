@@ -101,7 +101,10 @@ export default function ClaimImport({ onClose, onImported, initialJobId = null }
   const s = job?.result?.summary;
 
   return (
-    <Modal onClose={onClose} busy={active} maxWidth={560} card label="Import an expense claim">
+    // Only the moment of sending holds the panel open. A running import keeps
+    // going on the server and is found again when the panel reopens, as the
+    // panel itself says; holding it open for minutes said the opposite.
+    <Modal onClose={onClose} busy={starting} maxWidth={560} card label="Import an expense claim">
 
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 14 }}>
           <div>
@@ -110,9 +113,9 @@ export default function ClaimImport({ onClose, onImported, initialJobId = null }
               A zip of receipts and the claim form, as they arrive by email.
             </div>
           </div>
-          <button onClick={onClose} disabled={active} aria-label="Close"
-                  style={{ background: 'none', border: 'none', cursor: active ? 'not-allowed' : 'pointer',
-                           color: 'var(--text-muted)', fontSize: 22, lineHeight: 1, opacity: active ? 0.4 : 1 }}>×</button>
+          <button onClick={onClose} disabled={starting} aria-label="Close"
+                  style={{ background: 'none', border: 'none', cursor: starting ? 'not-allowed' : 'pointer',
+                           color: 'var(--text-muted)', fontSize: 22, lineHeight: 1, opacity: starting ? 0.4 : 1 }}>×</button>
         </div>
 
         {error && <div className="alert alert-error" style={{ marginBottom: 12 }}><span className="alert-icon">✕</span>{error}</div>}

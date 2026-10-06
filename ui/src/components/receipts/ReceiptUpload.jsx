@@ -33,7 +33,9 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
   useEffect(() => {
     let alive = true;
     api.get('/claims/active')
-      .then(d => { if (alive) setRunningJobId((d.jobs || d.active || []).map(j => j.id || j.jobId)[0] || null); })
+      // The server answers { job } (routes/claims.js). This read d.jobs, which
+      // never exists, so a running import was never found again after a reload.
+      .then(d => { if (alive) setRunningJobId((d && d.job && (d.job.id || d.job.jobId)) || null); })
       .catch(() => {});
     return () => { alive = false; };
   }, []);

@@ -32,17 +32,27 @@ let running = false;
 // since every receipt now lives in a case from the moment it lands, the query
 // matched nothing at all: the sweeper ran every quarter of an hour and never
 // priced a line.
-function pendingExpenseIds(limit = BATCH) {
-  return db.prepare(`SELECT DISTINCT e.id FROM expenses e
+//
+// And a line that was tried and still has no rate waits an hour before it
+// is tried again, least recently tried first: a currency no provider prices,
+// or a monthly table nobody has filled in, used to keep the oldest lines in
+// every batch, so the newer ones behind them were never reached.
+const RETRY_AFTER_MS = 60 * 60 * 1000;
+function pendingExpenseIds(limit = BATCH, now = Date.now()) {
+  const cutoff = new Date(now - RETRY_AFTER_MS).toISOString();
+  return db.prepare(`SELECT e.id FROM expenses e
                      JOIN expense_lines l ON l.expense_id = e.id
                      LEFT JOIN expense_reports r ON r.id = e.report_id
                      WHERE l.fx_rate IS NULL
                        AND l.fx_override_by IS NULL
                        AND l.fx_check IS NULL
+                       AND (l.fx_tried_at IS NULL OR l.fx_tried_at < ?)
                        AND e.status NOT IN ('duplicate', 'rejected')
                        AND (e.report_id IS NULL OR r.status = 'open')
-                     ORDER BY e.created_at LIMIT ?`).all(limit).map(r => r.id);
+                     GROUP BY e.id
+                     ORDER BY MAX(COALESCE(l.fx_tried_at, '')), e.created_at LIMIT ?`).all(cutoff, limit).map(r => r.id);
 }
+const _tried = { run: (at, id) => db.prepare('UPDATE expense_lines SET fx_tried_at = ? WHERE expense_id = ? AND fx_rate IS NULL').run(at, id) };
 
 async function sweep() {
   if (running) return { skipped: 'already running' };
@@ -57,8 +67,9 @@ async function sweep() {
       try {
         const r = await applyFx(id);
         if (r.applied) out.priced++;
-        if (r.pending) out.stillPending++;
+        if (r.pending) { out.stillPending++; _tried.run(new Date().toISOString(), id); }
       } catch (err) {
+        _tried.run(new Date().toISOString(), id);
         logger.warn('Sweeping a pending rate failed', { expenseId: id, error: err.message });
       }
     }

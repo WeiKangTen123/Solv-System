@@ -196,11 +196,7 @@ router.post('/:id/merge', requireAuth, (req, res) => {
 
 router.delete('/:id', requireAuth, (req, res) => {
   const e = _loadActionable(req, res); if (!e) return;
-  store.deleteExpense(e.id);
-  if (e.receipt && store.countExpensesForReceipt(e.receipt.id) === 0) {
-    if (store.countExpensesForFile(e.receipt.userId, e.receipt.file) === 0) receiptStore.forUser(e.receipt.userId).remove(e.receipt.file);
-    store.deleteReceipt(e.receipt.id);
-  }
+  require('../receipts/remove').removeExpense(e);
   logger.info('Expense deleted', { id: e.id, by: req.user.id });
   res.json({ ok: true });
 });

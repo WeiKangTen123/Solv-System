@@ -63,6 +63,14 @@ function run() {
   // What the reader last read off the receipt, kept beside what the receipt
   // now says, so an amount that drifted from the paper is visible.
   _ensureColumn('expenses', 'ai_read', 'ai_read TEXT');
+  // Which claim import made a row, so an interrupted import that runs again
+  // first removes what its last attempt saved, and an undo finds the rows
+  // that have no receipt file to be found by.
+  _ensureColumn('expenses', 'import_id', 'import_id TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_expenses_import ON expenses(import_id)');
+  // When the sweeper last tried to price a line and failed, so a line that can
+  // never be priced stops holding the batch (fx/sweeper.js).
+  _ensureColumn('expense_lines', 'fx_tried_at', 'fx_tried_at TEXT');
 
   // Steps run in ascending order, because each one stamps the database with its
   // own number and a lower number is then skipped for good.

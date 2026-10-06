@@ -210,4 +210,25 @@ describe('receipts/read-receipt', () => {
     const sib = store.getExpense(out.expenseIds[1]);
     expect(sib).toMatchObject({ merchant: 'B', reportId: rep.id, currency: 'MYR' });
   });
+
+  test('a typed cover sheet with scanned receipts behind it reads the scans too, and a long scan says what it skipped', async () => {
+    const cover = 'EXPENSE CLAIM COVER SHEET Employee Aisha Rahman Department Sales Period September 2026 receipts attached';
+    pdfPages.extractPages.mockResolvedValue({ pages: [cover, '', ''], numPages: 3, hasText: true, textPageCount: 1 });
+    pdfPages.splittablePages.mockReturnValue({ split: false, pageNumbers: [], reason: 'fewer than two pages have readable text' });
+    pdfPages.MIN_PAGE_CHARS = 40;
+    parser.parseReceiptText.mockResolvedValue({ split: false, receipts: [{ merchant: null, total: null, confidence: 'low', lineItems: [] }] });
+    render.renderPdfPages.mockResolvedValue({ numPages: 3, pages: [1, 2, 3].map(p => ({ page: p, buffer: Buffer.from(`p${p}`) })) });
+    parser.parseReceiptImage
+      .mockResolvedValueOnce({ split: false, receipts: [{ merchant: 'Grab', date: '2026-09-01', total: 18.4, currency: 'SGD', category: 'Meals', confidence: 'high', lineItems: [] }] })
+      .mockResolvedValueOnce({ split: false, receipts: [{ merchant: null, total: null, confidence: 'low', lineItems: [] }] });
+    const out = await read.readParts(u.id, Buffer.from('%PDF'), 'application/pdf');
+    expect(out.parts.map(p => [p.page, p.r && p.r.merchant])).toEqual([[1, null], [2, 'Grab']]);
+
+    pdfPages.extractPages.mockResolvedValue({ pages: [], numPages: 30, hasText: false, textPageCount: 0 });
+    render.renderPdfPages.mockResolvedValue({ numPages: 30, pages: Array.from({ length: 20 }, (_, i) => ({ page: i + 1, buffer: Buffer.from('x') })) });
+    parser.parseReceiptImage.mockResolvedValue(null);
+    const scan = await read.readParts(u.id, Buffer.from('%PDF'), 'application/pdf');
+    expect(scan.notes.join(' ')).toMatch(/Only the first 20 of 30 pages were read/);
+    expect(scan.parts).toHaveLength(20);
+  });
 });
