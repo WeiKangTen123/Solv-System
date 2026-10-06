@@ -3,7 +3,7 @@ const express = require('express');
 const jwt     = require('jsonwebtoken');
 const { serverFor } = require('../scripts/test-server');
 
-jest.mock('../llm/gemini-client', () => ({ chatWithTools: jest.fn(), callGemini: jest.fn() }));
+jest.mock('../llm/gemini-client', () => ({ chatWithTools: jest.fn(), callGemini: jest.fn(), hasKeys: jest.fn(() => !!process.env.Gemini_API_KEY), forgetKeys: jest.fn() }));
 
 describe('routes/assistant', () => {
   let app, users, llm, admin, emp, peer, tokens;
@@ -85,5 +85,21 @@ describe('routes/assistant', () => {
     expect(done.body.action.status).toBe('applied');
     expect(store.getExpense(e.id).purpose).toBe('Airport');
     await request(serverFor(app)).post(`/api/assistant/actions/${id}/dismiss`).set(as(emp)).expect(409);
+  });
+
+  test('a streamed answer arrives as events, ending with the stored message', async () => {
+    llm.chatWithTools.mockImplementationOnce(async (uid, msgs, defs, opts) => { opts.onText && opts.onText('Hel'); opts.onText && opts.onText('lo.'); return { role: 'assistant', content: 'Hello.' }; });
+    const r = await request(serverFor(app)).post('/api/assistant/chat').set(as(emp)).send({ message: 'Hi', stream: true }).expect(200);
+    expect(r.headers['content-type']).toMatch(/text\/event-stream/);
+    const events = r.text.split('\n\n').filter(x => x.startsWith('data: ')).map(x => JSON.parse(x.slice(6)));
+    expect(events.filter(e => e.type === 'delta').map(e => e.text).join('')).toBe('Hello.');
+    expect(events.at(-1)).toMatchObject({ type: 'done', message: { content: 'Hello.' }, conversation: { id: expect.any(String) } });
+  });
+
+  test('a question the model could not answer is not counted against the hour', async () => {
+    llm.chatWithTools.mockRejectedValueOnce(Object.assign(new Error('quota'), { response: { status: 429 } }));
+    await request(serverFor(app)).post('/api/assistant/chat').set(as(emp)).send({ message: 'hi' }).expect(503);
+    const status = await request(serverFor(app)).get('/api/assistant/status').set(as(emp)).expect(200);
+    expect(status.body.used).toBe(0);
   });
 });

@@ -71,7 +71,7 @@ async function apply(id, actor) {
 function dismiss(id, actor) {
   const a = astore.getAction(id, actor.id);
   if (!a) fail(404, 'Not found');
-  if (a.status !== 'pending' || a.decidedAt) fail(409, `This was already ${a.status === 'pending' ? 'being applied' : a.status}.`);
+  if (a.status !== 'pending' || astore.isBeingApplied(a)) fail(409, `This was already ${a.status === 'pending' ? 'being applied' : a.status}.`);
   astore.decideAction(a.id, actor.id, 'dismissed');
   return astore.getAction(a.id, actor.id);
 }

@@ -61,6 +61,13 @@ function _totals(list) {
   return { totalBase: baseCents / 100, byCategory, pendingRates, unreviewed, expenseCount: list.length, lineCount };
 }
 
+// The case's own row and nothing else: its number, state and owner. For
+// callers that need to know about a case without loading every receipt in it.
+function head(id) {
+  const r = id ? db.prepare('SELECT id, number, title, status, xero_invoice_id, xero_error, user_id, company_id FROM expense_reports WHERE id = ?').get(id) : null;
+  return r ? { id: r.id, number: r.number, title: r.title || null, status: r.status, xeroInvoiceId: r.xero_invoice_id || null, xeroError: r.xero_error || null, userId: r.user_id, companyId: r.company_id } : null;
+}
+
 function getReport(id) {
   // The owner's name comes back here as well as from listReports: the Xero
   // confirmation asks finance to approve a bill "payable to <name>", and with
@@ -153,4 +160,4 @@ function listEvents(reportId) {
 }
 
 module.exports = {
-  claimForPost, releasePost, createReport, getReport, listReports, updateReport, setState, addExpense, removeExpense, deleteReport, addEvent, listEvents, nextNumber };
+  claimForPost, releasePost, createReport, getReport, head, listReports, updateReport, setState, addExpense, removeExpense, deleteReport, addEvent, listEvents, nextNumber };

@@ -36,6 +36,41 @@ async function request(path, options = {}) {
   return data;
 }
 
+// A POST whose answer is a stream of server-sent events (the assistant). Each
+// event's JSON is handed to onEvent as it arrives. Errors before the stream
+// opens throw like any other call.
+export async function streamPost(path, body, onEvent) {
+  const token = getToken();
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) clearSession();
+    const err = new Error(data.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buf.indexOf('\n\n')) >= 0) {
+      const chunk = buf.slice(0, cut); buf = buf.slice(cut + 2);
+      for (const line of chunk.split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        try { onEvent(JSON.parse(line.slice(6))); } catch { /* a partial or keep-alive line */ }
+      }
+    }
+  }
+}
+
 export const api = {
   get:    (path)       => request(path),
   post:   (path, body) => request(path, { method: 'POST',   body: JSON.stringify(body) }),

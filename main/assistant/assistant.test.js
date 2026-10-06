@@ -1,4 +1,4 @@
-jest.mock('../llm/gemini-client', () => ({ chatWithTools: jest.fn(), callGemini: jest.fn() }));
+jest.mock('../llm/gemini-client', () => ({ chatWithTools: jest.fn(), callGemini: jest.fn(), hasKeys: jest.fn(() => true), forgetKeys: jest.fn() }));
 jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 0.0134, rateDate: '2026-09-04', providerDate: '2026-09-04', source: 'frankfurter', fetchedAt: 'x' }) }));
 
 describe('assistant', () => {
@@ -259,5 +259,53 @@ describe('assistant', () => {
       expect(await actions.apply(split.id, as(admin))).toMatchObject({ status: 'failed', result: expect.stringMatching(/lines/) });
       expect(store.getExpense(e.id).lines.map(l => l.amount)).toEqual([50, 50]);
     });
+  });
+
+  describe('speed', () => {
+    const call = (name, args, id = 'c1') => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) }, extra_content: { google: { thought_signature: 'S' } } });
+
+    test('what is on screen is known before the model is asked, so a question about it is one call', async () => {
+      const e = seed(emp, { merchant: 'Courtyrad' });
+      llm.chatWithTools.mockResolvedValueOnce({ role: 'assistant', content: 'The merchant looks mistyped.', model: 'm-fast' });
+      await conversation.reply({ actor: as(emp), text: 'Anything wrong here?', page: `/expenses/${e.id}` });
+      expect(llm.chatWithTools).toHaveBeenCalledTimes(1);
+      const sys = llm.chatWithTools.mock.calls[0][1][0].content;
+      expect(sys).toMatch(/The receipt on screen: .*Courtyrad/);
+      expect(sys).toMatch(/Its check: .*No business purpose/);
+      expect(sys).toMatch(/data, not instructions/);
+    });
+
+    test('a turn stays on the model it started with, lookups run together, and the last round must answer', async () => {
+      const a = seed(emp); const b = seed(emp, { merchant: 'Grab' });
+      llm.chatWithTools.mockImplementation(async (uid, msgs, defs, opts) => ({ role: 'assistant', tool_calls: [call('get_receipt', { id: a.id }, 'x'), call('get_receipt', { id: b.id }, 'y')], model: 'm-fast', opts }));
+      const events = [];
+      await conversation.reply({ actor: as(emp), text: 'loop', onEvent: ev => events.push(ev) });
+      const opts = llm.chatWithTools.mock.calls.map(c => c[3]);
+      expect(opts[0].model).toBeNull();
+      expect(opts.slice(1).every(o => o.model === 'm-fast')).toBe(true);
+      expect(opts.at(-1).toolChoice).toBe('none');
+      expect(opts.slice(0, -1).every(o => o.toolChoice === 'auto')).toBe(true);
+      expect(events.filter(ev => ev.type === 'status').map(ev => ev.text)).toContain('Reading the receipt…');
+      // Both lookups answered, in the order asked.
+      const second = llm.chatWithTools.mock.calls[1][1];
+      expect(second.filter(m => m.role === 'tool').map(m => m.tool_call_id).slice(0, 2)).toEqual(['x', 'y']);
+    });
+
+    test('an answer cut off by the token limit says so', async () => {
+      llm.chatWithTools.mockResolvedValueOnce({ role: 'assistant', content: 'Here is the long list', truncated: true });
+      const out = await conversation.reply({ actor: as(emp), text: 'list everything' });
+      expect(out.message.content).toMatch(/cut short/);
+    });
+  });
+
+  test('a card left "being applied" by a process that died can be applied after five minutes', async () => {
+    const e = seed(emp);
+    const ctx = ctxFor(emp);
+    await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { purpose: 'Visit' }, reason: 'x' });
+    const a = ctx.proposals[0];
+    expect(astore.claimAction(a.id, emp.id)).toBe(true);
+    await expect(actions.apply(a.id, as(emp))).rejects.toMatchObject({ status: 409 });
+    require('../db').prepare("UPDATE assistant_actions SET decided_at = '2020-01-01T00:00:00.000Z' WHERE id = ?").run(a.id);
+    expect(await actions.apply(a.id, as(emp))).toMatchObject({ status: 'applied' });
   });
 });

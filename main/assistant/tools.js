@@ -66,8 +66,8 @@ function _who(ctx, userId) {
 function _case(ctx, reportId) {
   if (!reportId) return null;
   if (!ctx.cases.has(reportId)) {
-    const r = db.prepare('SELECT id, number, title, status, xero_invoice_id FROM expense_reports WHERE id = ?').get(reportId);
-    ctx.cases.set(reportId, r ? { id: r.id, number: r.number, title: r.title || null, status: r.status, inXero: !!r.xero_invoice_id } : null);
+    const r = reports.head(reportId);
+    ctx.cases.set(reportId, r ? { id: r.id, number: r.number, title: r.title, status: r.status, inXero: !!r.xeroInvoiceId } : null);
   }
   return ctx.cases.get(reportId);
 }
@@ -94,7 +94,22 @@ const _same = edit.sameValue;
 
 // What is wrong with or worth a look on one receipt. Deterministic: the same
 // receipt gives the same list, whatever the model makes of it.
-function _issues(ctx, e, { siblings = null } = {}) {
+// The same merchant, day and amount as another receipt this person can see,
+// asked of the database rather than by loading every receipt they have: one
+// receipt's check used to read the whole company.
+function _twin(ctx, e) {
+  if (!e.merchant || !e.receiptDate || !(e.total > 0)) return null;
+  // The reader already said so in its note; once is enough.
+  if (e.duplicateOf || /Possible duplicate/.test(e.errorMsg || '')) return null;
+  const mine = e.userId === ctx.actor.id || ctx.actor.role !== 'admin';
+  const row = db.prepare(`SELECT id, user_id, merchant, receipt_date FROM expenses
+                          WHERE company_id = ? AND receipt_date = ? AND total_cents = ? AND lower(merchant) = lower(?)
+                            AND id != ? AND status != 'duplicate' ${mine ? 'AND user_id = ?' : ''} LIMIT 1`)
+    .get(...[e.companyId, e.receiptDate, store.toCents(e.total), e.merchant, e.id, ...(mine ? [e.userId] : [])]);
+  return row ? { merchant: row.merchant, receiptDate: row.receipt_date, userId: row.user_id } : null;
+}
+
+function _issues(ctx, e) {
   const out = [];
   if (e.status === 'reading') return ['Still being read.'];
   if (e.status === 'duplicate') out.push('Marked as a duplicate of another receipt.');
@@ -136,9 +151,7 @@ function _issues(ctx, e, { siblings = null } = {}) {
   }
   if (e.aiConfidence === 'low' && e.status !== 'reviewed') out.push('The reader had low confidence; check it against the picture.');
   // The same merchant, day and amount twice, among receipts this person can see.
-  const pool = siblings || store.listExpenses(e.userId === ctx.actor.id || ctx.actor.role !== 'admin' ? { userId: e.userId } : { companyId: e.companyId });
-  const twin = e.merchant && e.receiptDate && pool.find(x => x.id !== e.id && x.status !== 'duplicate' && x.receiptDate === e.receiptDate
-    && Number(x.total) === Number(e.total) && String(x.merchant || '').toLowerCase() === e.merchant.toLowerCase());
+  const twin = _twin(ctx, e);
   if (twin) out.push(`Looks like a duplicate of another receipt from ${twin.merchant} on ${twin.receiptDate} for the same amount${twin.userId !== e.userId ? `, claimed by ${_who(ctx, twin.userId)}` : ''}.`);
   return out;
 }
@@ -164,8 +177,8 @@ const READ = {
       let list;
       if (a.caseId) {
         // A case answers for itself: whoever may see it may list it.
-        const r = db.prepare('SELECT user_id, company_id FROM expense_reports WHERE id = ?').get(String(a.caseId));
-        if (!r || !canView(ctx.actor, r.user_id, r.company_id)) no('No case with that id that this person can see.');
+        const r = reports.head(String(a.caseId));
+        if (!r || !canView(ctx.actor, r.userId, r.companyId)) no('No case with that id that this person can see.');
         list = store.listExpenses({ reportId: String(a.caseId), status: a.status, from: a.from, to: a.to });
       } else {
         list = store.listExpenses({ ..._scope(ctx, a), status: a.status, from: a.from, to: a.to, unfiled: !!a.unfiled });
@@ -213,11 +226,10 @@ const READ = {
     parameters: { type: 'object', properties: { ...SCOPE_PROPS } },
     run(ctx, a) {
       const scope = _scope(ctx, a);
-      const all = store.listExpenses(scope);
-      const open = all.filter(e => !e.claimed && e.status !== 'rejected');
+      const open = store.listExpenses(scope).filter(e => !e.claimed && e.status !== 'rejected');
       const found = [];
       for (const e of open) {
-        const issues = _issues(ctx, e, { siblings: all }).filter(i => !/^No business purpose/.test(i) || e.status !== 'reviewed');
+        const issues = _issues(ctx, e).filter(i => !/^No business purpose/.test(i) || e.status !== 'reviewed');
         if (issues.length) found.push({ receipt: _brief(ctx, e), issues });
       }
       return { looked: open.length, withProblems: found.length, receipts: found.slice(0, 30), ...(found.length > 30 ? { note: 'Showing 30.' } : {}) };
@@ -230,7 +242,12 @@ const READ = {
     async run(ctx, a) {
       const e = _receipt(ctx, a.id);
       if (!e.receipt) no('This receipt has no file to look at.');
-      return { answer: await require('./look').lookAt(ctx.actor.id, e, String(a.question || '').slice(0, 500)) };
+      // The same look asked twice in one answer is answered once: each is a
+      // vision call with the whole file.
+      const q = String(a.question || '').slice(0, 500);
+      const k = `${e.id}|${q.trim().toLowerCase()}`;
+      if (!ctx.looks.has(k)) ctx.looks.set(k, require('./look').lookAt(ctx.actor.id, e, q, { interactive: true }));
+      return { answer: await ctx.looks.get(k) };
     },
   },
 
@@ -500,7 +517,7 @@ async function run(ctx, name, args) {
 
 function context(actor) {
   const company = users.getCompany(actor.companyId) || { baseCurrency: 'SGD', timezone: 'Asia/Singapore' };
-  return { actor, company, base: company.baseCurrency || 'SGD', names: new Map(), cases: new Map(), proposals: [], conversationId: null };
+  return { actor, company, base: company.baseCurrency || 'SGD', names: new Map(), cases: new Map(), looks: new Map(), proposals: [], conversationId: null };
 }
 
 module.exports = { DEFINITIONS, run, context, READ, PROPOSE, _issues, _scope, MAX_PROPOSALS };

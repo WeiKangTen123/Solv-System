@@ -272,11 +272,17 @@ function addUserGeminiKey(userId, apiKey, label) {
   if (!apiKey || !apiKey.trim()) throw new Error('API key is required');
   const info = db.prepare('INSERT INTO user_gemini_keys (user_id, api_key, label, created_at) VALUES (?, ?, ?, ?)')
     .run(userId, encrypt(apiKey.trim()), label ? label.trim().slice(0, 60) : null, new Date().toISOString());
+  _keysChanged();
   return { id: info.lastInsertRowid };
 }
 function removeUserGeminiKey(userId, keyId) {
-  return db.prepare('DELETE FROM user_gemini_keys WHERE id = ? AND user_id = ?').run(keyId, userId).changes > 0;
+  const gone = db.prepare('DELETE FROM user_gemini_keys WHERE id = ? AND user_id = ?').run(keyId, userId).changes > 0;
+  _keysChanged();
+  return gone;
 }
+// The model client keeps the resolved keys for half a minute; a key added or
+// removed applies at once.
+function _keysChanged() { try { require('../llm/gemini-client').forgetKeys(); } catch { /* not loaded */ } }
 
 // ── Reader keys (company-wide) ──────────────────────────────────────────────
 function getGeminiKeys(companyId) {
@@ -305,10 +311,13 @@ function addGeminiKey(companyId, apiKey, label) {
   if (!apiKey || !apiKey.trim()) throw new Error('API key is required');
   const info = db.prepare('INSERT INTO company_gemini_keys (company_id, api_key, label, created_at) VALUES (?, ?, ?, ?)')
     .run(companyId, encrypt(apiKey.trim()), label ? label.trim().slice(0, 60) : null, new Date().toISOString());
+  _keysChanged();
   return { id: info.lastInsertRowid };
 }
 function removeGeminiKey(companyId, keyId) {
-  return db.prepare('DELETE FROM company_gemini_keys WHERE id = ? AND company_id = ?').run(keyId, companyId).changes > 0;
+  const gone = db.prepare('DELETE FROM company_gemini_keys WHERE id = ? AND company_id = ?').run(keyId, companyId).changes > 0;
+  _keysChanged();
+  return gone;
 }
 
 // Per-user defaults the intake modules ask for (currency, timezone).

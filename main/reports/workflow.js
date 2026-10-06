@@ -25,7 +25,7 @@ function isEditable(report) { return !!report && EDITABLE.has(report.status); }
 // status cost a query per receipt in it.
 function isLocked(expense) {
   if (!expense || !expense.reportId) return false;
-  const r = db.prepare('SELECT status FROM expense_reports WHERE id = ?').get(expense.reportId);
+  const r = reports.head(expense.reportId);
   return !!r && !EDITABLE.has(r.status);
 }
 
@@ -36,8 +36,8 @@ const isPosting = report => !!report && report.xeroError === 'posting';
 // details included — because the bill already exists.
 function isPosted(expense) {
   if (!expense || !expense.reportId) return false;
-  const r = db.prepare('SELECT xero_invoice_id FROM expense_reports WHERE id = ?').get(expense.reportId);
-  return !!(r && r.xero_invoice_id);
+  const r = reports.head(expense.reportId);
+  return !!(r && r.xeroInvoiceId);
 }
 
 // The owner's business and nobody else's. An admin watches claims; whether a

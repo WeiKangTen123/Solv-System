@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { api } from '../../api/client';
+import { api, streamPost } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useViewMode } from '../../context/ViewModeContext';
 import { formatDateTime } from '../../utils/formatDate';
@@ -97,6 +97,11 @@ export default function AssistantPanel() {
   const [status, setStatus] = useState(null);
   const [draft, setDraft] = useState('');
   const [thinking, setThinking] = useState(false);
+  // The answer as it is written, and what the assistant is doing meanwhile.
+  const [live, setLive] = useState({ text: '', status: '' });
+  // Which conversation a running question belongs to: a reply that arrives
+  // after the person opened another one is not painted into it.
+  const asking = useRef(null);
   const [applying, setApplying] = useState({});
   const [error, setError] = useState(null);
   const endRef = useRef(null);
@@ -127,21 +132,40 @@ export default function AssistantPanel() {
   async function send(text) {
     const message = String(text ?? draft).trim();
     if (!message || thinking) return;
-    setError(null); setThinking(true);
+    setError(null); setThinking(true); setLive({ text: '', status: '' });
     const optimistic = { id: `tmp-${Date.now()}`, role: 'user', content: message, createdAt: new Date().toISOString() };
+    const ticket = { conversationId };
+    asking.current = ticket;
+    const mine = () => asking.current === ticket;
     setMessages(ms => [...ms, optimistic]);
     setDraft('');
+    let done = null, failure = null;
     try {
-      const d = await api.post('/assistant/chat', { message, conversationId, page: location.pathname });
-      if (!conversationId) setConversationId(d.conversation.id);
-      setMessages(ms => [...ms.filter(m => m.id !== optimistic.id), { ...optimistic, id: `u-${d.message.id}` }, d.message]);
-      setActions(as => [...as, ...d.actions]);
-      if (d.usage) setStatus(s => ({ ...(s || {}), ...d.usage }));
-    } catch (e) {
-      setMessages(ms => ms.filter(m => m.id !== optimistic.id));
-      setDraft(message);
-      setError(e.message);
-    } finally { setThinking(false); }
+      await streamPost('/assistant/chat', { message, conversationId, page: location.pathname, stream: true }, ev => {
+        if (!mine()) return;
+        if (ev.type === 'delta') setLive(l => ({ text: l.text + ev.text, status: '' }));
+        else if (ev.type === 'status') setLive(l => ({ ...l, status: ev.text }));
+        else if (ev.type === 'reset') setLive({ text: '', status: '' });
+        else if (ev.type === 'done') done = ev;
+        else if (ev.type === 'error') failure = ev.error;
+      });
+      if (!done && !failure) failure = 'The answer was cut off. Try again.';
+    } catch (e) { failure = e.message; }
+    if (mine()) {
+      if (done) {
+        if (!conversationId) setConversationId(done.conversation.id);
+        setMessages(ms => [...ms.filter(m => m.id !== optimistic.id), { ...optimistic, id: `u-${done.message.id}` }, done.message]);
+        setActions(as => [...as, ...done.actions]);
+        if (done.usage) setStatus(s => ({ ...(s || {}), ...done.usage }));
+      } else {
+        setMessages(ms => ms.filter(m => m.id !== optimistic.id));
+        setDraft(message);
+        setError(failure);
+      }
+      asking.current = null;
+    }
+    setLive({ text: '', status: '' });
+    setThinking(false);
   }
 
   const replace = a => setActions(as => as.map(x => (x.id === a.id ? a : x)));
@@ -160,12 +184,12 @@ export default function AssistantPanel() {
     catch (e) { setError(e.message); }
   }
 
-  function newChat() { setConversationId(null); setMessages([]); setActions([]); setError(null); setView('chat'); }
+  function newChat() { asking.current = null; setConversationId(null); setMessages([]); setActions([]); setError(null); setView('chat'); }
   async function showHistory() {
     setView('history');
     try { setHistory((await api.get('/assistant/conversations')).conversations); } catch (e) { setError(e.message); }
   }
-  async function openConversation(id) { setConversationId(id); setView('chat'); setError(null); await loadConversation(id); }
+  async function openConversation(id) { asking.current = null; setConversationId(id); setView('chat'); setError(null); await loadConversation(id); }
   async function removeConversation(id) {
     try {
       await api.delete(`/assistant/conversations/${id}`);
@@ -194,7 +218,7 @@ export default function AssistantPanel() {
       <div className="assistant-head">
         <div className="assistant-title"><span aria-hidden="true">✦</span> Assistant</div>
         <div style={{ display: 'flex', gap: 4 }}>
-          <button className="btn btn-ghost btn-sm" onClick={view === 'history' ? () => setView('chat') : showHistory}>{view === 'history' ? 'Back' : 'History'}</button>
+          <button className="btn btn-ghost btn-sm" disabled={thinking} onClick={view === 'history' ? () => setView('chat') : showHistory}>{view === 'history' ? 'Back' : 'History'}</button>
           <button className="btn btn-ghost btn-sm" onClick={newChat} disabled={thinking}>New</button>
           <button className="btn btn-ghost btn-sm" onClick={() => setOpen(false)} aria-label="Close the assistant">✕</button>
         </div>
@@ -240,7 +264,13 @@ export default function AssistantPanel() {
               </div>
             );
           })}
-          {thinking && <div className="assistant-msg assistant-msg-assistant"><div className="assistant-bubble assistant-muted">Working on it…</div></div>}
+          {thinking && (
+            <div className="assistant-msg assistant-msg-assistant" aria-live="polite">
+              <div className={`assistant-bubble ${live.text ? '' : 'assistant-muted'}`}>
+                {live.text ? <Rich text={live.text} /> : (live.status || 'Working on it…')}
+              </div>
+            </div>
+          )}
           <div ref={endRef} />
         </div>
       )}

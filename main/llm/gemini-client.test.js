@@ -25,10 +25,12 @@ function okResponse(text) {
 }
 
 describe('gemini-client rotation', () => {
-  const { callGemini } = require('./gemini-client');
+  const client = require('./gemini-client');
+  const { callGemini } = client;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    client._reset();
     getGeminiKeysForUser.mockReturnValue([]);
     delete process.env.Gemini_API_KEY;
   });
@@ -55,17 +57,46 @@ describe('gemini-client rotation', () => {
     expect(axios.post).toHaveBeenCalledTimes(2);
   });
 
-  test('only moves to the next key once every model on the current key is exhausted', async () => {
+  test('the fast model is tried on every key before the slow fallback on any', async () => {
     getGeminiKeysForUser.mockReturnValue([{ apiKey: 'key-1' }, { apiKey: 'key-2' }]);
     axios.post
-      .mockRejectedValueOnce(quotaError()) // key-1, model A
-      .mockRejectedValueOnce(quotaError()) // key-1, model B
-      .mockResolvedValueOnce(okResponse('ok from key-2')); // key-2, model A
+      .mockRejectedValueOnce(quotaError())                  // key-1, fast model
+      .mockResolvedValueOnce(okResponse('ok from key-2'));  // key-2, fast model
 
     const result = await callGemini('user1', []);
     expect(result).toBe('ok from key-2');
-    expect(axios.post).toHaveBeenCalledTimes(3);
-    expect(axios.post.mock.calls[2][2].headers.Authorization).toBe('Bearer key-2');
+    expect(axios.post.mock.calls.map(c => [c[1].model, c[2].headers.Authorization])).toEqual([
+      [client.GEMINI_MODELS[0], 'Bearer key-1'], [client.GEMINI_MODELS[0], 'Bearer key-2'],
+    ]);
+  });
+
+  test('a key that ran out is left alone until Google says, instead of being asked first every time', async () => {
+    getGeminiKeysForUser.mockReturnValue([{ apiKey: 'key-1' }, { apiKey: 'key-2' }]);
+    const err = quotaError();
+    err.response.data = [{ error: { details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '40s' }] } }];
+    axios.post.mockRejectedValueOnce(err).mockResolvedValue(okResponse('ok'));
+    await callGemini('user1', []);
+    await callGemini('user1', []);
+    // The second call went straight to key-2: key-1's fast model is cooling.
+    expect(axios.post.mock.calls.map(c => c[2].headers.Authorization)).toEqual(['Bearer key-1', 'Bearer key-2', 'Bearer key-2']);
+    expect(client._cooling({ apiKey: 'key-1' }, client.GEMINI_MODELS[0])).toBe(true);
+  });
+
+  test('when every key and model is cooling, the answer is immediate, not a queue of refusals', async () => {
+    getGeminiKeysForUser.mockReturnValue([{ apiKey: 'key-1' }]);
+    axios.post.mockRejectedValue(quotaError());
+    await expect(callGemini('user1', [])).rejects.toThrow('quota exceeded');
+    axios.post.mockClear();
+    await expect(callGemini('user1', [])).rejects.toMatchObject({ response: { status: 429 } });
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  test('a turn can ask for the model it started on', async () => {
+    getGeminiKeysForUser.mockReturnValue([{ apiKey: 'key-1' }]);
+    axios.post.mockResolvedValue({ data: { choices: [{ message: { role: 'assistant', content: 'hi' } }] } });
+    const out = await client.chatWithTools('user1', [], [], { model: client.GEMINI_MODELS[1] });
+    expect(axios.post.mock.calls[0][1].model).toBe(client.GEMINI_MODELS[1]);
+    expect(out.model).toBe(client.GEMINI_MODELS[1]);
   });
 
   test('a non-quota error fails fast without trying remaining models/keys', async () => {
@@ -88,20 +119,22 @@ describe('gemini-client rotation', () => {
   test('what happened to each stored key is written back to it; the server fallback key has no row', async () => {
     getGeminiKeysForUser.mockReturnValue([{ apiKey: 'k1', id: 7, scope: 'user' }, { apiKey: 'k2', id: 3, scope: 'company' }]);
     axios.post
-      .mockRejectedValueOnce(quotaError()).mockRejectedValueOnce(quotaError())   // k1, both models
-      .mockResolvedValueOnce(okResponse('ok'));                                   // k2, first model
+      .mockRejectedValueOnce(quotaError())        // k1, fast model
+      .mockResolvedValueOnce(okResponse('ok'));   // k2, fast model
     await callGemini('user1', []);
     expect(recordKeyUse.mock.calls.map(c => [c[0], c[1], c[2].ok ? 'ok' : c[2].error])).toEqual([
-      ['user', 7, 'Out of quota or rate-limited'], ['user', 7, 'Out of quota or rate-limited'], ['company', 3, 'ok'],
+      ['user', 7, 'Out of quota or rate-limited'], ['company', 3, 'ok'],
     ]);
 
     recordKeyUse.mockClear();
+    client._reset();
     getGeminiKeysForUser.mockReturnValue([{ apiKey: 'k3', id: 9, scope: 'company' }]);
     axios.post.mockRejectedValueOnce(authError());
     await expect(callGemini('user1', [])).rejects.toThrow('invalid api key');
     expect(recordKeyUse).toHaveBeenCalledWith('company', 9, expect.objectContaining({ error: expect.stringMatching(/Rejected/) }));
 
     recordKeyUse.mockClear();
+    client._reset();
     getGeminiKeysForUser.mockReturnValue([]);
     process.env.Gemini_API_KEY = 'env-key';
     axios.post.mockResolvedValueOnce(okResponse('ok'));

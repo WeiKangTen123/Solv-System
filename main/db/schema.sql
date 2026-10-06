@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS expenses (
 CREATE INDEX IF NOT EXISTS idx_expenses_user    ON expenses(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_expenses_report  ON expenses(report_id);
 CREATE INDEX IF NOT EXISTS idx_expenses_receipt ON expenses(receipt_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_twin    ON expenses(company_id, receipt_date, total_cents);
 
 CREATE TABLE IF NOT EXISTS expense_lines (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,

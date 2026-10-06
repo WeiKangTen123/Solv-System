@@ -73,12 +73,17 @@ function decideAction(id, userId, status, result = null) {
   return db.prepare("UPDATE assistant_actions SET status = ?, result = ?, decided_at = ? WHERE id = ? AND user_id = ? AND status = 'pending'")
     .run(status, result ? String(result).slice(0, 500) : null, now(), id, userId).changes > 0;
 }
+// A claim older than this belongs to an Apply whose process died part-way:
+// the card would otherwise refuse Apply and Dismiss for good.
+const CLAIM_STALE_MS = 5 * 60 * 1000;
 function claimAction(id, userId) {
   // 'pending' → 'pending' with decided_at set marks it as being applied, so a
   // second Apply arriving while the first runs is turned away.
-  return db.prepare("UPDATE assistant_actions SET decided_at = ? WHERE id = ? AND user_id = ? AND status = 'pending' AND decided_at IS NULL")
-    .run(now(), id, userId).changes > 0;
+  const stale = new Date(Date.now() - CLAIM_STALE_MS).toISOString();
+  return db.prepare("UPDATE assistant_actions SET decided_at = ? WHERE id = ? AND user_id = ? AND status = 'pending' AND (decided_at IS NULL OR decided_at < ?)")
+    .run(now(), id, userId, stale).changes > 0;
 }
+const isBeingApplied = a => !!a && a.status === 'pending' && !!a.decidedAt && Date.now() - Date.parse(a.decidedAt) < CLAIM_STALE_MS;
 function releaseAction(id, userId) {
   db.prepare("UPDATE assistant_actions SET decided_at = NULL WHERE id = ? AND user_id = ? AND status = 'pending'").run(id, userId);
 }
@@ -86,6 +91,11 @@ function releaseAction(id, userId) {
 // ── Usage ────────────────────────────────────────────────────────────────────
 
 function recordQuestion(userId) { db.prepare('INSERT INTO assistant_usage (user_id, at) VALUES (?, ?)').run(userId, now()); }
+// A question the assistant could not answer is handed back: a failure on our
+// side, or the model's, should not use up somebody's hour.
+function refundQuestion(userId) {
+  db.prepare('DELETE FROM assistant_usage WHERE rowid = (SELECT rowid FROM assistant_usage WHERE user_id = ? ORDER BY at DESC LIMIT 1)').run(userId);
+}
 function questionsSince(userId, sinceIso) {
   return db.prepare('SELECT COUNT(*) AS n FROM assistant_usage WHERE user_id = ? AND at >= ?').get(userId, sinceIso).n;
 }
@@ -99,6 +109,6 @@ function pruneUsage(beforeIso) { db.prepare('DELETE FROM assistant_usage WHERE a
 module.exports = {
   createConversation, getConversation, listConversations, deleteConversation,
   addMessage, messages,
-  addAction, attachActions, getAction, actionsFor, decideAction, claimAction, releaseAction,
-  recordQuestion, questionsSince, oldestSince, pruneUsage,
+  addAction, attachActions, getAction, actionsFor, decideAction, claimAction, releaseAction, isBeingApplied, CLAIM_STALE_MS,
+  recordQuestion, refundQuestion, questionsSince, oldestSince, pruneUsage,
 };
