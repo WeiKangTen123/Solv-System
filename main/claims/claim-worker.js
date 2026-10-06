@@ -137,8 +137,13 @@ function startWorker(userId, customDeps = null) {
 
   w.pollId = setInterval(() => {
     claimQueue.sweep(userId);
+    // Nothing waiting and nothing running: stop. A new import starts the
+    // worker again. It used to poll the disk every five seconds for ever
+    // after a person's first import.
+    if (!w.busy && !claimQueue.getPending(userId).length) { stopWorker(userId); return; }
     _safeProcessNext(userId);
   }, POLL_MS);
+  if (typeof w.pollId.unref === 'function') w.pollId.unref();
 }
 
 // Stop worker for a user

@@ -69,34 +69,39 @@ function summary(me, { now = new Date(), timezone = 'UTC' } = {}) {
   const months = _monthKeys(now, timezone);
   const from = `${months[0]}-01`;
 
-  const byMonth = db.prepare(`
-    SELECT substr(${DATED}, 1, 7) AS month, SUM(l.base_cents) AS cents, COUNT(DISTINCT e.id) AS n
+  // One pass over the window's lines, added up here. It used to be five
+  // queries, each scanning every line again.
+  const rows = db.prepare(`
+    SELECT e.id AS id, substr(${DATED}, 1, 7) AS month,
+           COALESCE(NULLIF(l.category, ''), e.category, 'Uncategorised') AS category,
+           COALESCE(NULLIF(l.currency, ''), e.currency, '?') AS currency,
+           l.base_cents AS cents,
+           CASE WHEN r.status = 'claimed' OR e.claimed_at IS NOT NULL THEN 'claimed'
+                WHEN (r.status = 'open' OR r.id IS NULL) AND e.claimed_at IS NULL THEN 'open' ELSE '' END AS state
     FROM expenses e JOIN expense_lines l ON l.expense_id = e.id
-    WHERE ${w.sql} AND ${LIVE} AND l.base_cents IS NOT NULL AND ${DATED} >= ?
-    GROUP BY 1`).all(...w.args, from);
-  const found = new Map(byMonth.map(r => [r.month, r]));
-  const series = months.map(m => ({ month: m, base: toDollars(found.get(m)?.cents) ?? 0, count: found.get(m)?.n ?? 0 }));
-
-  const byCategory = db.prepare(`
-    SELECT COALESCE(NULLIF(l.category, ''), e.category, 'Uncategorised') AS category,
-           SUM(l.base_cents) AS cents, COUNT(*) AS n
-    FROM expenses e JOIN expense_lines l ON l.expense_id = e.id
-    WHERE ${w.sql} AND ${LIVE} AND l.base_cents IS NOT NULL AND ${DATED} >= ?
-    GROUP BY 1 ORDER BY cents DESC`).all(...w.args, from);
-
-  const byCurrency = db.prepare(`
-    SELECT COALESCE(NULLIF(l.currency, ''), e.currency, '?') AS currency,
-           SUM(l.base_cents) AS cents, COUNT(DISTINCT e.id) AS n
-    FROM expenses e JOIN expense_lines l ON l.expense_id = e.id
-    WHERE ${w.sql} AND ${LIVE} AND l.base_cents IS NOT NULL AND ${DATED} >= ?
-    GROUP BY 1 ORDER BY cents DESC`).all(...w.args, from);
-
-  // Lines nobody could price. Reported rather than folded into the totals as
-  // zero, because a chart that quietly omits money is worse than one that says
-  // how much it is missing.
-  const unpriced = db.prepare(`
-    SELECT COUNT(*) AS n FROM expenses e JOIN expense_lines l ON l.expense_id = e.id
-    WHERE ${w.sql} AND ${LIVE} AND l.base_cents IS NULL AND ${DATED} >= ?`).get(...w.args, from);
+    LEFT JOIN expense_reports r ON r.id = e.report_id
+    WHERE ${w.sql} AND ${LIVE} AND ${DATED} >= ?`).all(...w.args, from);
+  const tally = () => new Map();
+  const bump = (map, key, cents, id) => {
+    const t = map.get(key) || { cents: 0, n: 0, ids: new Set() };
+    t.cents += cents; t.n++; t.ids.add(id); map.set(key, t);
+  };
+  const months_ = tally(), categories = tally(), currencies = tally();
+  let unpricedLines = 0, claimedCents = 0, openCents = 0;
+  for (const x of rows) {
+    if (x.cents === null || x.cents === undefined) { unpricedLines++; continue; }
+    bump(months_, x.month, x.cents, x.id);
+    bump(categories, x.category, x.cents, x.id);
+    bump(currencies, x.currency, x.cents, x.id);
+    if (x.state === 'claimed') claimedCents += x.cents;
+    else if (x.state === 'open') openCents += x.cents;
+  }
+  const series = months.map(m => ({ month: m, base: toDollars(months_.get(m)?.cents) ?? 0, count: months_.get(m)?.ids.size ?? 0 }));
+  const sorted = map => [...map.entries()].sort((a, b) => b[1].cents - a[1].cents);
+  const byCategory = sorted(categories).map(([category, t]) => ({ category, cents: t.cents, n: t.n }));
+  const byCurrency = sorted(currencies).map(([currency, t]) => ({ currency, cents: t.cents, n: t.ids.size }));
+  const unpriced = { n: unpricedLines };
+  const totalCents = { claimed: claimedCents, open_cents: openCents };
 
   const rw = _where(scope, 'r');
   // How long a case stays open before it is claimed, in days, over cases that
@@ -108,13 +113,6 @@ function summary(me, { now = new Date(), timezone = 'UTC' } = {}) {
            COUNT(r.claimed_at) AS claimed_n,
            SUM(CASE WHEN r.status = 'open' THEN 1 ELSE 0 END) AS open_n
     FROM expense_reports r WHERE ${rw.sql}`).get(...rw.args);
-
-  const totalCents = db.prepare(`
-    SELECT SUM(CASE WHEN r.status = 'claimed' OR e.claimed_at IS NOT NULL THEN l.base_cents ELSE 0 END) AS claimed,
-           SUM(CASE WHEN (r.status = 'open' OR r.id IS NULL) AND e.claimed_at IS NULL THEN l.base_cents ELSE 0 END) AS open_cents
-    FROM expenses e JOIN expense_lines l ON l.expense_id = e.id
-    LEFT JOIN expense_reports r ON r.id = e.report_id
-    WHERE ${w.sql} AND ${LIVE} AND l.base_cents IS NOT NULL AND ${DATED} >= ?`).get(...w.args, from);
 
   const total = toDollars(byCategory.reduce((s, r) => s + (r.cents || 0), 0)) ?? 0;
   const share = cents => (total > 0 ? Math.round(((toDollars(cents) ?? 0) / total) * 1000) / 1000 : 0);

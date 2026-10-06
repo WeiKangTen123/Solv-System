@@ -1,6 +1,6 @@
 jest.mock('./text-extract');
 const textExtract = require('./text-extract');
-const { extractPages, splittablePages, MIN_PAGE_CHARS } = require('./pages');
+const { extractPages, splittablePages } = require('./pages');
 
 // The child-process extractor, answering with the given page texts.
 const pdfParse = textExtract.extractText;

@@ -194,7 +194,6 @@ router.get('/:id/export-url', requireAuth, (req, res) => {
 
 function setDownloadName(res, base, ext, inline) {
   const raw = `${base}.${ext}`;
-  // eslint-disable-next-line no-control-regex
   const ascii = raw.replace(/[^\x20-\x7e]/g, '').replace(/"/g, "'").trim() || `export.${ext}`;
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(raw)}`);
 }

@@ -19,6 +19,8 @@ function rateLimitKey(req) {
   if (auth.startsWith('Bearer ')) {
     try {
       const claims = jwt.verify(auth.slice(7), jwtSecret(), { algorithms: ['HS256'] });
+      // Kept on the request, so requireAuth does not verify the same token again.
+      req._session = { token: auth.slice(7), claims };
       if (claims && claims.id && !claims.purpose) return `user:${claims.id}`;
     } catch { /* not ours; use the IP */ }
   }

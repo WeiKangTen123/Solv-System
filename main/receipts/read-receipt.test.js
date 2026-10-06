@@ -1,5 +1,5 @@
 jest.mock('./receipt-parser', () => ({
-  parseReceiptImage: jest.fn(), parseReceiptText: jest.fn(), parseReceiptPages: jest.fn(),
+  parseReceiptImage: jest.fn(), parseReceiptText: jest.fn(), parseReceiptPages: jest.fn(), parseReceiptBatch: jest.fn(),
 }));
 jest.mock('../pdf/render', () => ({ renderPdfPages: jest.fn() }));
 jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 0.01341, rateDate: '2026-09-04', providerDate: '2026-09-04', source: 'frankfurter', fetchedAt: '2026-09-18T03:00:00.000Z' }) }));
@@ -28,7 +28,7 @@ describe('receipts/read-receipt', () => {
     parser = require('./receipt-parser'); render = require('../pdf/render'); pdfPages = require('../pdf/pages');
     read = require('./read-receipt');
     u = await users.createUser({ email: 'e@solv.sg', password: 'password123' });
-    [parser.parseReceiptImage, parser.parseReceiptText, parser.parseReceiptPages, render.renderPdfPages, pdfPages.extractPages].forEach(f => f.mockReset());
+    [parser.parseReceiptImage, parser.parseReceiptText, parser.parseReceiptPages, parser.parseReceiptBatch, render.renderPdfPages, pdfPages.extractPages].forEach(f => f.mockReset());
     pdfPages.splittablePages.mockReset(); pdfPages.splittablePages.mockReturnValue({ split: false, reason: 'single' });
   });
   const seed = (mime = 'image/jpeg') => {
@@ -226,8 +226,9 @@ describe('receipts/read-receipt', () => {
 
     pdfPages.extractPages.mockResolvedValue({ pages: [], numPages: 30, hasText: false, textPageCount: 0 });
     render.renderPdfPages.mockResolvedValue({ numPages: 30, pages: Array.from({ length: 20 }, (_, i) => ({ page: i + 1, buffer: Buffer.from('x') })) });
-    parser.parseReceiptImage.mockResolvedValue(null);
+    parser.parseReceiptBatch.mockResolvedValue(new Array(20).fill(null));
     const scan = await read.readParts(u.id, Buffer.from('%PDF'), 'application/pdf');
+    expect(parser.parseReceiptBatch).toHaveBeenCalledTimes(1);          // five pages a call, inside the batch reader
     expect(scan.notes.join(' ')).toMatch(/Only the first 20 of 30 pages were read/);
     expect(scan.parts).toHaveLength(20);
   });

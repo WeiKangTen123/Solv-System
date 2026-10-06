@@ -25,10 +25,13 @@ function requireAuth(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '').trim();
   if (!token) return res.status(401).json({ error: 'Authentication required' });
   let claims;
-  try {
-    claims = jwt.verify(token, jwtSecret(), { algorithms: ['HS256'] });
-  } catch {
-    return res.status(401).json({ error: 'Invalid or expired token' });
+  if (req._session && req._session.token === token) claims = req._session.claims;
+  else {
+    try {
+      claims = jwt.verify(token, jwtSecret(), { algorithms: ['HS256'] });
+    } catch {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
   }
   // Receipt-image and export links are signed with the same secret. They carry
   // a purpose and no id; only a session may sign anybody in.
@@ -40,10 +43,10 @@ function requireAuth(req, res, next) {
   // users.js is required lazily to avoid a require-cycle at module load
   // (users.js doesn't need this module, but plenty of routes require both).
   const users = require('../store/users');
-  const live  = users.findById(claims.id);
+  const live  = users.findSession(claims.id);
   if (!live) return res.status(401).json({ error: 'Account no longer exists' });
   if (live.removed) return res.status(401).json({ error: 'This account has been removed. Ask your administrator.' });
-  if ((claims.tv ?? 0) !== users.tokenVersion(live.id)) return res.status(401).json({ error: 'Your session has ended. Sign in again.' });
+  if ((claims.tv ?? 0) !== live.tokenVersion) return res.status(401).json({ error: 'Your session has ended. Sign in again.' });
   req.user = { id: live.id, email: live.email, role: live.role, companyId: live.companyId };
   // Throttled to at most one DB write per user per minute — see
   // users.js#touchLastSeen. Failure here must never turn into a 401 — it's

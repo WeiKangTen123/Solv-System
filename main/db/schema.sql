@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS users (
   token_version INTEGER NOT NULL DEFAULT 0          -- bumped to end every session (sign-out, new password, removal)
 );
 CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id);
+CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users(lower(email));   -- sign-in looks people up this way
 
 -- Company-level connections. Secrets are AES-256-GCM encrypted (utils/crypto.js).
 CREATE TABLE IF NOT EXISTS company_credentials (

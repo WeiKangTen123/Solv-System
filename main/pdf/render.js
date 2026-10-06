@@ -12,14 +12,19 @@ const DPI        = 150;    // legible small print on a folio; ~1240 px wide for 
 const MAX_PAGES  = 20;
 const TIMEOUT_MS = 90_000;
 
-async function renderPdfPages(buffer, { dpi = DPI, maxPages = MAX_PAGES, timeoutMs = TIMEOUT_MS } = {}) {
+// `pages` renders only those page numbers: re-reading page 7 of a scan used
+// to draw all twenty pages to read one.
+async function renderPdfPages(buffer, opts = {}) {
   if (!Buffer.isBuffer(buffer) || !buffer.length) return null;
+  return require('./slots').withSlot(() => _render(buffer, opts));
+}
+async function _render(buffer, { dpi = DPI, maxPages = MAX_PAGES, timeoutMs = TIMEOUT_MS, pages: only = null } = {}) {
   const dir   = fs.mkdtempSync(path.join(os.tmpdir(), 'solv-render-'));
   const input = path.join(dir, 'in.pdf');
   try {
     fs.writeFileSync(input, buffer);
     const stdout = await new Promise((resolve, reject) => {
-      execFile(process.execPath, [WORKER, input, dir, String(dpi), String(maxPages)],
+      execFile(process.execPath, [WORKER, input, dir, String(dpi), String(maxPages), Array.isArray(only) && only.length ? only.join(',') : ''],
         { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
         (err, out, stderr) => (err ? reject(new Error(`${err.message}${stderr ? ` — ${String(stderr).slice(0, 300)}` : ''}`)) : resolve(out)));
     });

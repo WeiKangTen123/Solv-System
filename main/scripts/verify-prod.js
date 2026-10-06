@@ -56,7 +56,7 @@ async function testAll() {
   console.log(`[PASS] Key masked properly: ${savedKey.keyMasked} (label: ${savedKey.label})`);
 
   // 7. Delete the test key
-  const delRes = await axios.delete(`${baseUrl}/api/users/me/gemini-keys/${createdId}`, { headers: authHeaders });
+  await axios.delete(`${baseUrl}/api/users/me/gemini-keys/${createdId}`, { headers: authHeaders });
   console.log(`[PASS] DELETE /api/users/me/gemini-keys/${createdId} returned success`);
 
   // 8. Verify other running apps (ZERO TOUCH constraint)

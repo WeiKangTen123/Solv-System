@@ -2,13 +2,15 @@
 // pdf-render.js: pdfjs is ESM-only and heavy, and a render that blows up must
 // not take the server with it.
 //
-// Usage: node render-worker.mjs <input.pdf> <outDir> <dpi> <maxPages>
+// Usage: node render-worker.mjs <input.pdf> <outDir> <dpi> <maxPages> [pages]
+// `pages` is a comma list of page numbers to draw; without it, the first maxPages.
 // Prints one JSON line: { numPages, rendered: [{ page, file, width, height }] }
 import fs from 'node:fs';
 import path from 'node:path';
 import { createCanvas } from '@napi-rs/canvas';
 
-const [,, input, outDir, dpiArg = '150', maxArg = '20'] = process.argv;
+const [,, input, outDir, dpiArg = '150', maxArg = '20', onlyArg = ''] = process.argv;
+const only = onlyArg ? new Set(onlyArg.split(',').map(Number).filter(n => Number.isInteger(n) && n > 0)) : null;
 const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
 
 const data = new Uint8Array(fs.readFileSync(input));
@@ -18,7 +20,8 @@ const n = Math.min(doc.numPages, Number(maxArg));
 fs.mkdirSync(outDir, { recursive: true });
 
 const rendered = [];
-for (let i = 1; i <= n; i++) {
+const wanted = only ? [...only].filter(p => p <= doc.numPages).sort((a, b) => a - b).slice(0, n) : Array.from({ length: n }, (_, k) => k + 1);
+for (const i of wanted) {
   const page = await doc.getPage(i);
   const viewport = page.getViewport({ scale });
   const width = Math.ceil(viewport.width), height = Math.ceil(viewport.height);

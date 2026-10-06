@@ -188,12 +188,12 @@ async function readParts(userId, buffer, mime) {
       const parsed = await parser.parseReceiptPages(userId, rendered.pages.map(p => ({ buffer: p.buffer, mime: 'image/jpeg' })));
       return { parts: _fromParsed(parsed), numPages, parsed, notes };
     }
-    // A thick scan: one receipt per page, each read on its own.
-    const parts = [];
-    for (const p of rendered.pages) {
-      const one = await parser.parseReceiptImage(userId, p.buffer, 'image/jpeg');
-      parts.push({ r: one && one.receipts ? one.receipts[0] : null, page: p.page, box: null });
-    }
+    // A thick scan: one receipt per page, read five pages to a call (the
+    // batch reader checks each answer comes back against its own page, and
+    // reads a page alone when it cannot tell). One call per page used to make
+    // a twenty-page scan twenty calls.
+    const reads = await parser.parseReceiptBatch(userId, rendered.pages.map(p => ({ buffer: p.buffer, mime: 'image/jpeg' })));
+    const parts = rendered.pages.map((p, i) => ({ r: reads[i] || null, page: p.page, box: null }));
     return { parts, numPages, parsed: null, notes };
   }
 
@@ -217,7 +217,7 @@ async function readParts(userId, buffer, mime) {
   // drawn and read; one that holds a receipt becomes a part of its own.
   const blank = extracted.pages.map((t, i) => (String(t || '').length < pdfPages.MIN_PAGE_CHARS ? i + 1 : null)).filter(Boolean);
   if (blank.length && extracted.textPageCount) {
-    const rendered = await pdfRender.renderPdfPages(buffer).catch(() => null);
+    const rendered = await pdfRender.renderPdfPages(buffer, { pages: blank.slice(0, 10) }).catch(() => null);
     for (const p of (rendered && rendered.pages) || []) {
       if (!blank.includes(p.page)) continue;
       const one = await parser.parseReceiptImage(userId, p.buffer, 'image/jpeg');
@@ -314,7 +314,7 @@ async function readOne(userId, buffer, mime, { page = null, box = null } = {}) {
     const out = await parser.parseReceiptText(userId, text);
     return out ? out.receipts[0] : null;
   }
-  const rendered = await pdfRender.renderPdfPages(buffer);
+  const rendered = await pdfRender.renderPdfPages(buffer, page ? { pages: [page] } : { maxPages: MAX_PAGES_ONE_DOC });
   if (!rendered || !rendered.pages.length) return null;
   const pages = page ? rendered.pages.filter(p => p.page === page) : rendered.pages.slice(0, MAX_PAGES_ONE_DOC);
   return _nearest(await parser.parseReceiptPages(userId, pages.map(p => ({ buffer: p.buffer, mime: 'image/jpeg' }))), box);

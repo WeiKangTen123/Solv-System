@@ -49,7 +49,9 @@ async function applyFx(expenseId, { force = false } = {}) {
   const date = policyDate(company.fxPolicy, e, company.timezone);
   // The company's own today decides whether this day may take the live
   // board's figure (fx/live.js) or must be priced from its history.
-  let r = await rates.getRate({ from: e.currency, to: base, date, force, today });
+  // Under a fixed monthly table only the table's rate will do, so the
+  // providers are not asked for one that would be thrown away.
+  let r = await rates.getRate({ from: e.currency, to: base, date, force, today, manualOnly: company.fxPolicy === 'monthly_fixed' });
   // A fixed monthly table is a promise finance made; a provider's number is not it.
   if (r && company.fxPolicy === 'monthly_fixed' && r.source !== 'manual') r = null;
   // A rate that moved further than a currency moves is not put on a line: the

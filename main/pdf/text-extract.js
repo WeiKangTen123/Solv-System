@@ -12,7 +12,10 @@ const WORKER     = path.join(__dirname, 'text-worker.mjs');
 const TIMEOUT_MS = 30_000;
 const MAX_PAGES  = 50;
 
-async function extractText(buffer, { timeoutMs = TIMEOUT_MS, maxPages = MAX_PAGES } = {}) {
+async function extractText(buffer, opts = {}) {
+  return require('./slots').withSlot(() => _extract(buffer, opts));
+}
+async function _extract(buffer, { timeoutMs = TIMEOUT_MS, maxPages = MAX_PAGES } = {}) {
   const dir   = fs.mkdtempSync(path.join(os.tmpdir(), 'solv-text-'));
   const input = path.join(dir, 'in.pdf');
   try {

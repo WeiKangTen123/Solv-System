@@ -109,7 +109,7 @@ describe('routes/receipts', () => {
 // Working case-first: the case exists, and receipts are shot straight into it
 // rather than landing in a pile to be filed later.
 describe('routes/receipts — uploading into a case', () => {
-  let app, users, store, reports, wf, routes, parser, owner, other, ownerTok, otherTok;
+  let app, users, store, reports, wf, routes, parser, owner, other, ownerTok;
   let _n = 0;
   const jpeg = () => Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x11, ++_n]).toString('base64');
 
@@ -129,7 +129,6 @@ describe('routes/receipts — uploading into a case', () => {
     other = await users.createUser({ email: 'other@solv.sg', password: 'password123', companyId: boss.companyId });
     const secret = require('../middleware/auth-middleware').jwtSecret();
     ownerTok = jwt.sign({ id: owner.id, email: owner.email, role: owner.role }, secret);
-    otherTok = jwt.sign({ id: other.id, email: other.email, role: other.role }, secret);
     app = express(); app.use(express.json({ limit: '25mb' })); app.use('/api/receipts', routes);
   });
 

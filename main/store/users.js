@@ -109,6 +109,11 @@ function saveCompanyConfig(companyId, patch) {
 // ── Users ────────────────────────────────────────────────────────────────────
 function hasUsers() { return db.prepare('SELECT 1 FROM users LIMIT 1').get() !== undefined; }
 function findById(id) { return sanitize(db.prepare('SELECT * FROM users WHERE id = ?').get(id)); }
+// The user and their session version in one query, for requireAuth.
+function findSession(id) {
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  return row ? { ...sanitize(row), tokenVersion: row.token_version || 0 } : null;
+}
 function _rawByEmail(email) { return db.prepare('SELECT * FROM users WHERE lower(email) = lower(?)').get(email) || null; }
 function findByEmail(email) { return sanitize(_rawByEmail(email)); }
 
@@ -329,7 +334,7 @@ function getUserDefaults(userId) {
 
 function ensureUserDirectories() { /* nothing per user to provision yet; kept for index.js symmetry */ }
 
-module.exports = {
+module.exports = { findSession,
   ROLES, DEFAULT_TIMEZONE, DEFAULT_REPORT_COLUMNS, MIN_PASSWORD,
   hasUsers, findById, findByEmail, createUser, validatePassword, updateUser, setPassword, getAllUsers, getUserMetrics,
   removeUser, restoreUser, countAdmins, firstCompanyId, tokenVersion, endSessions, readUsers,

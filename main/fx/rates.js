@@ -154,7 +154,7 @@ function liveRate(from, to) {
 // `localToday` is the company's own date (utils/zone-date.js). Only a day on
 // or after it may take the live board's figure; without it, UTC's date is
 // used, which in Singapore is still yesterday until 08:00.
-async function getRate({ from, to, date, force = false, today: localToday = null }) {
+async function getRate({ from, to, date, force = false, today: localToday = null, manualOnly = false }) {
   if (!from || !to) return null;
   if (from === to) return { from, to, rateDate: date, rate: 1, source: 'same', fetchedAt: new Date().toISOString(), providerDate: date };
   const day = date || localToday || today();
@@ -175,9 +175,15 @@ async function getRate({ from, to, date, force = false, today: localToday = null
     const stale = day >= today() && Date.now() - Date.parse(hit.fetchedAt) > TODAY_TTL_MS;
     if (!stale) return hit;
   }
-  const fresh = await _fetch(from, to, day);
+  if (manualOnly) return hit && hit.source === 'manual' ? hit : null;
+  // Twenty receipts in one currency uploaded together asked the providers the
+  // same question twenty times at once; they now share the one answer.
+  const k = `${from}|${to}|${day}`;
+  if (!_inflight.has(k)) _inflight.set(k, _fetch(from, to, day).finally(() => _inflight.delete(k)));
+  const fresh = await _inflight.get(k);
   return fresh || hit || null;
 }
+const _inflight = new Map();
 
 // The day's close: the live rate at the end of the day, stored as the price
 // of that day. Returns the stored row, or the refusal when it moved too far.
@@ -208,7 +214,9 @@ function lastClose(from, to, before) {
 // One entry per day, newest first: the row that prices the day, and, when an
 // admin's rate overrides it, the provider figure it overrode.
 function history(from, to, { limit = 60 } = {}) {
-  const rows = db.prepare('SELECT * FROM fx_rates WHERE base = ? AND quote = ? ORDER BY rate_date DESC').all(from, to).map(_row);
+  // Every source's row for a day comes back, so the SQL limit leaves room for
+  // several per day; the days themselves are cut to `limit` below.
+  const rows = db.prepare('SELECT * FROM fx_rates WHERE base = ? AND quote = ? ORDER BY rate_date DESC LIMIT ?').all(from, to, Math.max(1, limit) * 6).map(_row);
   const byDay = new Map();
   for (const r of rows) {
     if (!byDay.has(r.rateDate)) byDay.set(r.rateDate, []);

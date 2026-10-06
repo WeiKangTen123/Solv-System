@@ -74,7 +74,7 @@ function findDuplicate({ store, profile = null, hash, contactName, vendorName, n
 
   if (!rules.byFields) return null;
   if (!name || !date || amount === null || amount === undefined) return null;
-  const rows = candidates || store.getAll();
+  const rows = candidates || (typeof store.near === 'function' ? store.near(date, amount) : store.getAll());
   const hit = rows.find(r =>
     r.id !== excludeId &&
     r.status !== 'duplicate' && r.status !== 'error' &&

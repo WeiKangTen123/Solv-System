@@ -31,7 +31,7 @@ async function lookAt(userId, e, question, { interactive = false } = {}) {
       const text = (e.page ? extracted.pages[e.page - 1] || '' : extracted.pages.join('\n\n')).slice(0, MAX_TEXT);
       content = [ask, { type: 'text', text: `The receipt's text:\n"""\n${text}\n"""` }];
     } else {
-      const rendered = await require('../pdf/render').renderPdfPages(buffer).catch(() => null);
+      const rendered = await require('../pdf/render').renderPdfPages(buffer, e.page ? { pages: [e.page] } : { maxPages: MAX_PAGES }).catch(() => null);
       const pages = rendered && rendered.pages ? (e.page ? rendered.pages.filter(p => p.page === e.page) : rendered.pages.slice(0, MAX_PAGES)) : [];
       if (!pages.length) return 'The PDF could not be opened to look at.';
       content = [ask, ...pages.map(p => ({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${p.buffer.toString('base64')}` } }))];

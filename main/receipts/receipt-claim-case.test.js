@@ -1,3 +1,6 @@
+// A fixed rate: the test is about filing, and it used to ask the real rate
+// provider over the network, which made it fail whenever that was slow.
+jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 0.0161, rateDate: '2026-08-31', providerDate: '2026-08-31', source: 'frankfurter', fetchedAt: '2026-09-01T00:00:00.000Z' }) }));
 const fs = require('fs');
 const path = require('path');
 const { newId } = require('../utils/ids');
