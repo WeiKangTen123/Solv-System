@@ -49,7 +49,9 @@ describe('routes/reports', () => {
     // claiming the case claimed what was in it, and locked it
     const claimed = await request(serverFor(app)).get(`/api/expenses/${e.id}`).set(as(emp)).expect(200);
     expect(claimed.body.expense.claimed).toBe(true);
-    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ purpose: 'x' }).expect(409);
+    // the details stay correctable after the claim; deleting the receipt does not
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ purpose: 'x' }).expect(200);
+    await request(serverFor(app)).delete(`/api/expenses/${e.id}`).set(as(emp)).expect(409);
     await request(serverFor(app)).patch(`/api/reports/${r.id}`).set(as(emp)).send({ title: 'x' }).expect(409);
     await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(emp)).expect(400);         // already
     // reopening is the owner's alone — an admin sees the case but does not
@@ -60,7 +62,7 @@ describe('routes/reports', () => {
     await request(serverFor(app)).patch(`/api/reports/${r.id}`).set(as(admin)).send({ title: 'x' }).expect(403);
     const ro = await request(serverFor(app)).post(`/api/reports/${r.id}/reopen`).set(as(emp)).expect(200);
     expect(ro.body.report.status).toBe('open');
-    expect(ro.body.report.events.map(x => x.action)).toEqual(['created', 'claimed', 'reopened']);
+    expect(ro.body.report.events.map(x => x.action)).toEqual(['created', 'claimed', 'edited', 'reopened']);
     await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ purpose: 'Client visit' }).expect(200);
   });
 

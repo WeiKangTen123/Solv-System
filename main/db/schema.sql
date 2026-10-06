@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS expenses (
   error_msg      TEXT,
   ai_read_at     TEXT,
   ai_confidence  TEXT,
+  ai_read        TEXT,      -- JSON: what the reader first read off the receipt, kept beside later edits
   box            TEXT,      -- JSON [ymin,xmin,ymax,xmax] 0-1000 when one photo held several receipts
   page           INTEGER,   -- 1-based page when one PDF page is its own receipt
   source         TEXT NOT NULL DEFAULT 'upload',
@@ -214,6 +215,23 @@ CREATE TABLE IF NOT EXISTS fx_closes (
   summary    TEXT,
   PRIMARY KEY (company_id, close_date)
 );
+
+-- Every change to a receipt's details after it was read: who, when, which
+-- field, from what to what, and whether it came from the page, the assistant
+-- or a re-read. The owner sees it on the receipt; nothing deletes a row but
+-- deleting the receipt itself.
+CREATE TABLE IF NOT EXISTS expense_changes (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  expense_id  TEXT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+  actor_id    TEXT,
+  actor_role  TEXT,            -- owner | admin
+  via         TEXT NOT NULL DEFAULT 'app',   -- app | assistant | reread
+  field       TEXT NOT NULL,
+  old_value   TEXT,
+  new_value   TEXT,
+  at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_changes_expense ON expense_changes(expense_id, id);
 
 CREATE TABLE IF NOT EXISTS report_events (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,

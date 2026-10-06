@@ -30,6 +30,12 @@ export default function ExpenseReview() {
   const [exp, setExp] = useState(null);
   const [rateEdit, setRateEdit] = useState(null);
   const [locked, setLocked] = useState(false);
+  // What the server says this person may do here: correct the details (the
+  // owner or an admin, until the case is in Xero) and act on the claim (the
+  // owner, while the case is open).
+  const [perm, setPerm] = useState({});
+  const [history, setHistory] = useState(null);
+  const [allHistory, setAllHistory] = useState(false);
   const [cases, setCases] = useState([]);
   const [imageUrl, setImageUrl] = useState(null);
   const [form, setForm] = useState({});
@@ -62,6 +68,7 @@ export default function ExpenseReview() {
     if (current.current !== asked) return;
     setExp(d.expense);
     setLocked(!!d.locked);
+    setPerm({ isOwner: !!d.isOwner, canEditDetails: !!d.canEditDetails, canAct: !!d.canAct, posted: !!d.posted });
     if (!(preserveEdits && dirty.current)) {
       setForm({ ...pick(d.expense), reportId: d.expense.reportId || '' });
       setLines(d.expense.lines.map(l => ({ category: l.category || '', description: l.description || '', amount: l.amount, onBehalfOf: l.onBehalfOf || '' })));
@@ -74,16 +81,22 @@ export default function ExpenseReview() {
       setImageUrl(`/api/receipts/${rid}/image?token=${encodeURIComponent(d.imageToken)}`);
     }
   }, [id]);
+  const loadHistory = useCallback(async () => {
+    const asked = id;
+    const d = await api.get(`/expenses/${asked}/changes`);
+    if (current.current === asked) setHistory(d.changes || []);
+  }, [id]);
 
   // A different receipt is a fresh page: nothing from the last one carries over.
   useEffect(() => {
     current.current = id;
     dirty.current = false;
     image.current = { receiptId: null, at: 0 };
-    setExp(null); setGroup(null); setRot(0); setRateEdit(null); setConfirm(null); setMsg(null);
+    setExp(null); setGroup(null); setRot(0); setRateEdit(null); setConfirm(null); setMsg(null); setHistory(null); setAllHistory(false);
     load().catch(e => setMsg({ tone: 'error', text: e.message }));
+    loadHistory().catch(() => setHistory([]));
     api.get(`/expenses/${id}/group`).then(g => { if (current.current === id) setGroup(g); }).catch(() => setGroup(null));
-  }, [id, load]);
+  }, [id, load, loadHistory]);
   // Every case in the company for an admin, the person's own for anyone else
   // (the server answers scope=all with your own unless you are an admin).
   // Which of them may take this receipt is decided at render, once the
@@ -104,12 +117,15 @@ export default function ExpenseReview() {
     setBusy('save');
     try {
       const body = { ...form, currency: String(form.currency || '').toUpperCase(), reportId: form.reportId || null };
+      // Filing is the owner's; anyone else's save leaves the case alone.
+      if (!perm.canAct) delete body.reportId;
       const r = await api.patch(`/expenses/${id}`, body);
       if (lines.length && (lines.length !== 1 || cents(lines[0].amount) !== cents(r.expense.total) || lines[0].category !== (r.expense.lines[0]?.category || '') || (lines[0].onBehalfOf || '') !== (r.expense.lines[0]?.onBehalfOf || '') || (lines[0].description || '') !== (r.expense.lines[0]?.description || ''))) {
         await api.put(`/expenses/${id}/lines`, { lines: lines.map(l => ({ ...l, amount: Number(l.amount), onBehalfOf: l.onBehalfOf.trim() || null })) });
       }
       dirty.current = false;
       await load();
+      loadHistory().catch(() => {});
       if (!quiet) setMsg({ tone: 'success', text: 'Saved.' });
       return true;
     } catch (e) { setMsg({ tone: 'error', text: e.message }); return false; }
@@ -130,6 +146,7 @@ export default function ExpenseReview() {
     try {
       const r = await api.post(`/expenses/${id}/reread`, {});
       await load();
+      loadHistory().catch(() => {});
       setMsg(r.ok ? { tone: 'success', text: `Read again (${r.confidence} confidence).` } : { tone: 'warning', text: 'The reader could not make out this receipt. Type the fields by hand.' });
     } catch (e) { setMsg({ tone: 'error', text: e.message }); }
     finally { setBusy(''); }
@@ -137,7 +154,7 @@ export default function ExpenseReview() {
   async function refreshFx() {
     if (!(await save({ quiet: true }))) return;
     setBusy('fx');
-    try { const out = await api.post(`/expenses/${id}/fx`, {}); await load(); setMsg(out.pending ? { tone: 'warning', text: `No rate found for ${exp.currency} on that date.` } : { tone: 'success', text: 'Rate refreshed.' }); }
+    try { const out = await api.post(`/expenses/${id}/fx`, {}); await load(); loadHistory().catch(() => {}); setMsg(out.pending ? { tone: 'warning', text: `No rate found for ${exp.currency} on that date.` } : { tone: 'success', text: 'Rate refreshed.' }); }
     catch (e) { setMsg({ tone: 'error', text: e.message }); }
     finally { setBusy(''); }
   }
@@ -145,7 +162,7 @@ export default function ExpenseReview() {
     ev.preventDefault();
     if (!(await save({ quiet: true }))) return;
     setBusy('fx');
-    try { await api.patch(`/expenses/${id}/fx`, { rate: Number(rateEdit.rate), reason: rateEdit.reason }); setRateEdit(null); await load(); setMsg({ tone: 'success', text: 'Rate changed.' }); }
+    try { await api.patch(`/expenses/${id}/fx`, { rate: Number(rateEdit.rate), reason: rateEdit.reason }); setRateEdit(null); await load(); loadHistory().catch(() => {}); setMsg({ tone: 'success', text: 'Rate changed.' }); }
     catch (e) { setMsg({ tone: 'error', text: e.message }); }
     finally { setBusy(''); }
   }
@@ -155,9 +172,18 @@ export default function ExpenseReview() {
   }
 
   if (!exp) return <div style={{ color: 'var(--text-muted)' }}>{msg?.text || 'Loading…'}</div>;
-  const viewOnly = !!user && exp.userId !== user.id;
-  const readOnly = locked || viewOnly;
+  const viewOnly = !perm.isOwner;
+  const detailsLocked = !perm.canEditDetails || exp.status === 'duplicate';
+  const actionsLocked = !perm.canAct;
   const isPdf = exp.receipt?.mime === 'application/pdf';
+  // Where a saved field no longer says what the reader read, show what it
+  // read, so a figure that drifted from the paper is visible at a glance.
+  const aiDiffers = k => {
+    const read = exp.aiRead ? exp.aiRead[k] : undefined;
+    if (read === undefined || read === null || read === '') return false;
+    if (k === 'total' || k === 'tax') return Number(read) !== Number(exp[k]);
+    return String(read).trim().toLowerCase() !== String(exp[k] ?? '').trim().toLowerCase();
+  };
   const idx = group?.siblings?.findIndex(s => s.id === id) ?? -1;
   const prev = idx > 0 ? group.siblings[idx - 1] : null;
   const next = idx >= 0 && idx < (group?.siblings?.length || 0) - 1 ? group.siblings[idx + 1] : null;
@@ -179,7 +205,7 @@ export default function ExpenseReview() {
         <div style={{ display: 'flex', gap: 8 }}>
           {prev && <button className="btn btn-outline btn-sm" onClick={() => navigate(`/expenses/${prev.id}`)}>← Prev</button>}
           {next && <button className="btn btn-outline btn-sm" onClick={() => navigate(`/expenses/${next.id}`)}>Next →</button>}
-          <button className="btn btn-outline btn-sm" disabled={readOnly} title={viewOnly ? 'Only the person who claimed this receipt can change it' : locked ? 'The case it is in has been claimed' : ''} onClick={() => setConfirm('delete')}>Delete</button>
+          {perm.isOwner && <button className="btn btn-outline btn-sm" disabled={actionsLocked} title={locked ? 'The case it is in has been claimed' : ''} onClick={() => setConfirm('delete')}>Delete</button>}
         </div>
       </div>
 
@@ -190,8 +216,15 @@ export default function ExpenseReview() {
       </datalist>
 
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
-      {viewOnly && <div className="alert alert-info">You are viewing someone else&rsquo;s receipt. Only they can change it.</div>}
-      {locked && !viewOnly && <div className="alert alert-info">This receipt is in a case that has been claimed. Reopen the case to change it.</div>}
+      {perm.posted && <div className="alert alert-info">This receipt is in a case that has been posted to Xero, so nothing on it can change now.</div>}
+      {!perm.posted && viewOnly && (
+        <div className="alert alert-info">
+          You are checking someone else&rsquo;s receipt. You can correct its details; every change is logged below and they can see it. Filing, marking it reviewed and deleting stay theirs.
+        </div>
+      )}
+      {!perm.posted && !viewOnly && locked && (
+        <div className="alert alert-info">This receipt is in a claimed case. You can still correct its details, and each change is recorded on the case. Reopen the case to file, re-read or delete it.</div>
+      )}
       {exp.errorMsg && <div className="alert alert-warning"><span className="alert-icon">!</span><span>{exp.errorMsg}{exp.duplicateOf && <> · <Link to={`/expenses/${exp.duplicateOf}`}>see the other one</Link></>}</span></div>}
       {group?.split && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>{group.groupType === 'batch' ? 'Batch import' : 'Split from one file'} · {group.index} of {group.total}</div>}
 
@@ -205,7 +238,7 @@ export default function ExpenseReview() {
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               {!isPdf && <button className="btn btn-outline btn-sm" onClick={() => setRot(r => (r + 90) % 360)}>Rotate</button>}
-              <button className="btn btn-outline btn-sm" disabled={busy === 'reread' || !exp.receipt || readOnly} onClick={reread}>{busy === 'reread' ? 'Reading…' : 'Re-read'}</button>
+              <button className="btn btn-outline btn-sm" disabled={busy === 'reread' || !exp.receipt || actionsLocked} title={viewOnly ? 'Only the claimant can re-read it' : ''} onClick={reread}>{busy === 'reread' ? 'Reading…' : 'Re-read'}</button>
               {imageUrl && <a className="btn btn-outline btn-sm" href={imageUrl} target="_blank" rel="noopener noreferrer">Open original</a>}
             </div>
           </div>
@@ -223,10 +256,15 @@ export default function ExpenseReview() {
               {FIELDS.map(([k, label, type]) => (
                 <div className="form-group" key={k} style={{ gridColumn: k === 'merchant' || k === 'purpose' ? '1 / -1' : 'auto' }}>
                   <label className="form-label" htmlFor={`f-${k}`}>{label}</label>
-                  <input id={`f-${k}`} className="form-input" type={type} step={type === 'number' ? '0.01' : undefined} value={form[k] ?? ''} disabled={readOnly}
+                  <input id={`f-${k}`} className="form-input" type={type} step={type === 'number' ? '0.01' : undefined} value={form[k] ?? ''} disabled={detailsLocked}
                          list={k === 'currency' ? 'currency-options' : undefined}
                          onChange={e => set(k, k === 'currency' ? e.target.value.toUpperCase().slice(0, 3) : e.target.value)}
                          placeholder={k === 'purpose' ? 'Client site visit, Chakan plant' : k === 'currency' ? 'IDR' : ''} />
+                  {aiDiffers(k) && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }} title="What the reader first read off the receipt">
+                      AI read: {String(exp.aiRead[k])}
+                    </div>
+                  )}
                   {k === 'currency' && (
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
                       {currencies.find(c => c.code === form.currency)?.name || 'Pick one, or type any three-letter code'}
@@ -237,7 +275,7 @@ export default function ExpenseReview() {
             </div>
             <div className="form-group">
               <label className="form-label" htmlFor="f-report">Case</label>
-              <select id="f-report" className="form-input" value={form.reportId || ''} onChange={e => set('reportId', e.target.value)} disabled={readOnly}>
+              <select id="f-report" className="form-input" value={form.reportId || ''} onChange={e => set('reportId', e.target.value)} disabled={actionsLocked}>
                 <option value="">Not in a case</option>
                 {!caseKnown && <option value={exp.reportId}>Its case</option>}
                 {caseOptions.map(r => <option key={r.id} value={r.id}>{r.number} {r.title || ''}</option>)}
@@ -278,8 +316,8 @@ export default function ExpenseReview() {
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                  <button className="btn btn-outline btn-sm" disabled={!!busy || readOnly} onClick={refreshFx}>{busy === 'fx' ? 'Working…' : 'Refresh rate'}</button>
-                  <button className="btn btn-outline btn-sm" disabled={!!busy || readOnly} onClick={() => setRateEdit({ rate: fx?.fxRate || '', reason: '' })}>Change rate…</button>
+                  <button className="btn btn-outline btn-sm" disabled={!!busy || detailsLocked} onClick={refreshFx}>{busy === 'fx' ? 'Working…' : 'Refresh rate'}</button>
+                  <button className="btn btn-outline btn-sm" disabled={!!busy || detailsLocked} onClick={() => setRateEdit({ rate: fx?.fxRate || '', reason: '' })}>Change rate…</button>
                 </div>
                 {rateEdit && (
                   <form onSubmit={submitRate} style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -298,23 +336,23 @@ export default function ExpenseReview() {
             <div className="card-subtitle">One line per category on the report. They must add up to the total{form.currency ? ` in ${form.currency}` : ''}.</div>
             {lines.map((l, i) => (
               <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.4fr 0.9fr auto', gap: 6, marginBottom: 6, alignItems: 'center' }}>
-                <select className="form-input" value={l.category} disabled={readOnly} onChange={e => setLine(i, 'category', e.target.value)} aria-label="Category">
+                <select className="form-input" value={l.category} disabled={detailsLocked} onChange={e => setLine(i, 'category', e.target.value)} aria-label="Category">
                   <option value="">Category…</option>
                   {categories.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
-                <input className="form-input" value={l.description} placeholder="Rooms, 3 nights" disabled={readOnly} onChange={e => setLine(i, 'description', e.target.value)} aria-label="Description" />
-                <input className="form-input" type="number" step="0.01" value={l.amount} disabled={readOnly} onChange={e => setLine(i, 'amount', e.target.value)} style={{ textAlign: 'right' }} aria-label="Amount" />
-                <button className="btn btn-ghost btn-sm" disabled={readOnly} onClick={() => editLines(ls => ls.filter((_, j) => j !== i))} aria-label="Remove line" title="Remove line">✕</button>
+                <input className="form-input" value={l.description} placeholder="Rooms, 3 nights" disabled={detailsLocked} onChange={e => setLine(i, 'description', e.target.value)} aria-label="Description" />
+                <input className="form-input" type="number" step="0.01" value={l.amount} disabled={detailsLocked} onChange={e => setLine(i, 'amount', e.target.value)} style={{ textAlign: 'right' }} aria-label="Amount" />
+                <button className="btn btn-ghost btn-sm" disabled={detailsLocked} onClick={() => editLines(ls => ls.filter((_, j) => j !== i))} aria-label="Remove line" title="Remove line">✕</button>
                 <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <input type="checkbox" checked={!!l.onBehalfOf} disabled={readOnly} onChange={e => setLine(i, 'onBehalfOf', e.target.checked ? (l.onBehalfOf || ' ') : '')} /> paid on behalf of
+                    <input type="checkbox" checked={!!l.onBehalfOf} disabled={detailsLocked} onChange={e => setLine(i, 'onBehalfOf', e.target.checked ? (l.onBehalfOf || ' ') : '')} /> paid on behalf of
                   </label>
-                  {!!l.onBehalfOf && <input className="form-input" style={{ padding: '4px 8px', fontSize: 12, maxWidth: 220 }} value={l.onBehalfOf.trim()} disabled={readOnly} placeholder="Colleague's name" onChange={e => setLine(i, 'onBehalfOf', e.target.value || ' ')} />}
+                  {!!l.onBehalfOf && <input className="form-input" style={{ padding: '4px 8px', fontSize: 12, maxWidth: 220 }} value={l.onBehalfOf.trim()} disabled={detailsLocked} placeholder="Colleague's name" onChange={e => setLine(i, 'onBehalfOf', e.target.value || ' ')} />}
                 </div>
               </div>
             ))}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, fontSize: 12.5 }}>
-              <button className="btn btn-outline btn-sm" disabled={readOnly} onClick={() => editLines(ls => [...ls, { category: '', description: '', amount: Math.max(0, (totalCents - linesCents) / 100).toFixed(2), onBehalfOf: '' }])}>+ Line</button>
+              <button className="btn btn-outline btn-sm" disabled={detailsLocked} onClick={() => editLines(ls => [...ls, { category: '', description: '', amount: Math.max(0, (totalCents - linesCents) / 100).toFixed(2), onBehalfOf: '' }])}>+ Line</button>
               <span style={{ color: reconciled ? 'var(--success)' : 'var(--danger)', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>
                 lines {fmtMoney(linesCents / 100, form.currency)} {reconciled ? '✓' : `≠ total ${fmtMoney(totalCents / 100, form.currency)}`}
               </span>
@@ -322,17 +360,60 @@ export default function ExpenseReview() {
           </div>
 
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-            <button className="btn btn-outline" disabled={!!busy || readOnly} onClick={() => save()}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
-            <button className="btn btn-primary" disabled={!!busy || !reconciled || readOnly || exp.status === 'reviewed'} title={reconciled ? '' : 'The lines must add up to the total first'} onClick={markReviewed}>
-              {busy === 'review' ? 'Saving…' : (next ? 'Mark reviewed → next' : 'Mark reviewed')}
-            </button>
+            <button className="btn btn-outline" disabled={!!busy || detailsLocked} onClick={() => save()}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
+            {perm.isOwner && (
+              <button className="btn btn-primary" disabled={!!busy || !reconciled || actionsLocked || exp.status === 'reviewed'} title={reconciled ? '' : 'The lines must add up to the total first'} onClick={markReviewed}>
+                {busy === 'review' ? 'Saving…' : (next ? 'Mark reviewed → next' : 'Mark reviewed')}
+              </button>
+            )}
           </div>
+
+          <ChangeHistory items={history} all={allHistory} onAll={() => setAllHistory(true)} me={user?.id} tz={user?.timezone} />
         </div>
       </div>
 
       {confirm === 'delete' && (
         <ConfirmDialog title="Delete this expense?" message="The receipt file goes with it unless another expense still uses it." confirmLabel="Delete" danger onConfirm={remove} onCancel={() => setConfirm(null)} />
       )}
+    </div>
+  );
+}
+
+// Who changed what on this receipt. Changes saved together are shown
+// together; the newest five are shown until asked for the rest.
+const VIA = { assistant: 'through the assistant', reread: 'by re-reading the receipt' };
+function ChangeHistory({ items, all, onAll, me, tz }) {
+  if (!items) return null;
+  const groups = [];
+  for (const c of items) {
+    const g = groups[groups.length - 1];
+    if (g && g.at === c.at && g.actorId === c.actorId && g.via === c.via) g.rows.push(c);
+    else groups.push({ at: c.at, actorId: c.actorId, actorName: c.actorName, actorRole: c.actorRole, via: c.via, rows: [c] });
+  }
+  const shown = all ? groups : groups.slice(0, 5);
+  return (
+    <div className="card">
+      <div className="card-title">Change history</div>
+      <div className="card-subtitle">Every change to this receipt&rsquo;s details after it was read, and who made it.</div>
+      {!groups.length && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Nothing has been changed since the receipt was read.</div>}
+      {shown.map((g, i) => (
+        <div key={i} style={{ padding: '8px 0', borderTop: i ? '1px solid var(--border)' : 'none' }}>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
+            <strong style={{ color: 'var(--text)' }}>{g.actorId && g.actorId === me ? 'You' : (g.actorName || 'Someone')}</strong>
+            {g.actorRole === 'admin' && <span className="badge badge-blue" style={{ marginLeft: 6 }}>admin</span>}
+            {VIA[g.via] ? ` ${VIA[g.via]}` : ''} · {formatDateTime(g.at, tz)}
+          </div>
+          {g.rows.map(c => (
+            <div key={c.id} style={{ fontSize: 12.5, lineHeight: 1.5, overflowWrap: 'anywhere' }}>
+              <span style={{ fontWeight: 600 }}>{c.label}</span>{': '}
+              <span style={{ color: 'var(--text-muted)', textDecoration: c.oldValue ? 'line-through' : 'none' }}>{c.oldValue || 'empty'}</span>
+              {' → '}
+              <span>{c.newValue || 'empty'}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+      {!all && groups.length > 5 && <button className="btn btn-ghost btn-sm" onClick={onAll}>Show all {groups.length}</button>}
     </div>
   );
 }

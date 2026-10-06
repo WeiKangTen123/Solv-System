@@ -89,7 +89,12 @@ async function applyRead(expenseId, r, extra = {}) {
     // puts that one back if it still holds). What a read may add is that the
     // currency on the row is the default, not something it saw.
     errorMsg: r.currency == null && r.total != null && exp?.currency ? currencyNote(exp.currency) : null,
-    aiConfidence: r.confidence || 'low', aiReadAt: new Date().toISOString(), ...extra,
+    aiConfidence: r.confidence || 'low', aiReadAt: new Date().toISOString(),
+    // What the reader saw on the paper, kept beside whatever the fields say
+    // later, so a total that was changed away from the receipt shows.
+    aiRead: { merchant: r.merchant ?? null, receiptDate: r.date ?? null, currency: r.currency ?? null, total: r.total ?? null,
+              tax: r.tax ?? null, invoiceNo: r.invoiceNumber ?? null, category: canonicalCategory(r.category) ?? null },
+    ...extra,
   };
   const updated = store.updateExpense(expenseId, patch);
   if (!updated) return null;

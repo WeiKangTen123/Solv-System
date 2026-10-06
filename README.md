@@ -33,15 +33,17 @@ Two roles, like most systems: people who claim, and the person who runs it.
 | Role | Does |
 |---|---|
 | user | their own receipts and cases, start to finish: adds receipts, checks the reader's fields and lines, keeps them in cases, marks a case claimed, posts it to Xero, exports it. Sees nobody else's claims and no staff list |
-| admin | runs the system: adds and removes people, roles, passwords, company settings, LLM keys, exchange rates, the Xero connection, and Users & Monitoring. Sees everyone's claims to monitor them, but files, checks, claims, reopens, deletes and posts only their own |
+| admin | runs the system: adds and removes people, roles, passwords, company settings, LLM keys, exchange rates, the Xero connection, and Users & Monitoring. Sees everyone's claims to monitor them and can correct a receipt's details while checking one, but files, checks, claims, reopens, deletes and posts only their own |
 
 There are no managers and nobody approves anything. Solv records claims; it does not route them.
 
-`open → claimed`, and back again with **Reopen**. A case is open while receipts go in and claimed once its owner has put it through whatever actually reimburses them; claimed locks it and every receipt in it. Claiming refuses until every receipt in the case has been checked and priced. Once a case has been posted to Xero it is final and cannot be reopened, so the app and the books never disagree.
+`open → claimed`, and back again with **Reopen**. A case is open while receipts go in and claimed once its owner has put it through whatever actually reimburses them; claimed closes it to filing, checking, re-reading and deleting. Claiming refuses until every receipt in the case has been checked and priced. Once a case has been posted to Xero it is final and cannot be reopened, so the app and the books never disagree.
 
 The step belongs to the claimant. Solv does not move money, so it cannot know that anybody was paid — what it can know is that the person put the claim through, so they are the one who says so, and nobody can say it for them. A receipt can also be claimed on its own, once it is checked and priced, for a one-off put through outside any case.
 
 **Accounts.** Self-registration is off unless an admin switches it on in Company & Policy; otherwise an admin adds people in Users & Monitoring. Removing a person ends their access and every session they have, and keeps their receipts, cases and totals; they can be restored. Passwords are at least 8 characters. A sign-in lasts 24 hours and ends early on sign-out or a password change.
+
+**Correcting a receipt** ([main/receipts/edit.js](main/receipts/edit.js)). Its details are the merchant, date, invoice number, currency, amounts, category, purpose, lines and exchange rate. The owner and any admin of the same company can correct them, while the case is open and after it is claimed, until the case is posted to Xero, where the bill already exists. Every change is logged with who made it, when, the old and new value, and whether it came from the page, the assistant or a re-read; the log shows on the receipt to its owner and to admins. A change after a claim is also written to the case's history. Where a saved field no longer matches what the reader first read off the receipt, the page shows the reader's value beside it.
 
 **A typed exchange rate** must be within 5% of the day's published rate, with a reason; an admin is not held to that.
 

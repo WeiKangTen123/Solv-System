@@ -129,6 +129,8 @@ function _expense(row, lines, receipt) {
   if (!row) return null;
   let box = null;
   try { box = row.box ? JSON.parse(row.box) : null; } catch { box = null; }
+  let aiRead = null;
+  try { aiRead = row.ai_read ? JSON.parse(row.ai_read) : null; } catch { aiRead = null; }
   // The base-currency figure is the sum of the lines once every line has one.
   const priced = !!(lines && lines.length) && lines.every(l => l.baseAmount !== null && l.baseAmount !== undefined);
   const baseCents = priced ? lines.reduce((sum, l) => sum + Math.round(l.baseAmount * 100), 0) : null;
@@ -139,7 +141,7 @@ function _expense(row, lines, receipt) {
     merchant: row.merchant, receiptDate: row.receipt_date, receiptTime: row.receipt_time, invoiceNo: row.invoice_no, currency: row.currency,
     total: toDollars(row.total_cents) ?? 0, tax: toDollars(row.tax_cents), subTotal: toDollars(row.subtotal_cents),
     purpose: row.purpose, description: row.description, category: row.category, status: row.status, duplicateOf: row.duplicate_of,
-    errorMsg: row.error_msg, aiReadAt: row.ai_read_at, aiConfidence: row.ai_confidence, box, page: row.page, source: row.source,
+    errorMsg: row.error_msg, aiReadAt: row.ai_read_at, aiConfidence: row.ai_confidence, aiRead, box, page: row.page, source: row.source,
     claimedAt: row.claimed_at, claimed: !!row.claimed_at,
     createdAt: row.created_at, updatedAt: row.updated_at, lines: lines || [], receipt: receipt || null,
   };
@@ -166,6 +168,7 @@ function updateExpense(id, patch) {
   for (const [k, col] of Object.entries(EXPENSE_COLS)) { if (patch[k] === undefined) continue; sets.push(`${col} = ?`); args.push(patch[k]); }
   for (const [k, col] of Object.entries(MONEY)) { if (patch[k] === undefined) continue; sets.push(`${col} = ?`); args.push(toCents(patch[k]) ?? (k === 'total' ? 0 : null)); }
   if (patch.box !== undefined) { sets.push('box = ?'); args.push(patch.box ? JSON.stringify(patch.box) : null); }
+  if (patch.aiRead !== undefined) { sets.push('ai_read = ?'); args.push(patch.aiRead ? JSON.stringify(patch.aiRead) : null); }
   sets.push('updated_at = ?'); args.push(now());
   db.prepare(`UPDATE expenses SET ${sets.join(', ')} WHERE id = ?`).run(...args, id);
   return getExpense(id);

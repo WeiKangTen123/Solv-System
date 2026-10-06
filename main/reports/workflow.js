@@ -23,6 +23,14 @@ function isLocked(expense) {
   return !!r && !EDITABLE.has(r.status);
 }
 
+// Posted means: in a case that is in Xero. That is final for everybody —
+// details included — because the bill already exists.
+function isPosted(expense) {
+  if (!expense || !expense.reportId) return false;
+  const r = db.prepare('SELECT xero_invoice_id FROM expense_reports WHERE id = ?').get(expense.reportId);
+  return !!(r && r.xero_invoice_id);
+}
+
 // The owner's business and nobody else's. An admin watches claims; whether a
 // claim went through is the claimant's to say, and an admin saying it for
 // them is exactly the record this system must not be able to fake.
@@ -89,4 +97,4 @@ function markExpenseClaimed(expenseId, actor, claimed = true) {
   return expenses.updateExpense(expenseId, { claimedAt: claimed ? new Date().toISOString() : null });
 }
 
-module.exports = { markClaimed, reopen, markExpenseClaimed, isEditable, isLocked, EDITABLE };
+module.exports = { markClaimed, reopen, markExpenseClaimed, isEditable, isLocked, isPosted, EDITABLE };

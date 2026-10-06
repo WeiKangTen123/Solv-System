@@ -54,7 +54,69 @@ describe('routes/expenses', () => {
     expect(r.body.expense.purpose).toBe('Client site visit');
     expect(r.body.expense.lines[0].amount).toBe(120.5);
     await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ currency: 'rupees' }).expect(400);
-    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(admin)).send({ purpose: 'x' }).expect(403);   // an admin views, the claimant changes
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(other)).send({ purpose: 'x' }).expect(404);   // a colleague does not see it at all
+  });
+
+  test('an admin corrects details on anyone\'s receipt, and the change log says who', async () => {
+    const e = seed(emp);
+    const r = await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(admin)).send({ merchant: 'Courtyard by Marriott', total: 150 }).expect(200);
+    expect(r.body.expense).toMatchObject({ merchant: 'Courtyard by Marriott', total: 150 });
+    expect(r.body).toMatchObject({ isOwner: false, canEditDetails: true, canAct: false, posted: false });
+    const log = await request(serverFor(app)).get(`/api/expenses/${e.id}/changes`).set(as(emp)).expect(200);
+    const merchant = log.body.changes.find(c => c.field === 'merchant');
+    expect(merchant).toMatchObject({ oldValue: 'Courtyard', newValue: 'Courtyard by Marriott', actorRole: 'admin', via: 'app', actorName: expect.any(String) });
+    expect(log.body.changes.find(c => c.field === 'total')).toMatchObject({ oldValue: '100.00', newValue: '150.00' });
+    expect(log.body.changes.find(c => c.field === 'lines')).toBeTruthy();   // the single line followed the total
+    // The details are the admin's to correct; the claim's actions are not.
+    await request(serverFor(app)).put(`/api/expenses/${e.id}/lines`).set(as(admin)).send({ lines: [{ category: 'Lodging', amount: 100 }, { category: 'Meals', amount: 50 }] }).expect(200);
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}/status`).set(as(admin)).send({ status: 'reviewed' }).expect(403);
+    await request(serverFor(app)).post(`/api/expenses/${e.id}/reread`).set(as(admin)).expect(403);
+    await request(serverFor(app)).delete(`/api/expenses/${e.id}`).set(as(admin)).expect(403);
+    const reports = require('../store/reports');
+    const theirs = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'T' });
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(admin)).send({ reportId: theirs.id }).expect(403);   // filing is the claimant's
+    // Sending the case it is already in, beside a detail, is not filing.
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(admin)).send({ reportId: null, purpose: 'Site visit' }).expect(200);
+    // The owner sees their own permissions.
+    const own = await request(serverFor(app)).get(`/api/expenses/${e.id}`).set(as(emp)).expect(200);
+    expect(own.body).toMatchObject({ isOwner: true, canEditDetails: true, canAct: true });
+  });
+
+  test('the change log is seen by whoever can see the receipt, and nobody else', async () => {
+    const e = seed(emp);
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ invoiceNo: 'INV-9' }).expect(200);
+    const log = await request(serverFor(app)).get(`/api/expenses/${e.id}/changes`).set(as(admin)).expect(200);
+    expect(log.body.changes).toEqual([expect.objectContaining({ field: 'invoiceNo', oldValue: null, newValue: 'INV-9', actorRole: 'owner' })]);
+    await request(serverFor(app)).get(`/api/expenses/${e.id}/changes`).set(as(other)).expect(404);
+    // Nothing changed, nothing logged.
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ invoiceNo: 'INV-9' }).expect(200);
+    expect(require('../store/changes').list(e.id)).toHaveLength(1);
+  });
+
+  test('an admin of another company cannot see or edit', async () => {
+    const outsider = await users.createUser({ email: 'x@else.sg', password: 'password123', role: 'admin', companyId: users.createCompany({ name: 'Else' }).id });
+    const secret = require('../middleware/auth-middleware').jwtSecret();
+    tokens[outsider.email] = jwt.sign({ id: outsider.id, email: outsider.email, role: 'admin' }, secret);
+    const e = seed(emp);
+    await request(serverFor(app)).get(`/api/expenses/${e.id}`).set(as(outsider)).expect(404);
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(outsider)).send({ merchant: 'x' }).expect(404);
+    await request(serverFor(app)).get(`/api/expenses/${e.id}/changes`).set(as(outsider)).expect(404);
+  });
+
+  test('a receipt in a case posted to Xero cannot be changed by anybody', async () => {
+    const reports = require('../store/reports'); const wf = require('../reports/workflow'); const db = require('../db');
+    const e = seed(emp, { status: 'reviewed', lines: [{ category: 'Lodging', amount: 100, baseAmount: 1.34, fxRate: 0.0134, fxRateDate: '2026-09-04', fxSource: 'frankfurter', fxFetchedAt: 'x' }] });
+    const r = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'T' });
+    reports.addExpense(r.id, e.id); wf.markClaimed(r.id, emp);
+    db.prepare("UPDATE expense_reports SET xero_invoice_id = 'inv-1' WHERE id = ?").run(r.id);
+    for (const who of [emp, admin]) {
+      await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(who)).send({ purpose: 'x' }).expect(409);
+      await request(serverFor(app)).put(`/api/expenses/${e.id}/lines`).set(as(who)).send({ lines: [{ amount: 100 }] }).expect(409);
+      await request(serverFor(app)).post(`/api/expenses/${e.id}/fx`).set(as(who)).expect(409);
+      await request(serverFor(app)).patch(`/api/expenses/${e.id}/fx`).set(as(who)).send({ rate: 0.0134, reason: 'x' }).expect(409);
+    }
+    const view = await request(serverFor(app)).get(`/api/expenses/${e.id}`).set(as(emp)).expect(200);
+    expect(view.body).toMatchObject({ posted: true, canEditDetails: false, canAct: false });
   });
 
   test('lines must reconcile; a good split is stored with on-behalf', async () => {
@@ -117,13 +179,24 @@ describe('routes/expenses', () => {
     expect(r.body.expense.lines[0]).toMatchObject({ fxRate: 0.0136, baseAmount: 2.72 });   // an override survives an edit
   });
 
-  test('an expense in a claimed case cannot be edited', async () => {
+  test('in a claimed case the details can still be corrected, and the case records it; the actions cannot', async () => {
     const reports = require('../store/reports'); const wf = require('../reports/workflow');
     const e = seed(emp, { status: 'reviewed', lines: [{ category: 'Lodging', amount: 100, baseAmount: 1.34, fxRate: 0.0134, fxRateDate: '2026-09-04', fxSource: 'frankfurter', fxFetchedAt: 'x' }] });
     const r = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'T' });
+    const other = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'Other' });
     reports.addExpense(r.id, e.id); wf.markClaimed(r.id, emp);
-    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ purpose: 'x' }).expect(409);
-    await request(serverFor(app)).get(`/api/expenses/${e.id}`).set(as(emp)).expect(200);
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ purpose: 'Client visit' }).expect(200);
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(admin)).send({ invoiceNo: 'A-1' }).expect(200);
+    const events = reports.listEvents(r.id);
+    const edited = events.filter(ev => ev.action === 'edited');
+    expect(edited).toHaveLength(2);
+    expect(edited.map(ev => ev.note).join(' ')).toMatch(/by an admin/);
+    // Filing, checking and deleting stay closed until the case is reopened.
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ reportId: other.id }).expect(409);
+    await request(serverFor(app)).patch(`/api/expenses/${e.id}/status`).set(as(emp)).send({ status: 'review-needed' }).expect(409);
+    await request(serverFor(app)).delete(`/api/expenses/${e.id}`).set(as(emp)).expect(409);
+    const view = await request(serverFor(app)).get(`/api/expenses/${e.id}`).set(as(emp)).expect(200);
+    expect(view.body).toMatchObject({ locked: true, canEditDetails: true, canAct: false, posted: false });
   });
 
   test('delete removes the expense and the file once nothing references it', async () => {

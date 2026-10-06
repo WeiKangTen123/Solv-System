@@ -2,7 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const jwt     = require('jsonwebtoken');
 const { requireAuth, jwtSecret } = require('../middleware/auth-middleware');
-const { canView, isOwner } = require('../middleware/roles');
+const { canView, isOwner, canEditDetails } = require('../middleware/roles');
 const asyncHandler = require('../middleware/async-handler');
 const users   = require('../store/users');
 const store   = require('../store/expenses');
@@ -26,7 +26,10 @@ const OWNER_ONLY = 'Only the person whose case this is can change it.';
 const _owns = (req, r) => isOwner(req.user, r.userId, r.companyId);
 function _view(r, req) {
   const tenant = require('../xero/token-cache').getPersistedTenants(r.companyId)[0] || null;
-  return { report: r, editable: wf.isEditable(r), isOwner: r.userId === req.user.id,
+  // Correcting a receipt's details is wider than acting on the case: the
+  // owner or an admin, open or claimed, until it is in Xero (receipts/edit.js).
+  return { report: r, editable: wf.isEditable(r), isOwner: r.userId === req.user.id, posted: !!r.xeroInvoiceId,
+           canEditDetails: !r.xeroInvoiceId && canEditDetails(req.user, r.userId, r.companyId),
            xero: { connected: !!tenant, tenantName: tenant ? tenant.tenantName : null } };
 }
 // A workflow error about WHO may act is a 403; anything else is a 400.

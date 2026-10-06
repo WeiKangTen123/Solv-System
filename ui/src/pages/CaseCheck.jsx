@@ -141,9 +141,11 @@ export default function CaseCheck() {
 
   if (!view) return <div style={{ color: 'var(--text-muted)' }}>{msg?.text || 'Loading…'}</div>;
   const r = view.report;
-  // Exactly what POST /reports/:id/review-all allows: the owner, while the
-  // case is open. An admin sees the table to monitor it.
-  const mayEdit = view.editable && view.isOwner;
+  // Checking them all is exactly what POST /reports/:id/review-all allows:
+  // the owner, while the case is open. Correcting a receipt's details is
+  // wider: the owner or an admin, open or claimed, until the case is in Xero.
+  const mayCheck = view.editable && view.isOwner;
+  const mayEditDetails = !!view.canEditDetails;
   const left = r.expenses.filter(e => e.status !== 'reviewed').length;
   const selected = r.expenses.find(e => e.id === sel) || null;
 
@@ -161,16 +163,25 @@ export default function CaseCheck() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-outline" disabled={!!busy || !mayEdit} onClick={saveAll}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
-          <button className="btn btn-primary" disabled={!!busy || !mayEdit} onClick={markAll}>
-            {busy === 'check' ? 'Checking…' : 'Check them all'}
-          </button>
+          <button className="btn btn-outline" disabled={!!busy || !mayEditDetails} onClick={saveAll}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
+          {view.isOwner && (
+            <button className="btn btn-primary" disabled={!!busy || !mayCheck} title={mayCheck ? '' : 'The case has been claimed'} onClick={markAll}>
+              {busy === 'check' ? 'Checking…' : 'Check them all'}
+            </button>
+          )}
         </div>
       </div>
 
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
-      {!view.editable && <div className="alert alert-info">This case has been claimed; reopen it to change anything.</div>}
-      {view.editable && !mayEdit && <div className="alert alert-info">This is {view.report.ownerName || view.report.ownerEmail || 'someone else'}&rsquo;s case. You can read it; only they can check their own receipts.</div>}
+      {view.posted && <div className="alert alert-info">This case is in Xero, so nothing in it can change now.</div>}
+      {!view.posted && !view.isOwner && (
+        <div className="alert alert-info">
+          This is {r.ownerName || r.ownerEmail || 'someone else'}&rsquo;s case. You can correct receipt details while you check it. Every change is logged on the receipt, and they can see it. Checking and claiming stay theirs.
+        </div>
+      )}
+      {!view.posted && view.isOwner && !view.editable && (
+        <div className="alert alert-info">This case has been claimed. You can still correct a receipt&rsquo;s details, and each change is recorded on the case. Reopen it to check or add receipts.</div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: selected ? 'minmax(0, 1fr) 360px' : '1fr', gap: 16, alignItems: 'start' }}>
         <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
@@ -188,13 +199,14 @@ export default function CaseCheck() {
                 const row = rows[e.id] || pick(e);
                 const many = e.lines && e.lines.length > 1;
                 const on = e.id === sel;
+                const rowLocked = !mayEditDetails || e.status === 'duplicate';
                 return (
                   <tr key={e.id} onClick={() => setSel(e.id)}
                       style={{ cursor: 'pointer', background: on ? 'var(--bg-hover)' : undefined }}>
                     <td><input className="form-input" type="date" style={{ minWidth: 118 }}
-                               disabled={!mayEdit} value={row.receiptDate || ''} onChange={ev => set(e.id, 'receiptDate', ev.target.value)} /></td>
+                               disabled={rowLocked} value={row.receiptDate || ''} onChange={ev => set(e.id, 'receiptDate', ev.target.value)} /></td>
                     <td><input className="form-input" style={{ minWidth: 126 }}
-                               disabled={!mayEdit} value={row.merchant || ''} placeholder="Merchant"
+                               disabled={rowLocked} value={row.merchant || ''} placeholder="Merchant"
                                onChange={ev => set(e.id, 'merchant', ev.target.value)} />
                       {/* What the reader could not settle — an assumed currency, a
                           possible duplicate — belongs beside the row it is about. */}
@@ -203,24 +215,24 @@ export default function CaseCheck() {
                       {many
                         ? <Link to={`/expenses/${e.id}`} style={{ fontSize: 12 }}>{e.lines.length} lines →</Link>
                         : <select className="form-input" style={{ minWidth: 118 }}
-                                  disabled={!mayEdit} value={row.category || ''} onChange={ev => set(e.id, 'category', ev.target.value)}>
+                                  disabled={rowLocked} value={row.category || ''} onChange={ev => set(e.id, 'category', ev.target.value)}>
                             <option value="">Category…</option>
                             {categories.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>}
                     </td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                       <input className="form-input" style={{ width: 50, textTransform: 'uppercase' }}
-                             disabled={!mayEdit} value={row.currency || ''} maxLength={3} aria-label="Currency"
+                             disabled={rowLocked} value={row.currency || ''} maxLength={3} aria-label="Currency"
                              onChange={ev => set(e.id, 'currency', ev.target.value.toUpperCase().slice(0, 3))} />
                       <input className="form-input" type="number" step="0.01" aria-label="Amount"
                              style={{ width: 92, textAlign: 'right', marginLeft: 4, fontFamily: 'var(--font-mono)' }}
-                             disabled={!mayEdit} value={row.total ?? ''} onChange={ev => set(e.id, 'total', ev.target.value)} />
+                             disabled={rowLocked} value={row.total ?? ''} onChange={ev => set(e.id, 'total', ev.target.value)} />
                     </td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
                       {e.baseTotal != null ? fmtMoney(e.baseTotal, '') : <span style={{ color: 'var(--warning)' }}>no rate</span>}
                     </td>
                     <td><input className="form-input" style={{ minWidth: 140 }}
-                               disabled={!mayEdit} value={row.purpose || ''} placeholder="What it was for"
+                               disabled={rowLocked} value={row.purpose || ''} placeholder="What it was for"
                                onChange={ev => set(e.id, 'purpose', ev.target.value)} /></td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <StatusBadge status={e.status} />

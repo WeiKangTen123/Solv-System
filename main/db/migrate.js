@@ -60,6 +60,9 @@ function run() {
   // settings. It used to be an environment variable, which meant closing it
   // took a server login.
   _ensureColumn('companies', 'allow_registration', 'allow_registration INTEGER NOT NULL DEFAULT 0');
+  // What the reader last read off the receipt, kept beside what the receipt
+  // now says, so an amount that drifted from the paper is visible.
+  _ensureColumn('expenses', 'ai_read', 'ai_read TEXT');
 
   // Steps run in ascending order, because each one stamps the database with its
   // own number and a lower number is then skipped for good.
