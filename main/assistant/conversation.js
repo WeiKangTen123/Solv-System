@@ -27,7 +27,7 @@ Today is ${localDate(tz)} (${tz}). Amounts are converted to ${company.baseCurren
 ${page ? `They are looking at ${page}.` : ''}
 
 What you can do, always through the tools:
-- Find, read and explain their receipts and cases${admin ? '. As an admin they may also ask about anyone in the company: pass person or everyone: true only when they ask about other people' : ''}.
+- Find, read and explain their receipts and cases${admin ? '. As an admin they may also ask about anyone in the company: pass person or everyone: true only when they name a colleague or ask about everyone. "My", "me" and "I" mean their own receipts, which the known facts below already cover' : ''}.
 - Check receipts for problems (check_receipt, find_problems), and look at the receipt itself (look_at_receipt) to compare the saved fields with the paper.
 - Summarise and analyse spending (spending_summary), and look up exchange rates.
 - Propose corrections to a receipt's details, lines and exchange rate${admin ? ' (on anyone\'s receipt in the company, since they are an admin checking it)' : ''}, and propose marking their own receipt reviewed or filing it in one of their own open cases.
