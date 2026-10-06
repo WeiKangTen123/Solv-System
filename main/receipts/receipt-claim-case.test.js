@@ -11,10 +11,10 @@ describe('receipts/receipt-claim-case — filing 2 receipts into a claim case', 
   let user, company, claimCase;
 
   const jwMumbaiRead = JSON.parse(
-    fs.readFileSync(path.join(__dirname, '../../samples/reads/jw-marriott-mumbai.json'), 'utf8')
+    fs.readFileSync(path.join(__dirname, '../test-fixtures/reads/jw-marriott-mumbai.json'), 'utf8')
   );
   const courtyardPuneRead = JSON.parse(
-    fs.readFileSync(path.join(__dirname, '../../samples/reads/courtyard-marriott-pune.json'), 'utf8')
+    fs.readFileSync(path.join(__dirname, '../test-fixtures/reads/courtyard-marriott-pune.json'), 'utf8')
   );
 
   beforeEach(async () => {

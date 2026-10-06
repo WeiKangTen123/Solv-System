@@ -14,3 +14,8 @@ ui/dist/
 # Where your server is. The repository is public; its address is not.
 # The template, main/.deploy.env.example, is committed.
 .deploy.env
+
+# Real receipts and the reports made from them are personal data. They stay on
+# the machine they were made on and never reach the public repository.
+samples/
+docs/acceptance/exports/

@@ -1,5 +1,3 @@
-const fs   = require('fs');
-const path = require('path');
 const PdfPrinter = require('pdfmake');
 
 // A real two-page PDF, built here so the test never depends on a fixture file.
@@ -39,10 +37,13 @@ describe('pdf/render', () => {
     expect(await renderPdfPages(Buffer.alloc(0))).toBeNull();
   }, 60000);
 
-  const sample = path.join(__dirname, '../../samples/receipts/jw-marriott-mumbai.pdf');
-  (fs.existsSync(sample) ? test : test.skip)('the scanned Mumbai folio renders both pages', async () => {
-    const out = await renderPdfPages(fs.readFileSync(sample));
+  test('a scanned two-page folio renders both pages, or only the page asked for', async () => {
+    const pdf = await require('../test-fixtures/make-pdf').scannedPdf(2);
+    const out = await renderPdfPages(pdf);
     expect(out.numPages).toBe(2);
-    expect(out.pages[0].buffer.length).toBeGreaterThan(50000);
+    expect(out.pages.map(p => p.page)).toEqual([1, 2]);
+    expect(out.pages[0].buffer.length).toBeGreaterThan(20000);
+    const one = await renderPdfPages(pdf, { pages: [2] });
+    expect(one.pages.map(p => p.page)).toEqual([2]);
   }, 90000);
 });

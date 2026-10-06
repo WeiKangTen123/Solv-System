@@ -9,9 +9,11 @@
 
 | Output | Result |
 |---|---|
-| `docs/acceptance/exports/EXP-2026-0001_Aisha-Mei-Ling-Rahman.pdf` | 7 pages, 765 KB: the report page, then R1 (2 pages, JW Marriott Mumbai) and R2 (4 pages, Courtyard Pune) appended |
-| `docs/acceptance/exports/EXP-2026-0001_Aisha-Mei-Ling-Rahman.xlsx` | sheets Cover, Lines (with a SUM formula), Rates, Receipts |
-| `docs/acceptance/exports/EXP-2026-0001_Aisha-Mei-Ling-Rahman.csv` | 8 lines, one per category line |
+| PDF | 7 pages, 765 KB: the report page, then R1 (2 pages, JW Marriott Mumbai) and R2 (4 pages, Courtyard Pune) appended |
+| XLSX | sheets Cover, Lines (with a SUM formula), Rates, Receipts |
+| CSV | 8 lines, one per category line |
+
+The exported files themselves are not kept in the repository: they were made from a real claim, with a real person's name, address and receipts in them. Run the export again against your own data to see them.
 
 **Figures on the report** (SGD, rate INR→SGD 0.01341 for 1 Sep and 4 Sep 2026, ECB via Frankfurter):
 

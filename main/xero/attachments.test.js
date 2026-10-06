@@ -1,5 +1,3 @@
-const path = require('path');
-const fs = require('fs');
 
 describe('xero/attachments', () => {
   let attachments, receiptStore;
@@ -10,14 +8,11 @@ describe('xero/attachments', () => {
     const jpgName = files.save('a1', Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 1]), 'image/jpeg');
     const out = await attachments.forReceipt({ id: 'a1', userId: 'att-user', file: jpgName, mime: 'image/jpeg' }, { ref: 'R3' });
     expect(out).toEqual([expect.objectContaining({ name: 'R3.jpg', mime: 'image/jpeg' })]);
-    const sample = path.join(__dirname, '../../samples/receipts/jw-marriott-mumbai.pdf');
-    if (fs.existsSync(sample)) {
-      const pdfName = files.save('a2', fs.readFileSync(sample), 'application/pdf');
-      const pdf = await attachments.forReceipt({ id: 'a2', userId: 'att-user', file: pdfName, mime: 'application/pdf' }, { ref: 'R1' });
-      expect(pdf).toEqual([expect.objectContaining({ name: 'R1.pdf', mime: 'application/pdf' })]);
-      expect(pdf[0].buffer.length).toBeLessThanOrEqual(attachments.MAX_BYTES);
-    }
-  });
+    const pdfName = files.save('a2', await require('../test-fixtures/make-pdf').scannedPdf(2), 'application/pdf');
+    const pdf = await attachments.forReceipt({ id: 'a2', userId: 'att-user', file: pdfName, mime: 'application/pdf' }, { ref: 'R1' });
+    expect(pdf).toEqual([expect.objectContaining({ name: 'R1.pdf', mime: 'application/pdf' })]);
+    expect(pdf[0].buffer.length).toBeLessThanOrEqual(attachments.MAX_BYTES);
+  }, 60000);
 
   test('an image over the limit is re-encoded under it', async () => {
     const sharp = require('sharp');

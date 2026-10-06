@@ -1,0 +1,316 @@
+{
+  "file": "samples/receipts/courtyard-marriott-pune.pdf",
+  "seconds": 11.804,
+  "merchant": "Courtyard By Marriott Pune Chakan",
+  "date": "2026-09-04",
+  "time": "08:23",
+  "invoiceNumber": "00/000-000001",
+  "currency": "INR",
+  "total": 88188.77,
+  "tax": 13452.52,
+  "subTotal": null,
+  "category": "Lodging",
+  "confidence": "high",
+  "description": "[Lodging] Hotel Stay & F&B at Courtyard By Marriott Pune Chakan (08:23)",
+  "lineItems": [
+    {
+      "description": "MoMo Cafe Dinner Food Room# 110 : CHECK# 10000001 [cashier01]",
+      "unitAmount": 1296.25,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "MoMo Cafe Dinner Soda Room# 110 : CHECK# 10000001 [cashier01]",
+      "unitAmount": 250,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "CGST Momo Cafe F&B 9% Room# 110 : CHECK# 10000001 [cashier01]",
+      "unitAmount": 139.15,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "SGST Momo Cafe F&B 9% Room# 110 : CHECK# 10000001 [cashier01]",
+      "unitAmount": 139.17,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "Package",
+      "unitAmount": 12825,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": null
+    },
+    {
+      "description": "CGST ROOM 9%",
+      "unitAmount": 1154.25,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": null
+    },
+    {
+      "description": "SGST ROOM 9%",
+      "unitAmount": 1154.25,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": null
+    },
+    {
+      "description": "Standard Retail [NA Room] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110",
+      "unitAmount": 10925,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "description": "CGST ROOM 9% [Add; udf.] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110",
+      "unitAmount": 983.25,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "description": "SGST ROOM 9% [Add; udf.] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110",
+      "unitAmount": 983.25,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "description": "MoMo Cafe Dinner Food Room# 128 : CHECK# 10000002 [cashier01] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110",
+      "unitAmount": 675,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "description": "CGST Momo Cafe F&B 9% Room# 126 : CHECK# 10000002 [cashier01] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110",
+      "unitAmount": 60.75,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "description": "SGST Momo Cafe F&B 9% Room# 126 : CHECK# 10000002 [cashier01] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110",
+      "unitAmount": 60.75,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "description": "Package",
+      "unitAmount": 12184,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": null
+    },
+    {
+      "description": "CGST ROOM 9%",
+      "unitAmount": 1096.56,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": null
+    },
+    {
+      "description": "SGST ROOM 9%",
+      "unitAmount": 1096.56,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": null
+    },
+    {
+      "description": "Standard Retail [NA Room] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110",
+      "unitAmount": 10450,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "description": "CGST ROOM 9%",
+      "unitAmount": 940.5,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": null
+    },
+    {
+      "description": "SGST ROOM 9% [Add; udf.] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110",
+      "unitAmount": 940.5,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "description": "MoMo Cafe Breakfast Food Room# 126 : CHECK# 11603598 [cashier01] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110",
+      "unitAmount": 950,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "description": "CGST Momo Cafe F&B 9% Room# 126 : CHECK# 11603598 [cashier01] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110",
+      "unitAmount": 85.5,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "description": "SGST Momo Cafe F&B 9% Room# 126 : CHECK# 11603598 [cashier01] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110",
+      "unitAmount": 85.5,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "description": "MoMo Cafe Dinner Food Room# 110 : CHECK# 11603631 [oneha089]",
+      "unitAmount": 1296.25,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "MoMo Cafe Dinner Soda Room# 110 : CHECK# 11603631 [oneha089]",
+      "unitAmount": 250,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "CGST Momo Cafe F&B 9% Room# 110 : CHECK# 11603631 [oneha089]",
+      "unitAmount": 139.15,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "SGST Momo Cafe F&B 9% Room# 110 : CHECK# 11603631 [oneha089]",
+      "unitAmount": 139.17,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "MoMo Cafe Dinner Food Room# 110 : CHECK# 11603631 [oneha089]",
+      "unitAmount": 1296.25,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "MoMo Cafe Dinner Soda Room# 110 : CHECK# 11603631 [oneha089]",
+      "unitAmount": 250,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "CGST Momo Cafe F&B 9% Room# 110 : CHECK# 11603631 [oneha089]",
+      "unitAmount": 139.15,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "SGST Momo Cafe F&B 9% Room# 110 : CHECK# 11603631 [oneha089]",
+      "unitAmount": 139.17,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "Package",
+      "unitAmount": 11543,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": null
+    },
+    {
+      "description": "CGST ROOM 9%",
+      "unitAmount": 1038.87,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": null
+    },
+    {
+      "description": "SGST ROOM 9%",
+      "unitAmount": 1038.87,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": null
+    },
+    {
+      "description": "Standard Retail [NA Room] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110",
+      "unitAmount": 9738,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "description": "CGST ROOM 9% [Add; udf.] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110",
+      "unitAmount": 876.42,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "description": "SGST ROOM 9% [Add; udf.] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110",
+      "unitAmount": 876.42,
+      "discountRate": 0,
+      "category": "Lodging",
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "description": "MoMo Cafe Breakfast Food Room# 110 : CHECK# 11603687 [cashier01]",
+      "unitAmount": 807.5,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "CGST Momo Cafe F&B 9% Room# 110 : CHECK# 11603687 [cashier01]",
+      "unitAmount": 72.68,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    },
+    {
+      "description": "SGST Momo Cafe F&B 9% Room# 110 : CHECK# 11603687 [cashier01]",
+      "unitAmount": 72.68,
+      "discountRate": 0,
+      "category": "Meals",
+      "onBehalfOf": null
+    }
+  ],
+  "lines": [
+    {
+      "category": "Lodging",
+      "description": "Package, CGST ROOM 9%, SGST ROOM 9%",
+      "amount": 44071.86,
+      "onBehalfOf": null
+    },
+    {
+      "category": "Lodging",
+      "description": "Standard Retail [NA Room] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110, CGST ROOM 9% [Add; udf.] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110, SGST ROOM 9% [Add; udf.] LIM WEI JIE #126=>Rahman Aisha Xi",
+      "amount": 35772.84,
+      "onBehalfOf": "Lim Wei Jie"
+    },
+    {
+      "category": "Meals",
+      "description": "MoMo Cafe Dinner Food Room# 110 : CHECK# 10000001 [cashier01], MoMo Cafe Dinner Soda Room# 110 : CHECK# 10000001 [cashier01], CGST Momo Cafe F&B 9% Room# 110 : CHECK# 10000001 [cashier01]",
+      "amount": 6426.57,
+      "onBehalfOf": null
+    },
+    {
+      "category": "Meals",
+      "description": "MoMo Cafe Dinner Food Room# 128 : CHECK# 10000002 [cashier01] LIM WEI JIE #126=>Rahman Aisha Mei Ling #110, CGST Momo Cafe F&B 9% Room# 126 : CHECK# 10000002 [cashier01] LIM WEI JIE #126=>Rahman Aisha X",
+      "amount": 1917.5,
+      "onBehalfOf": "Lim Wei Jie"
+    }
+  ]
+}
