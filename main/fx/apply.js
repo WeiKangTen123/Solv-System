@@ -80,23 +80,30 @@ async function applyFx(expenseId, { force = false } = {}) {
 // must differ.
 const TYPED_RATE_TOLERANCE = 0.05;
 
+// Why a rate this person typed for this expense would be refused, or null.
+// Shared with the assistant, so it can say so before proposing one.
+async function typedRateProblem(e, n, actor) {
+  if (actor && actor.role === 'admin') return null;
+  const company = users.getCompany(e.companyId);
+  const date = policyDate(company.fxPolicy, e);
+  const day = await rates.getRate({ from: e.currency, to: company.baseCurrency, date, today: localDate(company.timezone) }).catch(() => null);
+  const ref = day ? day.rate : null;
+  if (!(ref > 0)) return 'There is no published rate for this day to check yours against. Ask an admin to set it.';
+  const off = Math.abs(n - ref) / ref;
+  if (off > TYPED_RATE_TOLERANCE) {
+    return `That is ${(off * 100).toFixed(1)}% from the day's rate of ${Number(ref.toPrecision(6))}. A rate you type may differ by at most ${TYPED_RATE_TOLERANCE * 100}%; ask an admin for anything further.`;
+  }
+  return null;
+}
+
 async function overrideFx(expenseId, { rate, reason, actor }) {
   const e = store.getExpense(expenseId);
   if (!e) throw new Error('Expense not found');
   const n = Number(rate);
   if (!(n > 0) || !Number.isFinite(n)) throw new Error('A rate must be a number above zero');
   if (!reason || !String(reason).trim()) throw new Error('Say why the rate is being changed');
-  if (!actor || actor.role !== 'admin') {
-    const company = users.getCompany(e.companyId);
-    const date = policyDate(company.fxPolicy, e);
-    const day = await rates.getRate({ from: e.currency, to: company.baseCurrency, date, today: localDate(company.timezone) }).catch(() => null);
-    const ref = day ? day.rate : null;
-    if (!(ref > 0)) throw new Error('There is no published rate for this day to check yours against. Ask an admin to set it.');
-    const off = Math.abs(n - ref) / ref;
-    if (off > TYPED_RATE_TOLERANCE) {
-      throw new Error(`That is ${(off * 100).toFixed(1)}% from the day's rate of ${Number(ref.toPrecision(6))}. A rate you type may differ by at most ${TYPED_RATE_TOLERANCE * 100}%; ask an admin for anything further.`);
-    }
-  }
+  const problem = await typedRateProblem(e, n, actor);
+  if (problem) throw new Error(problem);
   for (const l of e.lines) {
     store.updateLine(l.id, {
       fxRate: n, fxRateDate: e.receiptDate || today(), fxSource: 'manual', fxFetchedAt: new Date().toISOString(),
@@ -108,4 +115,4 @@ async function overrideFx(expenseId, { rate, reason, actor }) {
   return store.getExpense(expenseId);
 }
 
-module.exports = { applyFx, overrideFx, policyDate, toBase, TYPED_RATE_TOLERANCE };
+module.exports = { applyFx, overrideFx, typedRateProblem, policyDate, toBase, TYPED_RATE_TOLERANCE };

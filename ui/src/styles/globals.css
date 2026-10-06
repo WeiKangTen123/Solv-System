@@ -826,3 +826,85 @@ body {
 }
 .mobile-mode .line-row { grid-template-columns: 1fr 1fr 1fr 32px; }
 .mobile-mode .line-row > :first-child { grid-column: 1 / -1; }
+
+/* ── The assistant (components/assistant/AssistantPanel.jsx) ─────────────────
+   A floating button, and a panel that floats above the page on a desktop and
+   takes the screen on a phone. Only theme tokens, so it follows light and
+   dark like everything else. */
+.assistant-fab {
+  position: fixed; right: 18px; bottom: 18px; z-index: 90;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 10px 16px; border-radius: 999px; border: none; cursor: pointer;
+  background: var(--accent-gradient); color: var(--accent-text);
+  font: 600 13.5px var(--font-sans); box-shadow: var(--shadow-md);
+}
+.assistant-fab:hover { background: var(--accent-hover); }
+.assistant-fab:focus-visible { outline: none; box-shadow: var(--glow-accent), var(--shadow-md); }
+
+.assistant-panel {
+  position: fixed; right: 18px; bottom: 18px; z-index: 95;
+  width: 410px; max-width: calc(100vw - 32px); height: min(660px, calc(100vh - 36px));
+  display: flex; flex-direction: column;
+  background: var(--bg-card); color: var(--text-primary);
+  border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.assistant-panel-mobile {
+  inset: 0; right: 0; bottom: 0; width: 100%; max-width: none; height: 100%;
+  border-radius: 0; border: none; padding-bottom: var(--safe-bottom); z-index: 120;
+}
+.assistant-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--border);
+}
+.assistant-title { font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+.assistant-body { flex: 1; overflow-y: auto; padding: 14px 14px 6px; display: flex; flex-direction: column; gap: 10px; }
+.assistant-muted { color: var(--text-muted); font-size: 12.5px; }
+
+.assistant-welcome { display: flex; flex-direction: column; gap: 8px; }
+.assistant-suggestion {
+  text-align: left; padding: 9px 12px; border-radius: var(--radius-sm); cursor: pointer;
+  background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border);
+  font: 500 13px var(--font-sans);
+}
+.assistant-suggestion:hover { background: var(--bg-hover); }
+
+.assistant-msg { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
+.assistant-msg-user { align-items: flex-end; }
+.assistant-bubble {
+  max-width: 92%; padding: 9px 12px; border-radius: var(--radius-md);
+  font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.assistant-msg-user .assistant-bubble { background: var(--accent); color: var(--accent-text); border-bottom-right-radius: var(--radius-xs); }
+.assistant-msg-assistant .assistant-bubble { background: var(--bg-secondary); border-bottom-left-radius: var(--radius-xs); white-space: normal; }
+.assistant-p { margin: 0 0 6px; }
+.assistant-p:last-child { margin-bottom: 0; }
+.assistant-list { margin: 2px 0 6px; padding-left: 18px; }
+.assistant-list:last-child { margin-bottom: 0; }
+.assistant-list li { margin: 2px 0; }
+.assistant-code { font-family: var(--font-mono); font-size: 12px; background: var(--bg-hover); padding: 1px 4px; border-radius: var(--radius-xs); }
+
+.assistant-card {
+  max-width: 92%; padding: 10px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--warning-border); background: var(--warning-subtle);
+  font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere;
+}
+.assistant-card-applied   { border-color: var(--success-border); background: var(--success-subtle); }
+.assistant-card-dismissed { border-color: var(--border); background: var(--bg-input); color: var(--text-muted); }
+.assistant-card-failed    { border-color: var(--danger-border); background: var(--danger-subtle); }
+.assistant-card-summary { font-weight: 600; }
+.assistant-card-reason { color: var(--text-secondary); margin-top: 2px; }
+.assistant-card-buttons { display: flex; gap: 6px; margin-top: 8px; }
+.assistant-card-status { margin-top: 6px; font-weight: 600; }
+.assistant-card-applied .assistant-card-status { color: var(--success); }
+.assistant-card-failed .assistant-card-status { color: var(--danger); }
+
+.assistant-history-row { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.assistant-history-open { flex: 1; min-width: 0; text-align: left; background: none; border: none; cursor: pointer; padding: 6px 4px; color: var(--text-primary); font: inherit; }
+.assistant-history-open:hover .assistant-history-title { text-decoration: underline; }
+.assistant-history-title { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.assistant-error { margin: 0 14px 8px; }
+.assistant-input { display: flex; gap: 8px; align-items: flex-end; padding: 10px 12px 6px; border-top: 1px solid var(--border); }
+.assistant-input textarea { flex: 1; resize: none; min-height: 40px; max-height: 140px; font-size: 13.5px; }
+.assistant-foot { padding: 0 14px 10px; font-size: 11px; color: var(--text-muted); }

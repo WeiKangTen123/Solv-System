@@ -233,6 +233,53 @@ CREATE TABLE IF NOT EXISTS expense_changes (
 );
 CREATE INDEX IF NOT EXISTS idx_changes_expense ON expense_changes(expense_id, id);
 
+-- The assistant (main/assistant). A conversation is its owner's alone: no
+-- route returns one to anybody else, admins included.
+CREATE TABLE IF NOT EXISTS assistant_conversations (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title      TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_conv_user ON assistant_conversations(user_id, updated_at);
+
+CREATE TABLE IF NOT EXISTS assistant_messages (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id TEXT NOT NULL REFERENCES assistant_conversations(id) ON DELETE CASCADE,
+  role            TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+  content         TEXT NOT NULL,
+  created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_msgs_conv ON assistant_messages(conversation_id, id);
+
+-- A change the assistant proposed. Nothing changes until its person presses
+-- Apply, and then it goes through receipts/edit.js like any other edit.
+CREATE TABLE IF NOT EXISTS assistant_actions (
+  id              TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES assistant_conversations(id) ON DELETE CASCADE,
+  message_id      INTEGER,
+  user_id         TEXT NOT NULL,
+  expense_id      TEXT,
+  kind            TEXT NOT NULL,
+  payload         TEXT NOT NULL,
+  summary         TEXT NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'applied', 'dismissed', 'failed')),
+  result          TEXT,
+  created_at      TEXT NOT NULL,
+  decided_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_actions_conv ON assistant_actions(conversation_id);
+
+-- One row per question asked, with no content: the hourly limit counts it,
+-- and Users & Monitoring shows how much each person uses the assistant.
+-- Kept apart from the messages so deleting a conversation resets neither.
+CREATE TABLE IF NOT EXISTS assistant_usage (
+  user_id TEXT NOT NULL,
+  at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_usage_user ON assistant_usage(user_id, at);
+
 CREATE TABLE IF NOT EXISTS report_events (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   report_id TEXT NOT NULL REFERENCES expense_reports(id) ON DELETE CASCADE,

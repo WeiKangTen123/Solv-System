@@ -86,6 +86,12 @@ export default function ReportDetail() {
   // Not 0 when nothing is being read: the hook schedules a timeout with whatever
   // it is given, and 0 would busy-loop against the server.
   useVisiblePolling(refresh, () => (reading ? 2500 : 30000));
+  // A change applied from the assistant shows straight away.
+  useEffect(() => {
+    const on = () => { load().catch(() => {}); };
+    window.addEventListener('solv:changed', on);
+    return () => window.removeEventListener('solv:changed', on);
+  }, [load]);
 
   const act = async (label, fn) => { setBusy(label); try { await fn(); await load(); } catch (e) { setMsg({ tone: 'error', text: e.message }); } finally { setBusy(''); } };
   async function exportAs(format) {

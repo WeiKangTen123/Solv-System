@@ -105,6 +105,18 @@ export default function ExpenseReview() {
   // Quickly while the reader works, slowly after; and not at all in a tab
   // nobody is looking at.
   useVisiblePolling(() => load({ preserveEdits: true }).catch(() => {}), () => (exp?.status === 'reading' ? 2500 : 4 * 60 * 1000));
+  // A change applied from the assistant to this receipt shows straight away,
+  // unless the fields are being typed into.
+  useEffect(() => {
+    const on = ev => {
+      const changed = ev.detail && ev.detail.expenseId;
+      if (changed && changed !== current.current) return;
+      load({ preserveEdits: true }).catch(() => {});
+      loadHistory().catch(() => {});
+    };
+    window.addEventListener('solv:changed', on);
+    return () => window.removeEventListener('solv:changed', on);
+  }, [load, loadHistory]);
 
   const totalCents = cents(form.total);
   const linesCents = lines.reduce((s, l) => s + cents(l.amount), 0);
@@ -399,7 +411,7 @@ function ChangeHistory({ items, all, onAll, me, tz }) {
       {shown.map((g, i) => (
         <div key={i} style={{ padding: '8px 0', borderTop: i ? '1px solid var(--border)' : 'none' }}>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
-            <strong style={{ color: 'var(--text)' }}>{g.actorId && g.actorId === me ? 'You' : (g.actorName || 'Someone')}</strong>
+            <strong style={{ color: 'var(--text-primary)' }}>{g.actorId && g.actorId === me ? 'You' : (g.actorName || 'Someone')}</strong>
             {g.actorRole === 'admin' && <span className="badge badge-blue" style={{ marginLeft: 6 }}>admin</span>}
             {VIA[g.via] ? ` ${VIA[g.via]}` : ''} · {formatDateTime(g.at, tz)}
           </div>

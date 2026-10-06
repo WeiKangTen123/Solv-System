@@ -101,20 +101,25 @@ function _getLimiter(userId) {
 // ── Core call, with model rotation on quota errors ───────────────────────────
 
 async function _callOnce(model, key, messages, opts) {
-  const response = await axios.post(
-    GEMINI_URL,
-    {
-      model,
-      messages,
-      temperature: opts.temperature ?? 0,
-      max_tokens:  opts.maxTokens ?? 800,
-    },
-    {
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      timeout: 120_000,
-    }
-  );
+  const body = {
+    model,
+    messages,
+    temperature: opts.temperature ?? 0,
+    max_tokens:  opts.maxTokens ?? 800,
+  };
+  if (opts.tools) { body.tools = opts.tools; body.tool_choice = 'auto'; }
+  const response = await axios.post(GEMINI_URL, body, {
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    timeout: opts.timeoutMs ?? 120_000,
+  });
   const choice = response.data.choices?.[0];
+  // With tools, the whole message is the answer: it may be tool calls and no
+  // text. Each tool call carries Google's thought signature, which has to go
+  // back verbatim with the call or the next request is refused.
+  if (opts.tools) {
+    if (!choice?.message || (!choice.message.content && !(choice.message.tool_calls || []).length)) throw new Error(`Gemini returned empty response (model: ${model})`);
+    return choice.message;
+  }
   if (!choice?.message?.content) throw new Error(`Gemini returned empty response (model: ${model})`);
   // A reply that ran into max_tokens is half a JSON document. Returned, it
   // failed to parse and the receipt was left blank with nothing saying why;
@@ -207,4 +212,11 @@ async function testGeminiKey(apiKey) {
   throw new Error(`Gemini test failed: ${msg}`);
 }
 
-module.exports = { callGemini, GEMINI_MODELS, testGeminiKey };
+// One turn of a conversation that may call tools: the same keys, models,
+// rotation and company limiter as the reader, returning the model's whole
+// message ({ content, tool_calls }) rather than its text.
+function chatWithTools(userId, messages, tools, opts = {}) {
+  return callGemini(userId, messages, { ...opts, tools });
+}
+
+module.exports = { callGemini, chatWithTools, GEMINI_MODELS, testGeminiKey };

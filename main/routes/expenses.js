@@ -1,17 +1,16 @@
 const express = require('express');
 const router  = express.Router();
 const { requireAuth } = require('../middleware/auth-middleware');
-const { canView, isOwner } = require('../middleware/roles');
+const { canView } = require('../middleware/roles');
 const users   = require('../store/users');
 const store   = require('../store/expenses');
 const changes = require('../store/changes');
 const edit    = require('../receipts/edit');
 const receiptStore = require('../receipts/receipt-store');
 const { issueImageToken } = require('./receipts');
-const { readOne, applyRead, flagIfSuspected, withoutCurrencyNote } = require('../receipts/read-receipt');
+const { readOne, applyRead, flagIfSuspected } = require('../receipts/read-receipt');
 const wf      = require('../reports/workflow');
 const { isLocked } = wf;
-const reports = require('../store/reports');
 const asyncHandler = require('../middleware/async-handler');
 const logger  = require('../utils/logger');
 
@@ -27,7 +26,7 @@ const logger  = require('../utils/logger');
 //
 // Filing is an action, not a detail. reportId used to be passed straight to
 // the store, so filing obeyed none of the rules the case route enforces; it
-// now goes through _file(), which asks the questions POST
+// now goes through edit.fileInCase(), which asks the questions POST
 // /api/reports/:id/expenses asks.
 
 // Seeing a receipt: its owner, or an admin of the same company monitoring.
@@ -36,40 +35,13 @@ function _load(req, res) {
   if (!e || !canView(req.user, e.userId, e.companyId)) { res.status(404).json({ error: 'Expense not found' }); return null; }
   return e;
 }
-const LOCKED = 'This receipt is in a case that has been claimed. Reopen the case to change it.';
-const NOT_YOURS = 'Only the person who claimed this receipt can do that.';
-function _actionBlocked(e, actor) {
-  if (!isOwner(actor, e.userId, e.companyId)) return { status: 403, error: NOT_YOURS };
-  if (isLocked(e)) return { status: 409, error: LOCKED };
-  return null;
-}
 // Acting on it: the owner, while the case is open.
 function _loadActionable(req, res) {
   const e = _load(req, res);
   if (!e) return null;
-  const blocked = _actionBlocked(e, req.user);
+  const blocked = edit.actionBlocked(e, req.user);
   if (blocked) { res.status(blocked.status).json({ error: blocked.error }); return null; }
   return e;
-}
-// Moving an expense into or out of a report. Both ends have to be open: you
-// cannot take an expense out of a report that has been claimed, and you
-// cannot put one into a report that is not the owner's own open case.
-function _file(e, reportId, actor) {
-  const fail = (status, error) => { const err = new Error(error); err.status = status; throw err; };
-  const leaving = () => {
-    if (!e.reportId) return;
-    const cur = reports.getReport(e.reportId);
-    if (cur && !wf.isEditable(cur)) fail(409, `A ${cur.status} case cannot be changed`);
-    reports.removeExpense(e.reportId, e.id);
-  };
-  if (!reportId) { leaving(); return; }
-  if (reportId === e.reportId) return;
-  const r = reports.getReport(reportId);
-  if (!r || r.companyId !== e.companyId) fail(404, 'Case not found');
-  if (r.userId !== e.userId || r.userId !== actor.id) fail(403, 'That case belongs to someone else');
-  if (!wf.isEditable(r)) fail(409, `A ${r.status} case cannot take more receipts`);
-  leaving();
-  reports.addExpense(r.id, e.id);
 }
 
 // The expense, and what the person looking at it may do with it.
@@ -120,12 +92,7 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
       const blocked = edit.detailsBlocked(e, req.user);
       if (blocked) return res.status(blocked.status).json({ error: blocked.error });
     }
-    if (filing) {
-      const blocked = _actionBlocked(e, req.user);
-      if (blocked) return res.status(blocked.status).json({ error: blocked.error });
-      if (e.status === 'duplicate') return res.status(400).json({ error: 'A duplicate cannot be filed; delete it or restore it first' });
-      _file(e, b.reportId || null, req.user);
-    }
+    if (filing) edit.fileInCase(e.id, b.reportId || null, req.user);
     const out = hasDetails ? await edit.editDetails(e.id, b, req.user) : store.getExpense(e.id);
     res.json(_out(out, req));
   } catch (err) { _answer(res, err); }
@@ -155,22 +122,9 @@ router.patch('/:id/fx', requireAuth, asyncHandler(async (req, res) => {
 }));
 
 router.patch('/:id/status', requireAuth, (req, res) => {
-  const e = _loadActionable(req, res); if (!e) return;
-  const status = (req.body || {}).status;
-  if (!['reviewed', 'review-needed'].includes(status)) return res.status(400).json({ error: 'Status can be reviewed or review-needed here' });
-  if (status === 'reviewed') {
-    const missing = [];
-    if (!e.merchant) missing.push('merchant');
-    if (!e.receiptDate) missing.push('date');
-    if (!e.currency) missing.push('currency');
-    if (!(e.total > 0)) missing.push('total');
-    if (missing.length) return res.status(400).json({ error: `Fill in the ${missing.join(', ')} before marking this reviewed` });
-    if (!store.linesReconcile(e.lines, store.toCents(e.total))) return res.status(400).json({ error: 'The lines do not add up to the receipt total' });
-  }
-  const patch = { status };
-  // Marking it reviewed is the person saying the currency on it is right.
-  if (status === 'reviewed' && e.errorMsg) patch.errorMsg = withoutCurrencyNote(e.errorMsg);
-  res.json(_out(store.updateExpense(e.id, patch), req));
+  const e = _load(req, res); if (!e) return;
+  try { res.json(_out(edit.setStatus(e.id, (req.body || {}).status, req.user), req)); }
+  catch (err) { _answer(res, err); }
 });
 
 // POST /:id/claimed — the owner's own record that this one receipt has been put

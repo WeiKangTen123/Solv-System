@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import BottomNav from './BottomNav';
+import AssistantPanel from '../assistant/AssistantPanel';
 import { useViewMode } from '../../context/ViewModeContext';
 
 export default function Layout() {
@@ -21,6 +22,7 @@ export default function Layout() {
         </div>
       </div>
       {isMobile && <BottomNav />}
+      <AssistantPanel />
     </div>
   );
 }

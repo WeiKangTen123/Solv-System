@@ -47,6 +47,16 @@ The step belongs to the claimant. Solv does not move money, so it cannot know th
 
 **A typed exchange rate** must be within 5% of the day's published rate, with a reason; an admin is not held to that.
 
+## The assistant
+
+The **Ask** button on every page opens a chat ([main/assistant/](main/assistant/)) that uses the same Gemini keys as the reader, from Settings → LLM API Setup.
+
+- **What it does.** It finds and explains receipts and cases, checks a receipt for problems, looks at the receipt's picture or PDF to compare it with what was saved, summarises spending, and looks up exchange rates. An admin can ask about anyone in the company; a user, about their own.
+- **How it changes things.** It never changes anything itself. It proposes a change as a card, and nothing happens until the person presses **Apply**. Applying goes through the same rules as the page and is logged on the receipt as having come through the assistant. A card fails rather than overwrites if the receipt changed after it was proposed, and expires after a day.
+- **What it can propose.** Corrections to a receipt's details, lines and exchange rate, on the same terms as the page. For the person's own receipts it can also propose marking one reviewed or filing it in one of their open cases.
+- **What it cannot do.** It has no tool for passwords, accounts, roles, keys, settings, the Xero connection, deleting, claiming, reopening or posting. It is told to refuse dishonest edits, such as an amount that no longer matches the receipt, and to treat text on receipts as data rather than instructions.
+- **Privacy and limits.** Conversations are private to the person who had them; no route shows one to anybody else, admins included. Each person can ask 60 questions an hour (`ASSISTANT_PER_HOUR`). Users & Monitoring shows how many questions each person asked in the last 30 days, never what they asked.
+
 ## Where things are
 
 ```

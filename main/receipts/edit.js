@@ -19,8 +19,9 @@ const { withoutCurrencyNote } = require('./read-receipt');
 //             claim, written to the case's history too — and never once the
 //             case is in Xero, where the bill already exists.
 //   actions   filing, marking checked, claiming, re-reading, deleting. The
-//             owner's alone, and only while the case is open. Those live in
-//             routes/expenses.js and reports/workflow.js.
+//             owner's alone, and only while the case is open. Filing and
+//             marking reviewed are below, for the assistant to share; the rest
+//             live in routes/expenses.js and reports/workflow.js.
 //
 // Errors carry an HTTP status, so a route can answer with it as it stands.
 
@@ -147,6 +148,71 @@ async function refreshRate(expenseId, actor, { via = 'app' } = {}) {
   return { ...out, expense: after };
 }
 
+// ── Actions: the owner's, while the case is open ─────────────────────────────
+
+const LOCKED = 'This receipt is in a case that has been claimed. Reopen the case to change it.';
+const NOT_YOURS = 'Only the person who claimed this receipt can do that.';
+function actionBlocked(e, actor) {
+  if (!e || !canEditDetails(actor, e.userId, e.companyId)) return { status: 404, error: 'Expense not found' };
+  if (!isOwner(actor, e.userId, e.companyId)) return { status: 403, error: NOT_YOURS };
+  if (wf.isLocked(e)) return { status: 409, error: LOCKED };
+  return null;
+}
+function _assertAction(e, actor) {
+  const blocked = actionBlocked(e, actor);
+  if (blocked) fail(blocked.status, blocked.error);
+}
+
+// What stands between a receipt and being marked reviewed, or null.
+function reviewBlocked(e) {
+  const missing = [];
+  if (!e.merchant) missing.push('merchant');
+  if (!e.receiptDate) missing.push('date');
+  if (!e.currency) missing.push('currency');
+  if (!(e.total > 0)) missing.push('total');
+  if (missing.length) return `Fill in the ${missing.join(', ')} before marking this reviewed`;
+  if (!store.linesReconcile(e.lines, store.toCents(e.total))) return 'The lines do not add up to the receipt total';
+  return null;
+}
+
+// Reviewed (the owner saying the details are right) or back to review-needed.
+function setStatus(expenseId, status, actor) {
+  const e = store.getExpense(expenseId);
+  _assertAction(e, actor);
+  if (!['reviewed', 'review-needed'].includes(status)) fail(400, 'Status can be reviewed or review-needed here');
+  if (status === 'reviewed') { const why = reviewBlocked(e); if (why) fail(400, why); }
+  const patch = { status };
+  // Marking it reviewed is the person saying the currency on it is right.
+  if (status === 'reviewed' && e.errorMsg) patch.errorMsg = withoutCurrencyNote(e.errorMsg);
+  return store.updateExpense(e.id, patch);
+}
+
+// Moving a receipt into a case, out of one, or between two. Both ends have to
+// be open, and the case has to be the owner's own.
+function fileInCase(expenseId, reportId, actor) {
+  const reports = require('../store/reports');
+  const e = store.getExpense(expenseId);
+  _assertAction(e, actor);
+  if (e.status === 'duplicate') fail(400, 'A duplicate cannot be filed; delete it or restore it first');
+  reportId = reportId || null;
+  if (reportId === (e.reportId || null)) return e;
+  const leaving = () => {
+    if (!e.reportId) return;
+    const cur = reports.getReport(e.reportId);
+    if (cur && !wf.isEditable(cur)) fail(409, `A ${cur.status} case cannot be changed`);
+    reports.removeExpense(e.reportId, e.id);
+  };
+  if (reportId) {
+    const r = reports.getReport(reportId);
+    if (!r || r.companyId !== e.companyId) fail(404, 'Case not found');
+    if (r.userId !== e.userId || r.userId !== actor.id) fail(403, 'That case belongs to someone else');
+    if (!wf.isEditable(r)) fail(409, `A ${r.status} case cannot take more receipts`);
+    leaving();
+    reports.addExpense(r.id, e.id);
+  } else leaving();
+  return store.getExpense(e.id);
+}
+
 // What the person looking at a receipt may do with it, for the page to show.
 function permissions(e, actor) {
   const owner = isOwner(actor, e.userId, e.companyId);
@@ -159,4 +225,5 @@ function permissions(e, actor) {
   };
 }
 
-module.exports = { editDetails, editLines, setRate, refreshRate, cleanPatch, detailsBlocked, permissions, EDITABLE, MAX_AMOUNT };
+module.exports = { editDetails, editLines, setRate, refreshRate, cleanPatch, detailsBlocked, permissions,
+                   setStatus, fileInCase, actionBlocked, reviewBlocked, EDITABLE, MAX_AMOUNT };

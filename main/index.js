@@ -75,6 +75,7 @@ const fxRoutes        = require('./routes/fx');
 const reportRoutes    = require('./routes/reports');
 const xeroRoutes      = require('./routes/xero');
 const dashRoutes      = require('./routes/dashboard');
+const assistantRoutes = require('./routes/assistant');
 app.use('/api/auth',      authRoutes);
 app.use('/api/users',     userRoutes);
 app.use('/api/company',   companyRoutes);
@@ -85,6 +86,7 @@ app.use('/api/fx',        fxRoutes);
 app.use('/api/reports',   reportRoutes);
 app.use('/api/xero',      xeroRoutes);
 app.use('/api/dashboard', dashRoutes);
+app.use('/api/assistant', assistantRoutes);
 app.get('/dashboard/health', dashRoutes.health);
 
 const UI_DIST = path.join(__dirname, '../ui/dist');
@@ -132,6 +134,11 @@ app.listen(PORT, HOST, () => {
   // The live exchange-rate board: refreshed through the day, and closed into
   // the daily log at 23:55 company time. See fx/live.js.
   require('./fx/live').start();
+
+  // The assistant's usage rows feed an hourly limit and a 30-day count, so a
+  // daily sweep keeps them to a month.
+  assistantRoutes.pruneUsage();
+  setInterval(assistantRoutes.pruneUsage, 24 * 60 * 60 * 1000).unref();
 });
 
 module.exports = app;

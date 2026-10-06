@@ -318,6 +318,7 @@ export default function Settings() {
                   <th>User</th>
                   <th>Role</th>
                   <th style={{ textAlign: 'center' }}>Receipts</th>
+                  <th style={{ textAlign: 'center' }} title="Questions asked in the last 30 days. What was asked is private to each person.">Assistant (30 days)</th>
                   <th style={{ textAlign: 'center' }}>Cases (Claimed / Total)</th>
                   <th style={{ textAlign: 'right' }}>Total Claimed</th>
                   <th>Status</th>
@@ -344,6 +345,9 @@ export default function Settings() {
                     </td>
                     <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
                       {u.receiptCount || 0}
+                    </td>
+                    <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: u.assistantQuestions30d ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                      {u.assistantQuestions30d || 0}
                     </td>
                     <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
                       <span style={{ fontWeight: 600, color: (u.claimedCaseCount || 0) > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}>

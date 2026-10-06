@@ -56,6 +56,13 @@ export default function CaseCheck() {
   useEffect(() => { load().catch(e => setMsg({ tone: 'error', text: e.message })); }, [load]);
   const reading = !!view?.report?.expenses?.some(e => e.status === 'reading');
   useVisiblePolling(load, () => (reading ? 2500 : 30000));
+  // A change applied from the assistant shows straight away; rows being
+  // typed into keep what was typed.
+  useEffect(() => {
+    const on = () => { load().catch(() => {}); };
+    window.addEventListener('solv:changed', on);
+    return () => window.removeEventListener('solv:changed', on);
+  }, [load]);
   useEffect(() => { api.get('/company').then(d => setCategories(d.categories || [])).catch(() => {}); }, []);
 
   // The receipt for the row being looked at. One request per selection, and

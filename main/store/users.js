@@ -193,7 +193,8 @@ function getAllUsers(companyId) {
       (SELECT COUNT(*) FROM expense_reports rep WHERE rep.user_id = u.id) AS case_count,
       (SELECT COUNT(*) FROM expense_reports rep WHERE rep.user_id = u.id AND rep.status = 'claimed') AS claimed_case_count,
       (SELECT COALESCE(SUM(l.base_cents), 0) FROM expenses e JOIN expense_lines l ON l.expense_id = e.id WHERE e.user_id = u.id AND e.claimed_at IS NOT NULL) AS claimed_cents,
-      (SELECT COALESCE(SUM(l.base_cents), 0) FROM expenses e JOIN expense_lines l ON l.expense_id = e.id WHERE e.user_id = u.id) AS total_cents
+      (SELECT COALESCE(SUM(l.base_cents), 0) FROM expenses e JOIN expense_lines l ON l.expense_id = e.id WHERE e.user_id = u.id) AS total_cents,
+      (SELECT COUNT(*) FROM assistant_usage a WHERE a.user_id = u.id AND a.at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')) AS assistant_30d
     FROM users u
     WHERE u.company_id = ?
     ORDER BY u.disabled_at IS NOT NULL, u.created_at
@@ -207,6 +208,7 @@ function getAllUsers(companyId) {
     claimedCaseCount: u.claimed_case_count || 0,
     claimedCents: u.claimed_cents || 0,
     totalCents: u.total_cents || 0,
+    assistantQuestions30d: u.assistant_30d || 0,
   }));
 }
 
