@@ -1,4 +1,3 @@
-const crypto = require('crypto');
 const db = require('../db');
 
 // The assistant's records. A conversation belongs to the person who had it and
@@ -6,7 +5,7 @@ const db = require('../db');
 // route cannot hand one person's conversation to another, admins included.
 
 const now = () => new Date().toISOString();
-const newId = () => `${Date.now().toString(36)}${crypto.randomBytes(6).toString('hex')}`;
+const { newId } = require('../utils/ids');
 
 // ── Conversations ────────────────────────────────────────────────────────────
 

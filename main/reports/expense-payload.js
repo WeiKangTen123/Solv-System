@@ -35,15 +35,16 @@ async function reportPayload(reportId, { withReceipts = true } = {}) {
   const company = users.getCompany(report.companyId);
   const owner = users.findById(report.userId) || {};
 
-  const refs = new Map(); const receipts = []; const lines = [];
+  const refs = receiptRefs(report.expenses); const receipts = []; const lines = [];
+  const listed = new Set();
   for (const e of report.expenses) {
     let ref = null;
     if (e.receipt) {
-      if (!refs.has(e.receipt.id)) {
-        refs.set(e.receipt.id, `R${refs.size + 1}`);
-        receipts.push({ ref: refs.get(e.receipt.id), title: e.merchant || e.receipt.originalName || 'Receipt', receipt: e.receipt, pages: [] });
-      }
       ref = refs.get(e.receipt.id);
+      if (!listed.has(e.receipt.id)) {
+        listed.add(e.receipt.id);
+        receipts.push({ ref, title: e.merchant || e.receipt.originalName || 'Receipt', receipt: e.receipt, pages: [] });
+      }
     }
     // The receipt's tax belongs to the receipt, not to each of its lines. It
     // used to be copied whole onto every line, so a folio split into four
@@ -73,4 +74,12 @@ async function reportPayload(reportId, { withReceipts = true } = {}) {
   return { company, report, owner, lines, receipts, generatedAt: Date.now() };
 }
 
-module.exports = { reportPayload };
+// R1, R2… for each receipt file, in the case's order, first appearance first.
+// The printed report and the Xero attachments number them the same way.
+function receiptRefs(expenses) {
+  const refs = new Map();
+  for (const e of expenses || []) if (e.receipt && !refs.has(e.receipt.id)) refs.set(e.receipt.id, `R${refs.size + 1}`);
+  return refs;
+}
+
+module.exports = { reportPayload, receiptRefs };

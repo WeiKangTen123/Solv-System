@@ -15,7 +15,7 @@ router.get('/me/gemini-keys', requireAuth, (req, res) => {
       id: k.id,
       label: k.label,
       createdAt: k.createdAt,
-      keyMasked: k.apiKey.length > 8 ? `${k.apiKey.slice(0, 4)}••••••••••••••••${k.apiKey.slice(-4)}` : '••••',
+      keyMasked: require('../utils/mask').maskKey(k.apiKey),
       lastOkAt: k.lastOkAt, lastErrorAt: k.lastErrorAt, lastError: k.lastError, lastModel: k.lastModel,
     }))
   });

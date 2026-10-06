@@ -18,7 +18,7 @@ function fail(status, message) { const err = new Error(message); err.status = st
 // in the company's base currency: one line per report line at its base
 // amount, so the bill equals the printed report to the cent. The original
 // currency, amount and rate ride in each line's description.
-const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money = n => require('../utils/money').formatAmount(n);
 const DUE_DAYS = 7;
 
 function _plusDays(iso, days) {
@@ -164,12 +164,13 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
   // Receipts, best-effort: a rejected attachment is noted, never a reason to
   // lose the bill that was just created.
   const warnings = [];
+  // The same R1, R2… the printed report gives each receipt.
+  const refs = require('../reports/expense-payload').receiptRefs(r.expenses);
   const seen = new Set();
-  let n = 0;
   for (const e of r.expenses) {
     if (!e.receipt || seen.has(e.receipt.id)) continue;
     seen.add(e.receipt.id);
-    const ref = `R${++n}`;
+    const ref = refs.get(e.receipt.id);
     try {
       for (const a of await attachments.forReceipt(e.receipt, { ref })) {
         await withRetry(() => api.createInvoiceAttachmentByFileName(tenant.tenantId, created.invoiceID, a.name, Readable.from(a.buffer), false, `${created.invoiceID}-${a.name}`.slice(0, 128)));

@@ -94,7 +94,11 @@ function listReports({ companyId, userId, userIds, status } = {}) {
     SELECT r.*, u.name AS owner_name, u.email AS owner_email,
       (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id) AS expense_count,
       (SELECT SUM(l.base_cents) FROM expense_lines l JOIN expenses e ON e.id = l.expense_id WHERE e.report_id = r.id) AS base_cents,
-      (SELECT COUNT(*) FROM expense_lines l JOIN expenses e ON e.id = l.expense_id WHERE e.report_id = r.id AND l.base_cents IS NULL) AS pending_lines,
+      -- Receipts without a rate, as the case page counts them: one with three
+      -- unpriced lines is one receipt waiting, not three.
+      (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id AND (
+         NOT EXISTS (SELECT 1 FROM expense_lines l WHERE l.expense_id = e.id)
+         OR EXISTS (SELECT 1 FROM expense_lines l WHERE l.expense_id = e.id AND l.base_cents IS NULL))) AS pending_lines,
       (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id AND e.status != 'reviewed') AS unreviewed
     FROM expense_reports r JOIN users u ON u.id = r.user_id
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY r.created_at DESC`).all(...args);

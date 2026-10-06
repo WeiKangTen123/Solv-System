@@ -10,7 +10,8 @@ const FIELDS = {
 };
 const LABEL = { ...FIELDS, lines: 'Lines', rate: 'Exchange rate' };
 
-const money = n => (n === null || n === undefined || n === '' ? '' : Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const { formatAmount } = require('../utils/money');
+const money = n => formatAmount(n, { empty: '' });
 const _str = v => (v === null || v === undefined ? '' : String(v));
 
 // "Lodging 43,131.36 · Meals 8,344.07 (Lim Wei Jie)": what the lines say,

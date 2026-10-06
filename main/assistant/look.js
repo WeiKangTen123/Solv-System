@@ -24,7 +24,7 @@ async function lookAt(userId, e, question, { interactive = false } = {}) {
   const ask = { type: 'text', text: `Question: ${question || 'What does this receipt say?'}${where}` };
   let content;
   if (e.receipt.mime !== 'application/pdf') {
-    content = [ask, { type: 'image_url', image_url: { url: `data:${e.receipt.mime};base64,${buffer.toString('base64')}` } }];
+    content = [ask, await require('../receipts/image-prep').imagePart(buffer, e.receipt.mime)];
   } else {
     const extracted = await require('../pdf/pages').extractPages(buffer).catch(() => null);
     if (extracted && extracted.hasText) {
@@ -34,7 +34,7 @@ async function lookAt(userId, e, question, { interactive = false } = {}) {
       const rendered = await require('../pdf/render').renderPdfPages(buffer, e.page ? { pages: [e.page] } : { maxPages: MAX_PAGES }).catch(() => null);
       const pages = rendered && rendered.pages ? (e.page ? rendered.pages.filter(p => p.page === e.page) : rendered.pages.slice(0, MAX_PAGES)) : [];
       if (!pages.length) return 'The PDF could not be opened to look at.';
-      content = [ask, ...pages.map(p => ({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${p.buffer.toString('base64')}` } }))];
+      content = [ask, ...await Promise.all(pages.map(p => require('../receipts/image-prep').imagePart(p.buffer, 'image/jpeg')))];
     }
   }
   const answer = await callGemini(userId, [{ role: 'system', content: SYSTEM }, { role: 'user', content }], { maxTokens: 700, temperature: 0, timeoutMs: 60_000, interactive });

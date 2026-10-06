@@ -35,13 +35,9 @@ function _where(scope, alias = 'e') {
 // September "this month" for the first eight hours of every October in
 // Singapore, and dropped a receipt dated the 1st out of the window entirely.
 function _thisMonth(now, tz) {
-  try {
-    // en-CA renders as YYYY-MM-DD, which is the shape the rest of this works in.
-    return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now).slice(0, 7);
-  } catch {
-    // An unknown zone is a misconfiguration, not a reason to answer nothing.
-    return now.toISOString().slice(0, 7);
-  }
+  // An unknown zone is a misconfiguration, not a reason to answer nothing.
+  try { return require('../utils/zone-date').localDate(tz, now).slice(0, 7); }
+  catch { return now.toISOString().slice(0, 7); }
 }
 
 // The six months ending with this one, oldest first. Built in JS rather than

@@ -35,12 +35,7 @@ const TICK_MS   = 60 * 1000;
 // feed's monthly allowance in an afternoon of clicking.
 const MANUAL_GAP_MS = 60 * 1000;
 
-const SOURCE_LABEL = {
-  openexchangerates: 'Open Exchange Rates',
-  frankfurter: 'European Central Bank',
-  'open.er-api': 'ExchangeRate-API',
-  manual: 'Set by an admin',
-};
+const { SOURCE_NAME: SOURCE_LABEL } = require('./sources');
 const NAMES = new Map(CURRENCIES.map(c => [c.code, c.name]));
 const CODE = /^[A-Z]{3}$/;
 

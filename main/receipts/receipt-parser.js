@@ -1,4 +1,5 @@
 const logger = require('../utils/logger');
+const { imagePart } = require('./image-prep');
 const { callGemini } = require('../llm/gemini-client');
 const { parseLlmJson } = require('../llm/llm-json');
 
@@ -303,10 +304,9 @@ function splittable(receipts) {
 async function parseReceiptImage(userId, buffer, mime, { maxAttempts = 2 } = {}) {
   if (!Buffer.isBuffer(buffer) || !buffer.length) return null;
 
-  const dataUri = `data:${mime};base64,${buffer.toString('base64')}`;
   return _readWith(userId, [
     { type: 'text', text: 'Read this receipt and return the JSON described.' },
-    { type: 'image_url', image_url: { url: dataUri } },
+    await imagePart(buffer, mime),
   ], maxAttempts);
 }
 
@@ -339,10 +339,10 @@ async function parseReceiptPages(userId, pages, { maxAttempts = 2 } = {}) {
     `Read them together as a single receipt and return { "receipts": [ one entry ] }: one merchant, one invoiceNumber, ` +
     `one total (the final amount charged, usually on the last page), one currency, EVERY line item from EVERY page, and no box_2d. ` +
     `Never return one entry per page.` }];
-  list.forEach((p, i) => {
+  for (let i = 0; i < list.length; i++) {
     content.push({ type: 'text', text: `Page ${i + 1} of ${list.length}:` });
-    content.push({ type: 'image_url', image_url: { url: `data:${p.mime};base64,${p.buffer.toString('base64')}` } });
-  });
+    content.push(await imagePart(list[i].buffer, list[i].mime));
+  }
   const result = await _readWith(userId, content, maxAttempts, { maxTokens: PAGES_MAX_TOKENS });
   if (!result) return null;
   return { receipts: [result.receipts[0]], split: false, reason: 'pages of one document' };
@@ -417,10 +417,10 @@ Apply the field rules and corporate description formatting from the system promp
 // receipt could not be read, or null overall if the reply cannot be trusted.
 async function _readBatch(userId, images) {
   const content = [{ type: 'text', text: _batchPrompt(images.length) }];
-  images.forEach((img, i) => {
+  for (let i = 0; i < images.length; i++) {
     content.push({ type: 'text', text: `Receipt ${i + 1}:` });
-    content.push({ type: 'image_url', image_url: { url: `data:${img.mime};base64,${img.buffer.toString('base64')}` } });
-  });
+    content.push(await imagePart(images[i].buffer, images[i].mime));
+  }
 
   const raw = await callGemini(userId, [
     { role: 'system', content: SYSTEM_PROMPT },

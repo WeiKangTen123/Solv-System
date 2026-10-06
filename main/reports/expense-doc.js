@@ -4,11 +4,10 @@
 // the three exports cannot disagree. Nothing here renders a byte.
 const ACCENT = '#0F6E56', MUTED = '#6b7280', RULE = '#d8dbd4', BAND = '#f3f4ef';
 const { localDate } = require('../utils/zone-date');
-const SOURCE_LABEL = { frankfurter: 'European Central Bank reference rate', 'open.er-api': 'ExchangeRate-API daily rate', openexchangerates: 'Open Exchange Rates rate' };
-const VIA = { frankfurter: 'Frankfurter', 'open.er-api': 'open.er-api.com', openexchangerates: 'openexchangerates.org' };
+const { SOURCE_LONG: SOURCE_LABEL, SOURCE_VIA: VIA } = require('../fx/sources');
 const POLICY_LABEL = { receipt_date: 'rate on the receipt date', submission_date: 'rate on the submission date', monthly_fixed: 'monthly fixed rate table' };
 
-const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money = n => require('../utils/money').formatAmount(n);
 
 // A rate printed to six significant figures. The stored number keeps every
 // digit the provider gave — a rupiah rate is 0.0000717308657915501, and the

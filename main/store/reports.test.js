@@ -61,4 +61,19 @@ describe('store/reports', () => {
     expect(reports.getReport(r.id)).toBeNull();
     expect(store.getExpense(e.id).reportId).toBeNull();
   });
+
+  test('the case list and the case page count receipts without a rate the same way', () => {
+    const r = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'T' });
+    const e = exp({ lines: [{ category: 'Lodging', amount: 60 }, { category: 'Meals', amount: 40 }] });   // two unpriced lines
+    reports.addExpense(r.id, e.id);
+    const listed = reports.listReports({ userId: u.id }).find(x => x.id === r.id);
+    expect(listed.pendingRates).toBe(1);
+    expect(reports.getReport(r.id).totals.pendingRates).toBe(1);
+  });
+
+  test('head is the case row alone', () => {
+    const r = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'T' });
+    expect(reports.head(r.id)).toMatchObject({ id: r.id, status: 'open', userId: u.id, companyId: u.companyId, xeroInvoiceId: null });
+    expect(reports.head('nope')).toBeNull();
+  });
 });

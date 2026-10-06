@@ -357,7 +357,7 @@ const READ = {
 
 // ── Proposing tools ──────────────────────────────────────────────────────────
 
-const money = n => (n === null || n === undefined ? 'empty' : Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const money = n => require('../utils/money').formatAmount(n, { empty: 'empty' });
 const _label = e => `${e.merchant || 'Untitled receipt'}${e.receiptDate ? `, ${e.receiptDate}` : ''}${e.total ? `, ${e.currency || ''} ${money(e.total)}`.replace(' ,', ',') : ''}`;
 const _show = (k, v) => (v === null || v === undefined || v === '' ? 'empty' : ['total', 'tax', 'subTotal'].includes(k) ? money(v) : String(v));
 

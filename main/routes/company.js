@@ -62,7 +62,7 @@ router.patch('/', requireAuth, requireRole('admin'), (req, res) => {
 // ── LLM API keys ────────────────────────────────────────────────────────────
 // Never the key itself: its first and last four characters, and what the
 // reader last saw from it.
-const masked = k => (k.apiKey.length > 8 ? `${k.apiKey.slice(0, 4)}••••${k.apiKey.slice(-4)}` : '••••');
+const masked = k => require('../utils/mask').maskKey(k.apiKey);
 const view = k => ({ id: k.id, label: k.label, createdAt: k.createdAt, keyMasked: masked(k),
                      lastOkAt: k.lastOkAt, lastErrorAt: k.lastErrorAt, lastError: k.lastError, lastModel: k.lastModel });
 

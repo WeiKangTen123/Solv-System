@@ -16,11 +16,9 @@ const AMOUNT_EXACT = 60;
 const AMOUNT_NEAR  = 25;  // within 1%, for rounding
 const TEXT_HINT    = 15;
 
-// Two amounts agree if they round to the same cent.
-function sameAmount(a, b) {
-  if (a === null || b === null || a === undefined || b === undefined) return false;
-  return Math.round(a * 100) === Math.round(b * 100);
-}
+// Two amounts agree if they round to the same cent: the one rule, shared with
+// the duplicate check.
+const { sameAmount } = require('../intake/dedup');
 
 function daysApart(a, b) {
   if (!a || !b) return null;
