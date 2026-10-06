@@ -639,4 +639,15 @@ describe('receipt-parser — the tax figure against the tax lines', () => {
     const inclusive = [{ description: 'Kopi', unitAmount: 10 }, { description: 'Toast', unitAmount: 6.1 }, { description: 'GST 9% (included)', unitAmount: 1.33 }];
     expect(parser.normalise({ merchant: 'Cafe', total: 16.1, currency: 'SGD', tax: 1.33, lineItems: inclusive }).tax).toBe(1.33);
   });
+
+  test('a service charge is not tax: a Singapore bill with 10.00 service and 9.90 GST keeps a tax of 9.90', () => {
+    // The items account for the total, so the tax lines are held against the
+    // model's figure. Counting the service charge made them 19.90, which then
+    // replaced the model's correct 9.90 and went to Xero.
+    const bill = [{ description: 'Food', unitAmount: 100 }, { description: 'Service Charge 10%', unitAmount: 10 }, { description: 'GST 9%', unitAmount: 9.9 }];
+    expect(parser.normalise({ merchant: 'Din Tai Fung', total: 119.9, currency: 'SGD', tax: 9.9, lineItems: bill }).tax).toBe(9.9);
+    expect(parser.normalise({ merchant: 'Din Tai Fung', total: 119.9, currency: 'SGD', tax: null, lineItems: bill }).tax).toBe(9.9);
+    const svc = [{ description: 'Food', unitAmount: 100 }, { description: 'SVC CHG', unitAmount: 10 }, { description: 'GST', unitAmount: 9.9 }];
+    expect(parser.normalise({ merchant: 'Din Tai Fung', total: 119.9, currency: 'SGD', tax: 9.9, lineItems: svc }).tax).toBe(9.9);
+  });
 });

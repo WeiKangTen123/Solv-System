@@ -56,10 +56,13 @@ function buildLines(r, fallbackCategory) {
   const lines = [...groups.values()].filter(g => g.cents > 0);
   const sum = lines.reduce((s, g) => s + g.cents, 0);
   const tolerance = Math.max(100, Math.round(totalCents * 0.15));
-  if (!lines.length || Math.abs(sum - totalCents) > tolerance) {
-    return [{ category: cat, description: r.description || r.merchant || null, amount: totalCents / 100, onBehalfOf: null }];
-  }
+  const oneLine = [{ category: cat, description: r.description || r.merchant || null, amount: totalCents / 100, onBehalfOf: null }];
+  if (!lines.length || Math.abs(sum - totalCents) > tolerance) return oneLine;
   lines.sort((a, b) => b.cents - a.cents);
+  // Within the tolerance the residual can still be larger than the largest
+  // line: ten people's 10.00 against a total of 87.00 left one line at -3.00.
+  // A line of nothing or less is not a charge, so the total goes on one line.
+  if (lines[0].cents + totalCents - sum <= 0) return oneLine;
   lines[0].cents += totalCents - sum;
   // The first charge names the line; the rest are counted. A report row that
   // recites forty folio lines is not a description.

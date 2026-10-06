@@ -50,6 +50,15 @@ describe('receipts/read-receipt', () => {
     expect(lines).toEqual([{ category: 'Lodging', description: '[Lodging] Rooms and meals @ Courtyard', amount: 88188.77, onBehalfOf: null }]);
   });
 
+  test('buildLines never writes a line of nothing or less: a residual bigger than the largest line means one line', () => {
+    // Ten people's 10.00 against a total of 87.00 is inside the tolerance, and
+    // the -13.00 residual on one 10.00 line used to make it -3.00.
+    const items = Array.from({ length: 10 }, (_, i) => ({ description: `Dinner ${i}`, unitAmount: 10, category: 'Meals', onBehalfOf: `Guest ${i}` }));
+    const lines = read.buildLines({ merchant: 'Jumbo', total: 87, category: 'Meals', description: '[Meals] Dinner @ Jumbo', lineItems: items }, 'Other');
+    expect(lines).toEqual([{ category: 'Meals', description: '[Meals] Dinner @ Jumbo', amount: 87, onBehalfOf: null }]);
+    expect(read.buildLines({ merchant: 'Jumbo', total: 99, category: 'Meals', lineItems: items }, 'Other').every(l => l.amount > 0)).toBe(true);
+  });
+
   test('a scanned PDF is rendered and read as one document across pages', async () => {
     const { r, e } = seed('application/pdf');
     pdfPages.extractPages.mockResolvedValue({ pages: ['', '', '', ''], numPages: 4, hasText: false, textPageCount: 0 });

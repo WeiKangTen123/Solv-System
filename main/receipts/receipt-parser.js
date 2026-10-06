@@ -134,7 +134,10 @@ function _titleCase(name) {
 // Indian and other tax lines are printed per charge. When the document's own
 // tax figure is missing (or a "VAT 0.00" footer was read as the tax), the tax
 // is the sum of the tax lines.
-const TAX_LINE_RE = /\b(cgst|sgst|igst|utgst|gst|vat|tax|service charge|svc)\b/i;
+// A service charge is not one of them: it goes to the restaurant, not the
+// government. Counted as tax, a Singapore bill of 100.00 food, 10.00 service
+// and 9.90 GST went to Xero with 19.90 of tax.
+const TAX_LINE_RE = /\b(cgst|sgst|igst|utgst|gst|vat|tax)\b/i;
 function _taxFromLines(lineItems, total) {
   const cents = lineItems.filter(li => TAX_LINE_RE.test(li.description || '')).reduce((sum, li) => sum + Math.round(Number(li.unitAmount || 0) * 100), 0);
   if (cents <= 0) return null;
