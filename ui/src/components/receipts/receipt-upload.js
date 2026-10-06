@@ -92,7 +92,13 @@ export async function prepareReceipt(file) {
   const canvas = document.createElement('canvas');
   canvas.width  = Math.max(1, Math.round(bitmap.width * scale));
   canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  const ctx = canvas.getContext('2d');
+  // JPEG has no transparency, and a canvas starts clear: a PNG's transparent
+  // background was encoded as black, with the receipt's black print on it.
+  // White paper goes down first.
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   if (bitmap.close) bitmap.close();
 
   for (const quality of QUALITY_STEPS) {

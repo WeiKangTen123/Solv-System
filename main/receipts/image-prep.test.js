@@ -16,6 +16,20 @@ describe('receipts/image-prep', () => {
     expect(meta.orientation).toBe(6);
   });
 
+  test('a large transparent PNG is shrunk onto white, not onto JPEG\'s black', async () => {
+    // Noise in the colour channels keeps the PNG over the size that is shrunk;
+    // every pixel is fully transparent, so all that shows is the paper.
+    const w = 1000, h = 1000;
+    const raw = require('crypto').randomBytes(w * h * 4);
+    for (let i = 3; i < raw.length; i += 4) raw[i] = 0;
+    const png = await sharp(raw, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
+    expect(png.length).toBeGreaterThan(1.5 * 1024 * 1024);
+    const out = await forModel(png, 'image/png');
+    expect(out.mime).toBe('image/jpeg');
+    const { channels } = await sharp(out.buffer).stats();
+    for (const c of channels.slice(0, 3)) expect(c.mean).toBeGreaterThan(250);
+  });
+
   test('a small photo and a PDF are left alone', async () => {
     const small = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
     expect((await forModel(small, 'image/jpeg')).buffer).toBe(small);
