@@ -7,8 +7,9 @@
 // an ENCRYPTION_KEY that would make every stored credential unreadable, a data
 // directory owned by root, a production server with no UI built to serve.
 //
-//   node main/scripts/preflight.js            check this machine
-//   node main/scripts/preflight.js --json     the same, as JSON
+//   node main/scripts/preflight.js              check this machine
+//   node main/scripts/preflight.js --json       the same, as JSON
+//   node main/scripts/preflight.js --existing   this box already has data (deploy.sh)
 //
 // It reads; it does not migrate, write or repair. Exits 1 if anything failed,
 // 0 if only warnings. Warnings are things that work but should not be true of
@@ -19,6 +20,11 @@ const ROOT = path.join(__dirname, '../..');
 require('dotenv').config({ path: path.join(ROOT, 'main/.env') });
 
 const JSON_OUT = process.argv.includes('--json');
+// A box that has been running must find its data where it left it. Without
+// this, a DATA_DIR pointed at the wrong disk passed as "none yet — the first
+// boot creates it", and the first person to open the page became the admin of
+// a new, empty company.
+const EXISTING = process.argv.includes('--existing');
 const PROD = process.env.NODE_ENV === 'production';
 const results = [];
 const ok    = (name, detail) => results.push({ name, state: 'ok', detail });
@@ -78,7 +84,10 @@ for (const [label, dir] of [['DATA_DIR', DATA_DIR], ['LOGS_DIR', LOGS_DIR]]) {
 // that migrates is a change, not a check. Boot migrates.
 check('database', () => {
   const dbPath = process.env.DB_PATH || path.join(DATA_DIR, 'app.db');
-  if (!fs.existsSync(dbPath)) return ok('database', `none yet at ${dbPath} — the first boot creates it`);
+  if (!fs.existsSync(dbPath)) {
+    return EXISTING ? fail('database', `missing at ${dbPath} — this box has run before, so its data should be here; check DATA_DIR / DB_PATH before anything starts`)
+                    : ok('database', `none yet at ${dbPath} — the first boot creates it`);
+  }
   const Database = require('better-sqlite3');
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
@@ -93,20 +102,49 @@ check('database', () => {
     // box in that state was called unfit when all it needed was to be started.
     const hasUsers = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'").get();
     const behind = version < LATEST ? ` (boot will migrate ${version} → ${LATEST})` : '';
-    if (!hasUsers) return ok('database', `empty file at schema ${version} — boot will create the schema`);
+    if (!hasUsers) {
+      return EXISTING ? fail('database', `${dbPath} has no tables — this box has run before; is DATA_DIR pointing at the right disk?`)
+                      : ok('database', `empty file at schema ${version} — boot will create the schema`);
+    }
     const users = db.prepare('SELECT COUNT(*) n FROM users').get().n;
+    if (EXISTING && !users) return fail('database', `${dbPath} has no users — the first person to sign up would become its admin`);
     ok('database', `intact, schema ${version}${behind}, ${users} user(s)`);
+
+    // The key's shape is checked above; this checks it is THE key. A valid
+    // but different ENCRYPTION_KEY (a restored .env from another box, a
+    // regenerated one) passes every shape test and then fails every Xero call
+    // and every receipt read, one at a time, long after the deploy said yes.
+    const sample = [
+      ['company_gemini_keys', 'api_key'], ['user_gemini_keys', 'api_key'],
+      ['company_credentials', 'xero_oauth_refresh_token'], ['company_credentials', 'xero_client_secret'],
+    ].map(([table, col]) => {
+      const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+      return exists ? db.prepare(`SELECT ${col} v FROM ${table} WHERE ${col} LIKE 'enc:v1:%' LIMIT 1`).get() : null;
+    }).find(Boolean);
+    if (sample && (process.env.ENCRYPTION_KEY || '').trim()) {
+      try {
+        require(path.join(ROOT, 'main/utils/crypto')).decrypt(sample.v);
+        ok('ENCRYPTION_KEY opens data', 'a stored secret decrypts with it');
+      } catch {
+        fail('ENCRYPTION_KEY opens data', 'stored secrets do not decrypt with this key — it is not the key they were saved with');
+      }
+    }
   } finally { db.close(); }
 });
 
 check('backups', () => {
   const dir = path.join(DATA_DIR, 'backups');
   if (!fs.existsSync(dir)) return warn('backups', 'none taken yet — npm run backup, and the deploy installs the daily cron');
-  const files = fs.readdirSync(dir).filter(f => f.endsWith('.db')).sort();
-  if (!files.length) return warn('backups', 'the directory is empty');
-  const newest = files[files.length - 1];
+  const all = fs.readdirSync(dir).filter(f => f.endsWith('.db'));
+  if (!all.length) return warn('backups', 'the directory is empty');
+  // The daily cron's copies are the ones whose age says whether it still runs;
+  // a deploy's copy from this morning says nothing about the cron.
+  const daily = all.filter(f => f.startsWith('app-')).sort();
+  const others = all.length - daily.length;
+  if (!daily.length) return warn('backups', `no daily copy yet (${others} from deploys) — the deploy installs the cron`);
+  const newest = daily[daily.length - 1];
   const age = (Date.now() - fs.statSync(path.join(dir, newest)).mtimeMs) / 86400000;
-  const line = `${files.length} kept, newest ${newest} (${age < 1 ? 'today' : `${Math.floor(age)} day(s) old`})`;
+  const line = `${daily.length} daily kept, newest ${newest} (${age < 1 ? 'today' : `${Math.floor(age)} day(s) old`})${others ? `, plus ${others} from deploys` : ''}`;
   return age > 2 ? warn('backups', line) : ok('backups', line);
 });
 

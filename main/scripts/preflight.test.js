@@ -116,4 +116,47 @@ describe('preflight', () => {
     expect(code).toBe(0);
     expect(state(out, 'ENCRYPTION_KEY').state).toBe('warn');
   });
+  // A box that has run before must find its data. A DATA_DIR pointed at the
+  // wrong disk used to pass as "the first boot creates it", and the first
+  // visitor became the admin of a new, empty company.
+  test('with --existing, a missing or empty database fails', () => {
+    const { dir } = preflight();
+    const data = path.join(dir, 'data');
+    let r = preflight({ DATA_DIR: data }, ['--json', '--existing']);
+    expect(r.code).toBe(1);
+    expect(state(r.out, 'database').detail).toContain('missing');
+
+    const Database = require('better-sqlite3');
+    const db = new Database(path.join(data, 'app.db'));
+    db.exec(fs.readFileSync(path.join(ROOT, 'main/db/schema.sql'), 'utf8'));
+    db.close();
+    r = preflight({ DATA_DIR: data }, ['--json', '--existing']);
+    expect(r.code).toBe(1);
+    expect(state(r.out, 'database').detail).toContain('no users');
+  });
+
+  // A valid key of the right shape that is not the one the data was saved
+  // with passed every check, then failed every Xero call and receipt read.
+  test('a stored secret must decrypt with ENCRYPTION_KEY', () => {
+    const { dir } = preflight();
+    const data = path.join(dir, 'data');
+    const Database = require('better-sqlite3');
+    const db = new Database(path.join(data, 'app.db'));
+    db.exec(fs.readFileSync(path.join(ROOT, 'main/db/schema.sql'), 'utf8'));
+    db.prepare("INSERT INTO companies (id, name, created_at) VALUES ('c1', 'Solv', '2026-01-01')").run();
+    db.prepare("INSERT INTO users (id, company_id, email, password, role, created_at) VALUES ('u1','c1','a@b.c','x','admin','2026-01-01')").run();
+    // Encrypted in a child with the GOOD key, the way the app would have saved it.
+    const saved = execFileSync(process.execPath, ['-e', "process.stdout.write(require('./main/utils/crypto').encrypt('AIza-secret'))"],
+      { cwd: ROOT, encoding: 'utf8', env: { ...process.env, ENCRYPTION_KEY: GOOD.ENCRYPTION_KEY } });
+    db.prepare("INSERT INTO company_gemini_keys (company_id, api_key, created_at) VALUES ('c1', ?, '2026-01-01')").run(saved);
+    db.close();
+
+    let r = preflight({ DATA_DIR: data }, ['--json', '--existing']);
+    expect(r.code).toBe(0);
+    expect(state(r.out, 'ENCRYPTION_KEY opens data').state).toBe('ok');
+
+    r = preflight({ DATA_DIR: data, ENCRYPTION_KEY: 'b'.repeat(64) }, ['--json', '--existing']);
+    expect(r.code).toBe(1);
+    expect(state(r.out, 'ENCRYPTION_KEY opens data').state).toBe('fail');
+  });
 });
