@@ -4,6 +4,7 @@ const rateLimit = require('express-rate-limit');
 const users     = require('../store/users');
 const { requireAuth, signSession } = require('../middleware/auth-middleware');
 const logger    = require('../utils/logger');
+const asyncHandler = require('../middleware/async-handler');
 
 // Per address: ten tries in fifteen minutes.
 const authLimiter = rateLimit({
@@ -51,7 +52,7 @@ router.get('/status', (_req, res) => res.json({ hasUsers: users.hasUsers(), regi
 
 // The first account creates the company and is its admin. After that,
 // registration is closed unless an admin opens it; admins add staff.
-router.post('/register', authLimiter, async (req, res) => {
+router.post('/register', authLimiter, asyncHandler(async (req, res) => {
   try {
     const { email, password, name } = req.body || {};
     if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) return res.status(400).json({ error: 'Email and password are required' });
@@ -63,9 +64,9 @@ router.post('/register', authLimiter, async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
-router.post('/login', authLimiter, async (req, res) => {
+router.post('/login', authLimiter, asyncHandler(async (req, res) => {
   try {
     const { email, password } = req.body || {};
     if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) return res.status(400).json({ error: 'Email and password are required' });
@@ -80,7 +81,7 @@ router.post('/login', authLimiter, async (req, res) => {
     logger.error('Login error', { error: err.message });
     res.status(500).json({ error: 'Login failed' });
   }
-});
+}));
 
 // Signing out ends every session this person has, on every device: the token
 // in the browser is not the only copy, and a stolen one must die with it.

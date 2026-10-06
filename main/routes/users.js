@@ -21,7 +21,7 @@ router.get('/me/gemini-keys', requireAuth, (req, res) => {
   });
 });
 
-router.post('/me/gemini-keys', requireAuth, async (req, res) => {
+router.post('/me/gemini-keys', requireAuth, asyncHandler(async (req, res) => {
   try {
     const { apiKey, label } = req.body || {};
     // Checked here: an absent key used to reach .trim() and come back as
@@ -33,7 +33,7 @@ router.post('/me/gemini-keys', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
 // Testing a pasted key, before it is saved, makes this server ask Google about
 // a key it has never stored. Ten an hour per person is plenty for setting one
@@ -48,7 +48,7 @@ function _rawTestAllowed(userId) {
   return true;
 }
 
-router.post('/me/gemini-keys/test', requireAuth, async (req, res) => {
+router.post('/me/gemini-keys/test', requireAuth, asyncHandler(async (req, res) => {
   const { apiKey, keyId } = req.body || {};
   if (apiKey && !_rawTestAllowed(req.user.id)) return res.status(429).json({ error: 'Too many key tests this hour. Save the key and test it from the list.' });
   // A stored key is tested only when it is the caller's own, and only then is
@@ -64,7 +64,7 @@ router.post('/me/gemini-keys/test', requireAuth, async (req, res) => {
     if (stored) users.recordKeyUse('user', stored.id, { error: err.message });
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
 router.delete('/me/gemini-keys/:id', requireAuth, (req, res) => {
   const success = users.removeUserGeminiKey(req.user.id, Number(req.params.id));
@@ -80,7 +80,7 @@ router.get('/', requireAuth, requireRole('admin'), (req, res) => {
   res.json({ users: users.getAllUsers(req.user.companyId) });
 });
 
-router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
+router.post('/', requireAuth, requireRole('admin'), asyncHandler(async (req, res) => {
   try {
     const { email, password, name, role, employeeId, department } = req.body || {};
     if (typeof email !== 'string' || typeof password !== 'string') return res.status(400).json({ error: 'Email and password are required' });
@@ -90,7 +90,7 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
 // A string field from a body, trimmed and capped, or undefined to leave it.
 function _text(v, max) {

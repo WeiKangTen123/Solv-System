@@ -1,12 +1,18 @@
 // A fatal exit under pm2 is one silent restart. Say why — in the log, and in
-// Slack when a webhook is configured — and give the post a moment to leave
-// before exiting; ecosystem.config.js's backoff keeps a crash loop from
-// becoming a storm.
+// Slack when a webhook is configured — and exit once the post has gone (or
+// failed); ecosystem.config.js's backoff keeps a crash loop from becoming a
+// storm. It used to exit after a fixed 1.5 s while the post was allowed 4 s,
+// so a slow Slack lost the one message that said why.
+let _fatal = false;
 function fatal(kind, msg) {
   console.error(`${kind}:`, msg);
+  if (_fatal) return;
+  _fatal = true;
   try { require('./utils/logger').error(kind, { error: msg }); } catch {}
-  try { require('./utils/notify').notifyError({ context: `${kind} — process exiting`, error: String(msg) }).catch(() => {}); } catch {}
-  setTimeout(() => process.exit(1), 1500).unref();
+  let sent = Promise.resolve();
+  try { sent = require('./utils/notify').notifyError({ context: `${kind} — process exiting`, error: String(msg) }).catch(() => {}); } catch {}
+  const cap = new Promise(resolve => setTimeout(resolve, 5000).unref());
+  Promise.race([sent, cap]).finally(() => process.exit(1));
 }
 process.on('uncaughtException', err => {
   if (err.code === 'EADDRINUSE') { console.error(`Port ${process.env.PORT || 4000} is already in use.`); process.exit(1); }
@@ -68,6 +74,15 @@ const LARGE_BODY_ROUTE = /^\/api\/(receipts\/?$|receipts\/capture\/[^/]+\/?$|cla
 const smallJson = express.json({ limit: '100kb' });
 app.use((req, res, next) => (req.method === 'POST' && LARGE_BODY_ROUTE.test(req.path) ? next() : smallJson(req, res, next)));
 app.use(express.urlencoded({ extended: false, limit: '100kb' }));
+// One plain value per query parameter. The parser turns ?from=a&from=b into an
+// array and ?a[b]=1 into an object, and the stores bind query values straight
+// into SQL, where either became "Too many parameter values" and a 500.
+app.use('/api', (req, res, next) => {
+  for (const v of Object.values(req.query || {})) {
+    if (typeof v !== 'string') return res.status(400).json({ error: 'Each query parameter may be given once, as plain text.' });
+  }
+  next();
+});
 
 const authRoutes      = require('./routes/auth');
 const userRoutes      = require('./routes/users');
@@ -111,12 +126,19 @@ if (PROD) {
 }
 
 // A body that is too large or not JSON is the caller's mistake and says so;
+// an error made to be shown (`expose`, as utils/http-error sets) is shown;
 // everything else is ours, logged in full and answered without the details.
-app.use((err, req, res, _next) => {
+// A route that had already started its answer cannot be given a second one:
+// Express is handed the error and closes the connection, rather than this
+// throwing ERR_HTTP_HEADERS_SENT and leaving the client to time out.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
   const status = Number(err.status || err.statusCode) || 500;
   if (status < 500) {
-    const msg = err.type === 'entity.too.large' ? 'That request is too large.' : err.type === 'entity.parse.failed' ? 'That request is not valid JSON.' : 'Bad request';
-    return res.status(status).json({ error: msg });
+    const msg = err.type === 'entity.too.large' ? 'That request is too large.'
+      : err.type === 'entity.parse.failed' ? 'That request is not valid JSON.'
+      : err.expose && err.message ? err.message : 'Bad request';
+    return res.status(status).json({ error: msg, ...(err.expose && err.extra ? err.extra : {}) });
   }
   logger.error('Unhandled error', { method: req.method, path: String(req.originalUrl || '').split('?')[0], error: err.message, stack: err.stack });
   res.status(500).json({ error: 'Internal server error' });
@@ -151,15 +173,21 @@ const server = app.listen(PORT, HOST, () => {
 
 // pm2 sends SIGINT on a reload and waits kill_timeout before killing. Stop
 // taking requests and give the reads under way that long to land; whatever
-// does not is picked up by recoverStuckReads on the next boot.
+// does not is picked up by recoverStuckReads on the next boot. The rate timers
+// stop first, so a tick does not start new provider calls and writes inside
+// the drain, and the database is closed last so its WAL is checkpointed.
 let _stopping = false;
 function shutdown(signal) {
   if (_stopping) return;
   _stopping = true;
   logger.info('Shutting down', { signal });
   server.close();
+  try { require('./fx/sweeper').stop(); require('./fx/live').stop(); } catch {}
   const deadline = new Promise(resolve => setTimeout(resolve, 6500).unref());
-  Promise.race([receiptRoutes._drain(), deadline]).finally(() => process.exit(0));
+  Promise.race([receiptRoutes._drain(), deadline]).finally(() => {
+    try { require('./db').close(); } catch {}
+    process.exit(0);
+  });
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));

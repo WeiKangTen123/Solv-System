@@ -131,7 +131,7 @@ router.post('/', requireAuth, bigJson, (req, res) => {
 // ── Phone pairing ───────────────────────────────────────────────────────────
 function captureUrl(req, token) { return `${req.protocol}://${req.get('host')}/capture/${token}`; }
 
-router.post('/pair', requireAuth, async (req, res) => {
+router.post('/pair', requireAuth, asyncHandler(async (req, res) => {
   try {
     const reportId = (req.body || {}).reportId || null;
     if (reportId) {
@@ -151,7 +151,7 @@ router.post('/pair', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Could not create a pairing code' });
   }
-});
+}));
 
 function _phoneView(receiptIds, withToken, userId) {
   return receiptIds.map(id => {

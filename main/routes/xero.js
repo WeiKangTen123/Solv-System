@@ -7,6 +7,7 @@ const xeroOAuth  = require('../xero/oauth');
 const tokenCache = require('../xero/token-cache');
 const users      = require('../store/users');
 const logger     = require('../utils/logger');
+const asyncHandler = require('../middleware/async-handler');
 
 // The company's Xero connection: Custom Connection (client id + secret) or
 // the OAuth web-app flow, exactly as in the Xero automation but owned by the
@@ -49,12 +50,12 @@ router.patch('/credentials', requireAuth, FINANCE, (req, res) => {
 });
 
 // POST /api/xero/test — Custom Connection: connect and list the orgs.
-router.post('/test', requireAuth, FINANCE, async (req, res) => {
+router.post('/test', requireAuth, FINANCE, asyncHandler(async (req, res) => {
   try {
     const tenants = await require('../xero/connect').autoConnect(me(req).companyId);
     res.json({ ok: true, tenants: tenants.map(t => ({ tenantId: t.tenantId, tenantName: t.tenantName })) });
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
-});
+}));
 
 router.get('/oauth/connect', requireAuth, FINANCE, (req, res) => {
   try { res.json({ url: xeroOAuth.buildAuthorizeUrl(me(req).companyId, req.user.id) }); }
@@ -70,14 +71,14 @@ router.get('/oauth/callback', (req, res) => {
   res.redirect(`${base}?xero_oauth=pending&code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`);
 });
 
-router.post('/oauth/complete', requireAuth, FINANCE, async (req, res) => {
+router.post('/oauth/complete', requireAuth, FINANCE, asyncHandler(async (req, res) => {
   const { code, state } = req.body || {};
   if (!code || !state) return res.status(400).json({ error: 'Missing code or state' });
   const bound = oauthState.consume(state);
   if (!bound || bound !== req.user.id) return res.status(400).json({ error: 'This Xero connection link is invalid or expired. Try connecting again.' });
   try { await xeroOAuth.completeConnection(me(req).companyId, code); res.json({ ok: true }); }
   catch (err) { logger.error('Xero OAuth completion failed', { error: err.message }); res.status(400).json({ error: err.message }); }
-});
+}));
 
 router.delete('/oauth/disconnect', requireAuth, FINANCE, (req, res) => {
   const u = me(req);
@@ -93,12 +94,12 @@ router.get('/tenants', requireAuth, FINANCE, (req, res) => {
   res.json({ connectionType: users.getCompanyConfig(u.companyId).XERO_CONNECTION_TYPE || null, tenants: tokenCache.getPersistedTenants(u.companyId) });
 });
 
-router.get('/accounts', requireAuth, FINANCE, async (req, res) => {
+router.get('/accounts', requireAuth, FINANCE, asyncHandler(async (req, res) => {
   const u = me(req);
   const tenant = tokenCache.getPersistedTenants(u.companyId)[0];
   if (!tenant) return res.status(400).json({ error: 'Xero is not connected' });
   try { res.json({ accounts: await require('../xero/category-account').getAccounts(u.companyId, tenant.tenantId, { force: req.query.refresh === '1' }) }); }
   catch (err) { res.status(502).json({ error: require('../xero/xero-utils').xeroErrMsg(err) }); }
-});
+}));
 
 module.exports = router;
