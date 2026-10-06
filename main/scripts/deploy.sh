@@ -154,7 +154,14 @@ if [ -n "$DIRTY" ]; then
   [ -n "$STILL" ] && die "could not discard the server's local edits: $STILL"
 fi
 
-PULL=$(remote "git fetch -q origin && git pull --ff-only origin $BRANCH 2>&1 | tail -3" || true)
+# Normally a fast-forward. When the history on GitHub has been rewritten (as
+# it was to take personal data out of it), the server's commit is no longer
+# an ancestor of origin and a fast-forward is refused for ever; the server is
+# a deploy target with no commits of its own, so it follows origin, and the
+# old objects are pruned so the data does not linger in its .git either.
+# Untracked files on the server (helper scripts) are not touched.
+SYNC="git fetch -q origin && if git merge-base --is-ancestor HEAD origin/$BRANCH; then git pull --ff-only origin $BRANCH; else echo history on GitHub was rewritten, the server follows it; git reset -q --hard origin/$BRANCH && git reflog expire --expire=now --all && git gc -q --prune=now; fi"
+PULL=$(remote "$SYNC 2>&1 | tail -3" || true)
 echo "$PULL" | sed 's/^/    /'
 
 # ── 4. The check that is the whole point ────────────────────────────────────
