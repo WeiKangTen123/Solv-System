@@ -15,7 +15,7 @@ function getBreadcrumbs(pathname) {
 
 export default function Header() {
   const { theme, toggle } = useTheme();
-  const { mode, isMobile, toggleViewMode, setMobileDrawerOpen } = useViewMode();
+  const { mode, isMobile, toggleViewMode, mobileDrawerOpen, setMobileDrawerOpen } = useViewMode();
   const { pathname } = useLocation();
   const crumbs = getBreadcrumbs(pathname);
 
@@ -39,7 +39,9 @@ export default function Header() {
         {isMobile && (
           <button
             onClick={() => setMobileDrawerOpen(prev => !prev)}
-            aria-label="Open navigation menu"
+            aria-label={mobileDrawerOpen ? 'Close navigation menu' : 'Open navigation menu'}
+            aria-expanded={mobileDrawerOpen}
+            aria-controls="app-sidebar"
             style={{
               background: 'none',
               border: 'none',

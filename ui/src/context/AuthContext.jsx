@@ -24,6 +24,25 @@ export function AuthProvider({ children }) {
     try { setUser((await api.get('/auth/me')).user); } catch { /* ignore */ }
   }
 
+  // A 403 means the server no longer agrees with the role this page was built
+  // for (an admin made a user while signed in): reload the account so the
+  // admin tabs go. One reload at a time, however many calls were refused.
+  useEffect(() => {
+    let asking = false;
+    const on = async () => {
+      if (asking || !localStorage.getItem('token')) return;
+      asking = true;
+      try {
+        const d = await api.get('/auth/me');
+        // Signed out while this was asking: the answer is for nobody now.
+        if (localStorage.getItem('token')) setUser(d.user);
+      } catch { /* a 401 signs out on its own */ }
+      finally { asking = false; }
+    };
+    window.addEventListener('solv:forbidden', on);
+    return () => window.removeEventListener('solv:forbidden', on);
+  }, []);
+
   async function login(email, password) {
     const data = await api.post('/auth/login', { email, password });
     localStorage.setItem('token', data.token);
@@ -34,13 +53,19 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
-  // Tell the server first, so it can stop this account's mailbox watcher —
-  // otherwise it keeps polling for someone who has signed out. Best-effort: a
-  // failed request must never trap the user in a session they asked to leave.
+  // The page forgets the session first and tells the server after. It used to
+  // wait for the server, and the sign-out button went to /login meanwhile:
+  // still signed in, /login sent it on to Home, which mounted and fired its
+  // loads with a token the server was just revoking, then bounced to /login.
+  // The server is still told, so it ends the session everywhere and stops
+  // this account's mailbox watcher. Best-effort: a failed request must never
+  // trap the user in a session they asked to leave.
   async function logout() {
-    try { await api.post('/auth/logout', {}); } catch (_) { /* leaving anyway */ }
+    const token = localStorage.getItem('token');
     localStorage.removeItem('token');
     setUser(null);
+    if (!token) return;
+    try { await api.post('/auth/logout', {}, { Authorization: `Bearer ${token}` }); } catch (_) { /* leaving anyway */ }
   }
 
   async function register(email, password, name) {

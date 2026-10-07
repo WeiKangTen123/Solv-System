@@ -19,6 +19,7 @@ export default function Login() {
   // withdrawing it reads worse than a tab that appears a moment late.
   const [canRegister, setCanRegister] = useState(false);
   const [email, setEmail]     = useState('');
+  const [name, setName]       = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [error, setError]     = useState('');
@@ -52,10 +53,13 @@ export default function Login() {
     setLoading(true);
     try {
       if (mode === 'login') await login(email, password);
-      else                  await register(email, password);
+      else                  await register(email, password, name.trim() || null);
       navigate('/');
     } catch (err) {
-      triggerError(err.message);
+      // Locked out after too many wrong passwords. Waiting is not the only way
+      // back: an admin can set a new password.
+      const locked = err.status === 429 && !/administrator/i.test(err.message);
+      triggerError(locked ? `${err.message.replace(/\.\s*$/, '')}, or ask your administrator.` : err.message);
     } finally {
       setLoading(false);
     }
@@ -68,6 +72,7 @@ export default function Login() {
     setTabKey(k => k + 1);
     setError('');
     setEmail('');
+    setName('');
     setPassword('');
     setShowPass(false);
   }
@@ -241,6 +246,9 @@ export default function Login() {
               <div className="form-group" style={{ animation: 'fadeUp 0.3s ease 0ms both' }}>
                 <label htmlFor="login-email" className="form-label">Email address</label>
                 <div className="input-wrapper">
+                  {/* autocomplete lets a password manager fill the right box,
+                      and offer to save a new password rather than overwrite
+                      the one it holds. */}
                   <input id="login-email"
                     type="email"
                     className="form-input has-icon"
@@ -249,10 +257,28 @@ export default function Login() {
                     onChange={e => setEmail(e.target.value)}
                     required
                     autoFocus
+                    autoComplete="username"
                   />
                   <span className="input-icon" style={{ left: 12, top: '50%', transform: 'translateY(-50%)', position: 'absolute', color: 'var(--text-muted)', fontSize: 15 }}>✉</span>
                 </div>
               </div>
+
+              {/* The server takes a name with the account; without the box the
+                  first admin was "admin@…" on every screen until they found
+                  My Profile. */}
+              {mode === 'register' && (
+                <div className="form-group" style={{ animation: 'fadeUp 0.3s ease 30ms both' }}>
+                  <label htmlFor="login-name" className="form-label">Your name</label>
+                  <input id="login-name"
+                    className="form-input"
+                    placeholder="Jane Tan"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    maxLength={120}
+                    autoComplete="name"
+                  />
+                </div>
+              )}
 
               <div className="form-group" style={{ marginBottom: 22, animation: 'fadeUp 0.3s ease 60ms both' }}>
                 <label htmlFor="login-password" className="form-label">Password</label>
@@ -265,6 +291,7 @@ export default function Login() {
                     onChange={e => setPassword(e.target.value)}
                     required
                     minLength={mode === 'register' ? 8 : 1}
+                    autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
                     style={{ paddingRight: 42 }}
                   />
                   <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: 15 }}>🔒</span>

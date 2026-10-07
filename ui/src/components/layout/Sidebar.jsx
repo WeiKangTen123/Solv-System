@@ -1,6 +1,8 @@
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useViewMode } from '../../context/ViewModeContext';
+import { useConfirm } from '../../context/ConfirmContext';
+import { hasUnsavedEdits } from '../../utils/useLeaveGuard';
 
 const NAV = [
   { to: '/',         label: 'Home',        desc: 'Your cases and where the money goes', end: true },
@@ -26,11 +28,24 @@ function Item({ to, label, desc, end, onClick }) {
 export default function Sidebar() {
   const { user, logout } = useAuth();
   const { isMobile, mobileDrawerOpen, setMobileDrawerOpen } = useViewMode();
-  const navigate = useNavigate();
+  const confirm = useConfirm();
   const close = () => { if (isMobile) setMobileDrawerOpen(false); };
+  // Off screen is not out of reach: the closed drawer is only slid aside, and
+  // Tab still walked through every link in it, unseen. Inert takes it out of
+  // the tab order and away from screen readers until it is opened.
+  const hidden = isMobile && !mobileDrawerOpen;
+
+  // Signing out leaves the page like any link, so unsaved edits are asked
+  // about first. No navigate here: clearing the account sends every signed-in
+  // page to /login on its own, and Home never mounts on the way.
+  async function signOut() {
+    if (hasUnsavedEdits() && !(await confirm({ title: 'Sign out without saving?', message: 'What you typed on this page has not been saved.', confirmLabel: 'Sign out', danger: true }))) return;
+    close();
+    await logout();
+  }
 
   return (
-    <aside style={{
+    <aside id="app-sidebar" inert={hidden ? '' : undefined} style={{
       position: 'fixed', top: 0, left: 0, bottom: 0, width: isMobile ? 'min(290px, 82vw)' : 'var(--sidebar-width)',
       background: 'var(--bg-sidebar)', borderRight: '1px solid var(--border-sidebar)', display: 'flex', flexDirection: 'column', zIndex: 100,
       transform: isMobile ? (mobileDrawerOpen ? 'translateX(0)' : 'translateX(-100%)') : 'none', transition: 'transform 0.25s ease',
@@ -49,7 +64,10 @@ export default function Sidebar() {
       <div style={{ margin: '8px 8px 12px', padding: '12px 14px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.name || user?.email}</div>
         <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'capitalize' }}>{user?.role}</div>
-        <button className="btn btn-outline btn-sm" style={{ width: '100%' }} onClick={() => { close(); logout(); navigate('/login'); }}>Sign out</button>
+        {/* The server ends every session this account has, not only this
+            browser's, so the button says so before it is pressed. */}
+        <button className="btn btn-outline btn-sm" style={{ width: '100%' }} onClick={signOut}
+                title="Signs you out on every device, not only this one">Sign out everywhere</button>
       </div>
     </aside>
   );
