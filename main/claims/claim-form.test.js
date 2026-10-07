@@ -1,5 +1,5 @@
 const ExcelJS = require('exceljs');
-const { parseClaimForm, excelSerialToISO, cellDate, cellNumber, normaliseHeader, MAX_UNPACKED_BYTES } = require('./claim-form');
+const { parseClaimForm, excelSerialToISO, cellDate, cellNumber, currencyOf, normaliseHeader, MAX_UNPACKED_BYTES } = require('./claim-form');
 
 // Builds a spreadsheet shaped like the real BLACKSTAR claim form: a title block,
 // a header row several rows down, filled lines, blank template lines, then a
@@ -136,6 +136,25 @@ describe('claims/claim-form', () => {
       expect(normaliseHeader('LOCAL TRAVEL COST\n(SGD)')).toBe('LOCAL TRAVEL COST SGD');
       expect(normaliseHeader('  Amount  ')).toBe('AMOUNT');
     });
+
+    test('a date typed as text is read day first, and a date with a time keeps its day', () => {
+      expect(cellDate('26/02/2026')).toBe('2026-02-26');
+      expect(cellDate('26-2-26')).toBe('2026-02-26');
+      expect(cellDate('31/02/2026')).toBeNull();
+      // 6pm on the 26th. Rounding the serial made it the 27th.
+      expect(excelSerialToISO(46079.75)).toBe('2026-02-26');
+      expect(cellDate(46079.75)).toBe('2026-02-26');
+    });
+
+    test('a typed currency becomes its code, and a bare "$" names none', () => {
+      expect(currencyOf('S$')).toBe('SGD');
+      expect(currencyOf('RM')).toBe('MYR');
+      expect(currencyOf('sgd')).toBe('SGD');
+      expect(currencyOf('US$')).toBe('USD');
+      expect(currencyOf('Amount (SGD)')).toBe('SGD');
+      expect(currencyOf('$')).toBeNull();
+      expect(currencyOf('')).toBeNull();
+    });
   });
 
   test('the word "total" in a dated claim line does not end the form', async () => {
@@ -146,6 +165,98 @@ describe('claims/claim-form', () => {
     ] });
     const out = await parseClaimForm(buf);
     expect(out.rows.map(r => r.description)).toEqual(['Grab to client', 'Petrol at Total Energies station', 'Parking']);
+  });
+
+  test('a footer word inside a line ends nothing, even on a line with no date or number', async () => {
+    const out = await parseClaimForm(await workbook(ws => {
+      put(ws, 3, ['No', 'Date', 'Description', 'Amount']);
+      put(ws, 4, [undefined, '26 Feb', 'Petrol at Total Energies', 60]);
+      put(ws, 5, [undefined, undefined, 'Parking', 5]);
+      put(ws, 6, [undefined, undefined, 'Total', 65]);
+      put(ws, 7, [undefined, undefined, 'Claimant: J. Tan', 1]);
+    }));
+    expect(out.rows.map(r => r.description)).toEqual(['Petrol at Total Energies', 'Parking']);
+  });
+
+  test('a header with nothing under it says so rather than reading as an empty claim', async () => {
+    const out = await parseClaimForm(await makeForm({ rows: [] }));
+    expect(out.rows).toEqual([]);
+    expect(out.error).toMatch(/no claim lines/);
+  });
+});
+
+// A workbook built cell by cell, for the layouts makeForm does not cover.
+async function workbook(build) {
+  const wb = new ExcelJS.Workbook();
+  build(wb.addWorksheet('Claim'));
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+const put = (ws, r, cells) => cells.forEach((v, i) => { if (v !== undefined) ws.getRow(r).getCell(i + 1).value = v; });
+const day = d => new Date(Date.UTC(2026, 1, d));
+
+describe('claims/claim-form — headings as real forms write them', () => {
+  test('"Amount (SGD)" is the claimed amount, in the currency it names', async () => {
+    // It was taken for the converted figure, and every line had no amount.
+    const out = await parseClaimForm(await workbook(ws => {
+      put(ws, 3, ['No', 'Date', 'Description', 'Amount (SGD)']);
+      put(ws, 4, [1, day(23), 'Grab', 15.8]);
+    }));
+    expect(out.rows[0]).toMatchObject({ amount: 15.8, currency: 'SGD' });
+    expect(out.categories).toEqual([]);
+  });
+
+  test('"Amount (S$)" and "Amount Claimed" are amounts, not categories', async () => {
+    for (const heading of ['Amount (S$)', 'Amount Claimed']) {
+      const out = await parseClaimForm(await workbook(ws => {
+        put(ws, 3, ['No', 'Date', 'Description', heading, 'MEALS']);
+        put(ws, 4, [1, day(23), 'Lunch', 22.5]);
+      }));
+      expect(out.rows[0].amount).toBe(22.5);
+      expect(out.categories).toEqual(['MEALS']);
+    }
+  });
+
+  test('a form with only a converted amount is claimed in it', async () => {
+    const out = await parseClaimForm(await workbook(ws => {
+      put(ws, 3, ['No', 'Date', 'Description', 'Currency', 'SGD Amount']);
+      put(ws, 4, [1, day(23), 'Hotel', 'USD', 270]);
+    }));
+    expect(out.rows[0]).toMatchObject({ amount: 270, currency: 'SGD' });
+  });
+
+  test('a currency typed as a symbol is stored as its code', async () => {
+    const out = await parseClaimForm(await makeForm({ rows: [{ ...SAMPLE[0], currency: 'S$' }, { ...SAMPLE[1], currency: 'RM' }] }));
+    expect(out.rows.map(r => r.currency)).toEqual(['SGD', 'MYR']);
+  });
+
+  test('a receipt number and a GST column are not categories, and tick nothing', async () => {
+    // A numeric receipt number "ticked" every line, so none was left for the
+    // model to categorise.
+    const out = await parseClaimForm(await workbook(ws => {
+      put(ws, 3, ['No', 'Date', 'Description', 'Amount', 'Receipt No', 'GST', 'TRANSPORT', 'MEALS']);
+      put(ws, 4, [1, day(23), 'Grab', 15.8, 102345, 1.3]);
+      put(ws, 5, [2, day(24), 'Lunch', 20, 102346, 1.65, undefined, 20]);
+    }));
+    expect(out.categories).toEqual(['TRANSPORT', 'MEALS']);
+    expect(out.rows[0].category).toBeNull();
+    expect(out.rows[1].category).toBe('MEALS');
+  });
+
+  test('a two-row header with merged cells: the second row is header, and it names the categories', async () => {
+    const out = await parseClaimForm(await workbook(ws => {
+      put(ws, 6, ['No', 'Date', 'Description', 'Currency', 'Amount', 'CATEGORY']);
+      ws.mergeCells('F6:I6');
+      for (const c of ['A', 'B', 'C', 'D', 'E']) ws.mergeCells(`${c}6:${c}7`);
+      // "TOTAL" under the group used to end the form before its first line.
+      put(ws, 7, [undefined, undefined, undefined, undefined, undefined, 'HOTEL', 'LOCAL TRAVEL', 'MEALS', 'TOTAL']);
+      put(ws, 8, [1, day(23), 'Grab to client', 'SGD', 15.8, undefined, 15.8, undefined, 15.8]);
+      put(ws, 9, [2, day(24), 'Lunch', 'SGD', 20, undefined, undefined, undefined, 20]);
+    }));
+    expect(out.error).toBeNull();
+    expect(out.rows.map(r => r.description)).toEqual(['Grab to client', 'Lunch']);
+    expect(out.categories).toEqual(['HOTEL', 'LOCAL TRAVEL', 'MEALS']);
+    expect(out.rows[0].category).toBe('LOCAL TRAVEL');
+    expect(out.rows[1].category).toBeNull();
   });
 });
 
