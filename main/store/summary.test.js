@@ -183,4 +183,13 @@ describe('dashboard summary', () => {
     expect(s.thisMonth).toBe(0);
     expect(s.lastMonth).toBe(80);
   });
+  // The dashboard read the base from the person's row, which has none, so
+  // every company's figures were labelled SGD.
+  test("the dashboard is labelled in the company's own currency", async () => {
+    users.updateCompany(ela.companyId, { baseCurrency: 'USD' });
+    const jwt = require('jsonwebtoken');
+    const token = jwt.sign({ id: ela.id, email: ela.email, role: 'user' }, require('../middleware/auth-middleware').jwtSecret());
+    const res = await request(serverFor(app)).get('/api/dashboard/summary').set({ Authorization: `Bearer ${token}` }).expect(200);
+    expect(res.body.base).toBe('USD');
+  });
 });

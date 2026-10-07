@@ -82,6 +82,9 @@ describe('reports/expense-doc — dates and missing rates', () => {
     expect(m.total).toBe(doc.buildModel(payload).total);
     const text = JSON.stringify(doc.expenseReportDoc(p));
     expect(text).toContain('Claimed 1 Oct 2026');
+    // Both places the date is printed agree: the office-use block used UTC's
+    // date, so the same page read 1 Oct on the cover and 30 Sep below.
+    expect(text).not.toContain('30 Sep 2026');
     expect(text).toContain('rate pending');
   });
 });

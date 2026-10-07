@@ -126,4 +126,27 @@ describe('routes/users and routes/company', () => {
     await request(serverFor(app)).post('/api/users/me/gemini-keys/test').set(as(other.body.token)).send({ keyId: mine.body.id }).expect(400);
     post.mockRestore();
   });
+  test('company settings are checked: currency, time zone, report columns, registration switch', async () => {
+    const patch = body => request(serverFor(app)).patch('/api/company').set(as(token)).send(body);
+    await patch({ baseCurrency: 'ZZZ' }).expect(400);
+    const tz = await patch({ timezone: 'asia/singapore' }).expect(200);
+    expect(tz.body.company.timezone).toBe('Asia/Singapore');
+    await patch({ timezone: '+08:00' }).expect(400);
+    await patch({ timezone: 'Mars/Olympus' }).expect(400);
+    const cols = await patch({ reportColumns: ['meals', 'Meals', 'Lodging'] }).expect(200);
+    expect(cols.body.company.reportColumns).toEqual(['Meals', 'Lodging']);
+    await patch({ reportColumns: ['Snacks'] }).expect(400);
+    await patch({ reportColumns: [] }).expect(400);
+    await patch({ allowRegistration: 'true' }).expect(400);
+    await patch({ allowRegistration: true }).expect(200);
+  });
+
+  test('the company says when its base currency is locked', async () => {
+    let c = await request(serverFor(app)).get('/api/company').set(as(token)).expect(200);
+    expect(c.body.company.baseCurrencyLocked).toBe(false);
+    const store = require('../store/expenses');
+    store.createExpense({ companyId: admin.companyId, userId: admin.id, status: 'reviewed', currency: 'SGD', total: 5, lines: [{ category: 'Meals', amount: 5, baseAmount: 5, fxRate: 1 }] });
+    c = await request(serverFor(app)).get('/api/company').set(as(token)).expect(200);
+    expect(c.body.company.baseCurrencyLocked).toBe(true);
+  });
 });

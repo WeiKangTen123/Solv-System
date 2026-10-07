@@ -39,6 +39,7 @@ function _fail(res, err) {
   res.status(who ? 403 : 400).json({ error: err.message });
 }
 const COVER = ['kind', 'title', 'purpose', 'periodFrom', 'periodTo', 'destination', 'nights', 'advances', 'notes'];
+const MAX_ADVANCE = 10000000;
 function _coverPatch(body) {
   const patch = {};
   for (const k of COVER) if (body[k] !== undefined) patch[k] = body[k] === '' ? null : body[k];
@@ -46,7 +47,12 @@ function _coverPatch(body) {
   // 'case' was added to the store, the schema and the printed cover and missed
   // here, so every case created through the UI was refused by its own route.
   if (patch.kind && !['trip', 'period', 'case'].includes(patch.kind)) throw new Error('kind must be trip, period or case');
-  if (patch.advances !== undefined && patch.advances !== null && !(Number(patch.advances) >= 0)) throw new Error('Advances must be a number');
+  // A finite amount, and not an absurd one: "1e400" passed ">= 0" as
+  // Infinity, showed as 0.00 on screen and printed as "∞" on the PDF.
+  if (patch.advances !== undefined && patch.advances !== null) {
+    const n = Number(patch.advances);
+    if (!Number.isFinite(n) || n < 0 || n > MAX_ADVANCE) throw new Error(`Advances must be an amount from 0 to ${MAX_ADVANCE.toLocaleString('en')}`);
+  }
   if (patch.nights !== undefined && patch.nights !== null) patch.nights = Number(patch.nights) >= 0 ? Math.round(Number(patch.nights)) : null;
   return patch;
 }
@@ -81,10 +87,15 @@ router.patch('/:id', requireAuth, (req, res) => {
   catch (err) { res.status(400).json({ error: err.message }); }
 });
 
+// ?ifEmpty=1 deletes only a case with nothing in it. The phone dialog makes
+// a case for its session and drops it again when nothing arrived; it judged
+// "nothing" from a poll up to three seconds old, so closing it just after the
+// last photo deleted the case those photos had landed in.
 router.delete('/:id', requireAuth, (req, res) => {
   const r = _load(req, res); if (!r) return;
   if (!_owns(req, r)) return res.status(403).json({ error: OWNER_ONLY });
   if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} report cannot be deleted` });
+  if (req.query.ifEmpty === '1' && r.expenses.length) return res.status(409).json({ error: 'This case has receipts in it, so it was kept.', kept: true });
   reports.deleteReport(r.id);
   logger.info('Report deleted', { id: r.id, number: r.number, by: req.user.id });
   res.json({ ok: true });
@@ -128,7 +139,17 @@ function _transition(action, fn) {
   };
 }
 router.post('/:id/claimed', requireAuth, _transition('claimed',  (r, req) => wf.markClaimed(r.id, req.user)));
-router.post('/:id/reopen',  requireAuth, _transition('reopened', (r, req) => wf.reopen(r.id, req.user)));
+// Reopened, its receipts are priced as any open receipt is: one priced at the
+// live rate whose day has since closed moves to the close. While it was
+// claimed the close passed it by, and it was claimed again at the live rate.
+router.post('/:id/reopen',  requireAuth, asyncHandler(async (req, res) => {
+  const r = _load(req, res); if (!r) return;
+  try { wf.reopen(r.id, req.user); }
+  catch (err) { return _fail(res, err); }
+  logger.info('Report reopened', { id: r.id, number: r.number, by: req.user.id });
+  await require('../fx/apply').reprice(r.expenses.map(e => e.id));
+  res.json(_view(reports.getReport(r.id), req));
+}));
 
 // POST /:id/post — the claimant sends their own claimed case to Xero as one
 // draft bill, through the connection an admin set up in Settings. Posting is
@@ -142,8 +163,10 @@ router.post('/:id/post', requireAuth, asyncHandler(async (req, res) => {
     const out = await require('../xero/bills').postReport(r.id, req.user, { dryRun: req.query.dryRun === '1' });
     res.json({ ...out, ...(_view(reports.getReport(r.id), req)) });
   } catch (err) {
-    const status = err.status || (/not connected|claimed|already in Xero/i.test(err.message) ? 400 : 502);
-    res.status(status).json({ error: err.message, ...(_view(reports.getReport(r.id), req)) });
+    // postReport says what kind of failure it was (utils/http-error); one it
+    // did not name is ours, logged and not shown.
+    if (!err.status) logger.error('Posting to Xero failed', { id: r.id, error: err.message, stack: err.stack });
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Posting failed on our side. Try again.', ...(_view(reports.getReport(r.id), req)) });
   }
 }));
 

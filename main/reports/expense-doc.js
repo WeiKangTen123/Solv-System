@@ -152,7 +152,7 @@ function expenseReportDoc(payload) {
     ...m.notes.map(t => ({ text: L(t), style: 'note' })),
     { columns: [
       { width: '*', stack: [{ text: 'Claimant', style: 'label', margin: [0, 16, 0, 2] }, { text: L(owner.name || owner.email || ''), style: 'value' }, { text: report.claimedAt ? `claimed ${fmtStamp(report.claimedAt, company.timezone)}` : 'not yet claimed', style: 'note' }] },
-      { width: '*', stack: [{ text: 'For office use', style: 'label', margin: [0, 16, 0, 2] }, { text: [report.claimedAt ? `Claimed ${fmtDate(report.claimedAt)}` : 'Not yet claimed', report.xeroInvoiceId ? `Xero ${report.xeroInvoiceId}` : null, `Receipts: ${receipts.length}${receipts.length ? ` (${receipts.map(r => r.ref).join(', ')})` : ''}`].filter(Boolean).join(' · '), style: 'note' }] },
+      { width: '*', stack: [{ text: 'For office use', style: 'label', margin: [0, 16, 0, 2] }, { text: [report.claimedAt ? `Claimed ${fmtDate(localDate(company.timezone || 'Asia/Singapore', new Date(report.claimedAt)))}` : 'Not yet claimed', report.xeroInvoiceId ? `Xero ${report.xeroInvoiceId}` : null, `Receipts: ${receipts.length}${receipts.length ? ` (${receipts.map(r => r.ref).join(', ')})` : ''}`].filter(Boolean).join(' · '), style: 'note' }] },
     ] },
   ];
   for (const r of receipts) {

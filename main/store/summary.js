@@ -59,7 +59,9 @@ function _monthKeys(now = new Date(), tz = 'UTC') {
 const DATED = "COALESCE(NULLIF(e.receipt_date, ''), e.created_at)";
 const LIVE = "e.status NOT IN ('duplicate', 'rejected')";
 
-function summary(me, { now = new Date(), timezone = 'UTC' } = {}) {
+// `base` is the company's base currency; the person's row has none. It used to
+// be read from there, so every company's dashboard said SGD.
+function summary(me, { now = new Date(), timezone = 'UTC', base = 'SGD' } = {}) {
   const scope = _scope(me);
   const w = _where(scope);
   const months = _monthKeys(now, timezone);
@@ -116,7 +118,7 @@ function summary(me, { now = new Date(), timezone = 'UTC' } = {}) {
 
   return {
     scope: scope.kind,
-    base: me.baseCurrency || 'SGD',
+    base,
     timezone,
     months: series,
     thisMonth: series[series.length - 1].base,

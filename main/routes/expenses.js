@@ -135,11 +135,15 @@ router.post('/:id/claimed', requireAuth, (req, res) => {
   try { res.json(_out(wf.markExpenseClaimed(e.id, req.user, true), req)); }
   catch (err) { _answer(res, err); }
 });
-router.delete('/:id/claimed', requireAuth, (req, res) => {
+// Taken back, it is priced as any open receipt is: a live rate whose day has
+// closed since moves to the close (fx/apply.js reprice).
+router.delete('/:id/claimed', requireAuth, asyncHandler(async (req, res) => {
   const e = _load(req, res); if (!e) return;
-  try { res.json(_out(wf.markExpenseClaimed(e.id, req.user, false), req)); }
-  catch (err) { _answer(res, err); }
-});
+  try { wf.markExpenseClaimed(e.id, req.user, false); }
+  catch (err) { return _answer(res, err); }
+  await require('../fx/apply').reprice([e.id]);
+  res.json(_out(store.getExpense(e.id), req));
+}));
 
 // Reading the receipt again replaces what is on it, so what changed is logged
 // like any other edit, marked as the reader's.

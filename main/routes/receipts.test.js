@@ -104,6 +104,18 @@ describe('routes/receipts', () => {
     await request(serverFor(app)).delete(`/api/receipts/pair/${pair.body.token}`).set(auth()).expect(200);
     await request(serverFor(app)).get(`/api/receipts/capture/${pair.body.token}`).expect(401);
   });
+
+  // After the twentieth photo the link is spent, not expired: the phone page,
+  // reloaded or polling, still shows what it sent and says the limit is reached.
+  test('a spent phone link still opens and reports its photos, and takes no more', async () => {
+    const pair = await request(serverFor(app)).post('/api/receipts/pair').set(auth()).expect(201);
+    for (let i = 0; i < pairing.MAX_USES; i++) pairing.consume(pair.body.token);
+    const page = await request(serverFor(app)).get(`/api/receipts/capture/${pair.body.token}`).expect(200);
+    expect(page.body).toMatchObject({ ok: true, spent: true, alive: false, usesLeft: 0 });
+    const poll = await request(serverFor(app)).get(`/api/receipts/capture/${pair.body.token}/status`).expect(200);
+    expect(poll.body).toMatchObject({ spent: true, usesLeft: 0 });
+    await request(serverFor(app)).post(`/api/receipts/capture/${pair.body.token}`).send({ mime: 'image/jpeg', data: jpeg() }).expect(401);
+  });
 });
 
 // Working case-first: the case exists, and receipts are shot straight into it

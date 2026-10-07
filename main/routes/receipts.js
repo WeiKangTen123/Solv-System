@@ -184,20 +184,25 @@ router.delete('/pair/:token', requireAuth, (req, res) => {
 });
 
 const EXPIRED = { error: 'This link has expired. Show a new QR code on your computer.' };
+// A spent link (twenty photos taken) still opens, saying so, so a reload of the
+// phone page shows what was sent instead of "Link expired".
 router.get('/capture/:token', (req, res) => {
-  const state = pairing.verify(req.params.token);
-  if (!state) return res.status(401).json({ ok: false, ...EXPIRED });
+  const state = pairing.status(req.params.token);
+  if (!state || (!state.alive && !state.spent)) return res.status(401).json({ ok: false, ...EXPIRED });
   let openCase = null;
   if (state.reportId) {
     const r = require('../store/reports').getReport(state.reportId);
     if (r) openCase = { id: r.id, number: r.number, title: r.title || null };
   }
-  res.json({ ok: true, usesLeft: state.usesLeft, expiresInMs: state.expiresInMs, reportId: state.reportId || null, case: openCase });
+  res.json({ ok: true, alive: state.alive, spent: state.spent, usesLeft: state.usesLeft, expiresInMs: state.expiresInMs, reportId: state.reportId || null, case: openCase });
 });
+// Still answers once the link has taken its last photo: it is spent, not
+// expired, and the phone keeps its list of what it sent. It used to answer 401
+// after the twentieth photo, and the page swapped that list for "Link expired".
 router.get('/capture/:token/status', (req, res) => {
-  const state = pairing.verify(req.params.token);
-  if (!state) return res.status(401).json(EXPIRED);
-  res.json({ ok: true, usesLeft: state.usesLeft, expiresInMs: state.expiresInMs, reportId: state.reportId || null,
+  const state = pairing.status(req.params.token);
+  if (!state || (!state.alive && !state.spent)) return res.status(401).json(EXPIRED);
+  res.json({ ok: true, alive: state.alive, spent: state.spent, usesLeft: state.usesLeft, expiresInMs: state.expiresInMs, reportId: state.reportId || null,
              receipts: _phoneView(state.receiptIds, false) });
 });
 // The token is checked BEFORE the body is read: an unknown link must not get

@@ -98,6 +98,39 @@ describe('routes/reports', () => {
     await request(serverFor(app)).get(`/api/reports/${r.id}/export-url?format=pdf`).set(as(other)).expect(404);
     await request(serverFor(app)).get(`/api/reports/${r.id}/export-url?format=doc`).set(as(emp)).expect(400);
   }, 60000);
+  test('an advance must be a real amount', async () => {
+    const r = (await create(emp).expect(201)).body.report;
+    for (const advances of ['1e400', -1, 'abc', 1e9]) {
+      await request(serverFor(app)).patch(`/api/reports/${r.id}`).set(as(emp)).send({ advances }).expect(400);
+    }
+    await request(serverFor(app)).patch(`/api/reports/${r.id}`).set(as(emp)).send({ advances: 250.5 }).expect(200);
+  });
+
+  // The phone dialog drops the case it made when nothing arrived, judged from
+  // a poll up to three seconds old: a photo that landed since must keep it.
+  test('?ifEmpty=1 keeps a case that has receipts in it', async () => {
+    const r = (await create(emp).expect(201)).body.report;
+    const e = reviewed(emp);
+    await request(serverFor(app)).post(`/api/reports/${r.id}/expenses`).set(as(emp)).send({ expenseIds: [e.id] }).expect(200);
+    const kept = await request(serverFor(app)).delete(`/api/reports/${r.id}?ifEmpty=1`).set(as(emp)).expect(409);
+    expect(kept.body.kept).toBe(true);
+    await request(serverFor(app)).get(`/api/reports/${r.id}`).set(as(emp)).expect(200);
+    const empty = (await create(emp).expect(201)).body.report;
+    await request(serverFor(app)).delete(`/api/reports/${empty.id}?ifEmpty=1`).set(as(emp)).expect(200);
+  });
+
+  // Claimed at the live rate, the day then closed higher; the close passes a
+  // claimed receipt by. Reopened, it is priced as any open receipt is.
+  test('reopening a case prices its receipts again', async () => {
+    const r = (await create(emp).expect(201)).body.report;
+    const e = reviewed(emp);
+    await request(serverFor(app)).post(`/api/reports/${r.id}/expenses`).set(as(emp)).send({ expenseIds: [e.id] }).expect(200);
+    await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(emp)).expect(200);
+    require('../fx/rates').getRate.mockResolvedValueOnce({ rate: 0.0152, rateDate: '2026-09-04', providerDate: '2026-09-04', source: 'frankfurter', fetchedAt: 'x', closedAt: 'y' });
+    const back = await request(serverFor(app)).post(`/api/reports/${r.id}/reopen`).set(as(emp)).expect(200);
+    expect(back.body.report.status).toBe('open');
+    expect(back.body.report.expenses[0].lines[0]).toMatchObject({ fxRate: 0.0152, baseAmount: 1.52 });
+  });
 });
 
 // Checking a whole case at once, which is the difference between three minutes

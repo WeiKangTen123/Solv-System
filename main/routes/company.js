@@ -5,7 +5,19 @@ const { requireAuth } = require('../middleware/auth-middleware');
 const { requireRole } = require('../middleware/roles');
 const asyncHandler = require('../middleware/async-handler');
 const { CATEGORY_NAMES } = require('../intake/categories');
-const { CURRENCIES } = require('../intake/currencies');
+const { CURRENCIES, CURRENCY_CODES } = require('../intake/currencies');
+const { companyHasPriced } = require('../store/expenses');
+
+// A zone name as the date library spells it ("asia/singapore" is accepted by
+// Intl but stored that way broke the SGT label on the PDF and the browser's
+// own formatting), or null when it is not a real zone.
+const ZONES = new Set([...(Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : []), 'UTC']);
+function canonicalZone(tz) {
+  try {
+    const name = new Intl.DateTimeFormat('en', { timeZone: String(tz) }).resolvedOptions().timeZone;
+    return ZONES.size > 1 && !ZONES.has(name) ? null : name;
+  } catch { return null; }
+}
 const { GEMINI_MODELS, testGeminiKey } = require('../llm/gemini-client');
 
 // Company settings: name, base currency, exchange-rate policy, the report's
@@ -13,7 +25,9 @@ const { GEMINI_MODELS, testGeminiKey } = require('../llm/gemini-client');
 // columns); writable by an admin.
 router.get('/', requireAuth, (req, res) => {
   const me = users.findById(req.user.id);
-  res.json({ company: users.getCompany(me.companyId), categories: CATEGORY_NAMES, currencies: CURRENCIES });
+  // baseCurrencyLocked lets the settings page say why the field cannot change,
+  // instead of the whole save failing with a 409.
+  res.json({ company: { ...users.getCompany(me.companyId), baseCurrencyLocked: companyHasPriced(me.companyId) }, categories: CATEGORY_NAMES, currencies: CURRENCIES });
 });
 
 // Only the fields an admin edits here, each checked: the whole body used to
@@ -31,28 +45,39 @@ router.patch('/', requireAuth, requireRole('admin'), (req, res) => {
       patch.fxPolicy = b.fxPolicy;
     }
     if (b.baseCurrency !== undefined) {
-      if (typeof b.baseCurrency !== 'string' || !/^[A-Z]{3}$/.test(b.baseCurrency)) return res.status(400).json({ error: 'Base currency must be a 3-letter code' });
+      if (typeof b.baseCurrency !== 'string' || !CURRENCY_CODES.includes(b.baseCurrency)) return res.status(400).json({ error: 'Base currency must be one of the listed currency codes' });
       // Every converted amount is stored as a number in the base currency of
       // the day it was priced. Changing the base afterwards relabelled them all:
       // SGD 100 became "USD 100" on screen, in exports and on Xero bills.
       const current = users.getCompany(req.user.companyId);
       if (b.baseCurrency !== current.baseCurrency) {
-        const priced = require('../db').prepare(`SELECT COUNT(*) AS n FROM expense_lines l JOIN expenses e ON e.id = l.expense_id
-                                                 WHERE e.company_id = ? AND l.base_cents IS NOT NULL`).get(req.user.companyId).n;
-        if (priced) return res.status(409).json({ error: `The base currency cannot change once receipts have been converted to ${current.baseCurrency}: every amount already converted is in ${current.baseCurrency}. It can be set before the first receipt.` });
+        if (companyHasPriced(req.user.companyId)) return res.status(409).json({ error: `The base currency cannot change once receipts have been converted to ${current.baseCurrency}: every amount already converted is in ${current.baseCurrency}. It can be set before the first receipt.` });
       }
       patch.baseCurrency = b.baseCurrency;
     }
     if (b.timezone !== undefined) {
-      try { new Intl.DateTimeFormat('en', { timeZone: String(b.timezone) }); } catch { return res.status(400).json({ error: 'Unknown timezone' }); }
-      patch.timezone = String(b.timezone);
+      const zone = canonicalZone(b.timezone);
+      if (!zone) return res.status(400).json({ error: 'Unknown time zone. Use a name such as Asia/Singapore.' });
+      patch.timezone = zone;
     }
+    // Columns are categories, matched without regard to case and listed once.
+    // "meals" used to move every Meals line into Other, and "Meals" twice
+    // printed two Meals columns, each meal reading as counted twice.
     if (b.reportColumns !== undefined) {
       if (!Array.isArray(b.reportColumns) || b.reportColumns.some(c => typeof c !== 'string')) return res.status(400).json({ error: 'Report columns must be a list of names' });
-      patch.reportColumns = b.reportColumns.slice(0, 20).map(c => c.slice(0, 60));
+      const byLower = new Map(CATEGORY_NAMES.map(n => [n.toLowerCase(), n]));
+      const columns = [...new Set(b.reportColumns.map(c => byLower.get(c.trim().toLowerCase())))];
+      const unknown = b.reportColumns.filter(c => !byLower.has(c.trim().toLowerCase()));
+      if (unknown.length) return res.status(400).json({ error: `Not a category: ${unknown.slice(0, 3).join(', ')}. Columns are chosen from the category list.` });
+      if (!columns.length) return res.status(400).json({ error: 'Choose at least one report column' });
+      patch.reportColumns = columns.slice(0, 20);
     }
     // Whether people may create their own account. Off unless an admin says.
-    if (b.allowRegistration !== undefined) patch.allowRegistration = b.allowRegistration === true;
+    // A boolean only: "true" as text used to save as off and answer 200.
+    if (b.allowRegistration !== undefined) {
+      if (typeof b.allowRegistration !== 'boolean') return res.status(400).json({ error: 'allowRegistration must be true or false' });
+      patch.allowRegistration = b.allowRegistration;
+    }
     const company = users.updateCompany(req.user.companyId, patch);
     if (patch.allowRegistration !== undefined) require('../utils/logger').info('Self-registration changed', { by: req.user.id, open: patch.allowRegistration });
     res.json({ company });

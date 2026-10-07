@@ -66,7 +66,7 @@ router.get('/summary', requireAuth, (req, res) => {
   // The company's own day decides which month is "this month": receipt dates
   // are written where the claimant is, not in UTC.
   const company = users.getCompany(me.companyId);
-  res.json(summary(me, { timezone: company?.timezone || users.DEFAULT_TIMEZONE }));
+  res.json(summary(me, { timezone: company?.timezone || users.DEFAULT_TIMEZONE, base: company?.baseCurrency }));
 });
 
 module.exports         = router;
