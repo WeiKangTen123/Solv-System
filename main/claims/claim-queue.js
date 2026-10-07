@@ -43,7 +43,9 @@ const MAX_ATTEMPTS = 3;
 const MAX_QUEUED_PER_USER = 10;
 
 // A finished job stays readable for an hour, which is long enough to read the
-// reconciliation and long past the point anyone is still looking.
+// reconciliation and long past the point anyone is still looking. The running
+// engine (claim-import.js) keeps its jobs in memory for the same hour, from
+// this one figure.
 const JOB_TTL_MS = 60 * 60 * 1000;
 
 function _dir(userId)          { return path.join(BASE_DIR, String(userId), 'claim-queue'); }
@@ -85,7 +87,9 @@ function _all(userId) {
 // { pdfs } for a bill import — each written to disk before the job is. The
 // older { archives, forms } arguments still work and mean a claim import, so
 // nothing that enqueues today has to change.
-function enqueue(userId, { type = 'claim-import', label = 'Expense claim', id, payload = null, archives = [], forms = [] }) {
+// `reportId` is the case the job's output should go into, when it was started
+// from one.
+function enqueue(userId, { type = 'claim-import', label = 'Expense claim', id, payload = null, archives = [], forms = [], reportId = null }) {
   const waiting = _all(userId).filter(j => !TERMINAL.has(j.stage)).length;
   if (waiting >= MAX_QUEUED_PER_USER) {
     return { error: `You already have ${waiting} imports queued. Wait for those to finish before starting another.` };
@@ -118,6 +122,7 @@ function enqueue(userId, { type = 'claim-import', label = 'Expense claim', id, p
     rowsTotal: 0,
     error: null,
     result: null,
+    reportId: reportId || null,
     payload: stored,
   };
 
@@ -159,16 +164,20 @@ function list(userId) {
 
 // Waiting, or interrupted mid-flight by a restart. Oldest first: an import
 // submitted before yours should not be overtaken.
-function getPending(userId) {
-  return _all(userId)
+//
+// This, getPoisoned and sweep each take the list a caller has already read, so
+// the worker's poll reads the queue once a tick: it used to read and parse
+// every job file four times.
+function getPending(userId, jobs = _all(userId)) {
+  return jobs
     .filter(j => !TERMINAL.has(j.stage) && j.attempts < MAX_ATTEMPTS)
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
 }
 
 // Interrupted jobs that have already used their attempts. Marked failed on the
 // next boot rather than retried, so a job that kills the process cannot loop.
-function getPoisoned(userId) {
-  return _all(userId).filter(j => !TERMINAL.has(j.stage) && j.attempts >= MAX_ATTEMPTS);
+function getPoisoned(userId, jobs = _all(userId)) {
+  return jobs.filter(j => !TERMINAL.has(j.stage) && j.attempts >= MAX_ATTEMPTS);
 }
 
 function getAllUserIds() {
@@ -182,10 +191,16 @@ function getAllUserIds() {
 
 // Records progress from the running engine. Only the fields worth surviving a
 // restart — the buffers and callbacks stay in memory where they belong.
-function save(userId, patch) {
-  const job = get(userId, patch.id);
+// `cancelled` is one of them: a cancel the engine had not yet acted on when the
+// process stopped still holds when the job runs again.
+//
+// `base` is the job as this module last returned it to the caller, which spares
+// reading the file back on every progress tick. The worker is the only writer
+// while its job runs, so its copy is the file.
+function save(userId, patch, base = null) {
+  const job = base && base.id === patch.id ? base : get(userId, patch.id);
   if (!job) return null;
-  for (const k of ['stage', 'receiptsTotal', 'receiptsRead', 'rowsTotal', 'error', 'result', 'label']) {
+  for (const k of ['stage', 'receiptsTotal', 'receiptsRead', 'rowsTotal', 'error', 'result', 'label', 'cancelled']) {
     if (patch[k] !== undefined) job[k] = patch[k];
   }
   job.updatedAt = new Date().toISOString();
