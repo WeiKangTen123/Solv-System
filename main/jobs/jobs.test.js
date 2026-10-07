@@ -4,6 +4,13 @@ const path = require('path');
 // The runner was built for claim imports and is now shared. These pin the two
 // things that make it shareable — any job type, any payload keys — and that
 // nothing already on disk stops working.
+// Until `check` holds, or two seconds pass: a fixed 50 ms sleep raced the
+// worker whenever the machine was busy.
+async function waitFor(check, ms = 2000) {
+  const end = Date.now() + ms;
+  while (!check() && Date.now() < end) await new Promise(r => setTimeout(r, 10));
+}
+
 describe('jobs — a generic runner', () => {
   let jobs, userId;
   const created = [];
@@ -53,7 +60,7 @@ describe('jobs — a generic runner', () => {
     });
     const { job } = jobs.enqueue(userId, { type: 'echo', label: 'x', payload: { things: bufs(2) } });
     jobs.startWorker(userId);
-    await new Promise(r => setTimeout(r, 50));
+    await waitFor(() => jobs.get(userId, job.id).stage === 'done');
     expect(seen).toEqual([{ id: job.id, keys: ['things'], tag: 'default' }]);
     expect(jobs.get(userId, job.id).stage).toBe('done');
   });
@@ -61,7 +68,7 @@ describe('jobs — a generic runner', () => {
   test('a job whose type has no handler is set aside with a reason, not retried into poison', async () => {
     const { job } = jobs.enqueue(userId, { type: 'nobody-registered-this', label: 'x', payload: { a: [] } });
     jobs.startWorker(userId);
-    await new Promise(r => setTimeout(r, 50));
+    await waitFor(() => jobs.get(userId, job.id).stage === 'failed');
     const after = jobs.get(userId, job.id);
     expect(after.stage).toBe('failed');
     expect(after.error).toMatch(/No handler is registered for job type "nobody-registered-this"/);
@@ -77,7 +84,7 @@ describe('jobs — a generic runner', () => {
     expect(jobs.get(userId, job.id).type).toBeUndefined();
 
     jobs.startWorker(userId);
-    await new Promise(r => setTimeout(r, 50));
+    await waitFor(() => ran.length > 0);
     expect(ran).toEqual([[job.id, ['archives', 'forms']]]);
   });
 

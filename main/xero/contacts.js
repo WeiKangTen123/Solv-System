@@ -28,7 +28,7 @@ async function getOrCreateContact(companyId, tenantId, { vendorName, sourceEmail
   );
   const contacts = response.body.contacts || [];
   if (contacts.length > 0) {
-    logger.info('Contact found', { tenantId, vendorName, contactID: contacts[0].contactID });
+    logger.info('Contact found', { tenantId, contactID: contacts[0].contactID });   // the id, not the person's name
     return contacts[0].contactID;
   }
 
@@ -51,7 +51,7 @@ async function getOrCreateContact(companyId, tenantId, { vendorName, sourceEmail
       throw new Error(`Xero returned no contact after creation for "${cleanName}"`);
     }
     const contactID = contacts[0].contactID;
-    logger.info('Contact created', { tenantId, vendorName: cleanName, contactID });
+    logger.info('Contact created', { tenantId, contactID });
     return contactID;
   } catch (createErr) {
     // Race condition: another process created the contact between our search and create.
@@ -60,7 +60,7 @@ async function getOrCreateContact(companyId, tenantId, { vendorName, sourceEmail
     const retry    = await withRetry(() => accountingApi.getContacts(tenantId, undefined, where2));
     const existing = retry.body.contacts || [];
     if (existing.length > 0) {
-      logger.info('Contact found on retry after create conflict', { tenantId, vendorName: cleanName, contactID: existing[0].contactID });
+      logger.info('Contact found on retry after create conflict', { tenantId, contactID: existing[0].contactID });
       return existing[0].contactID;
     }
     throw createErr;

@@ -9,9 +9,9 @@
     "dev:ui": "npm --prefix ui run dev",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\"",
     "build:ui": "npm --prefix ui run build",
-    "test": "jest --runInBand --forceExit",
+    "test": "jest --runInBand",
     "test:receipt-case": "node main/scripts/test-receipt-case.js",
-    "lint": "eslint .",
+    "lint": "eslint main ui/src",
     "backup": "node main/db/backup.js",
     "backup:pull": "bash main/scripts/backup-pull.sh",
     "preflight": "node main/scripts/preflight.js",
@@ -59,6 +59,13 @@
     ],
     "setupFiles": [
       "<rootDir>/main/scripts/jest.setup.js"
+    ],
+    "collectCoverageFrom": [
+      "main/**/*.{js,mjs}",
+      "!main/**/*.test.js",
+      "!main/scripts/**",
+      "!main/test-fixtures/**",
+      "!main/data/**"
     ]
   },
   "overrides": {

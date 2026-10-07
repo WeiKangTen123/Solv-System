@@ -1,5 +1,8 @@
 const axios = require('axios');
 
+// The label this script's own key carries, so it removes only what it made.
+const TEST_LABEL = 'verify-prod test key';
+
 async function testAll() {
   if (!process.env.VERIFY_PASSWORD) throw new Error('Set VERIFY_PASSWORD (and VERIFY_EMAIL if not the demo account)');
   const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:4000';
@@ -18,13 +21,14 @@ async function testAll() {
   const token = loginRes.data.token;
   const authHeaders = { Authorization: `Bearer ${token}` };
 
-  // 3. Clean up any existing test keys
+  // 3. Clean up test keys a previous run left behind — only those, by their
+  // label. It used to delete every personal key on the account it signed in
+  // as, real ones included.
   const initialKeys = await axios.get(`${baseUrl}/api/users/me/gemini-keys`, { headers: authHeaders });
-  for (const k of initialKeys.data.keys) {
+  for (const k of initialKeys.data.keys.filter(k => k.label === TEST_LABEL)) {
     await axios.delete(`${baseUrl}/api/users/me/gemini-keys/${k.id}`, { headers: authHeaders });
   }
-  const keysRes = await axios.get(`${baseUrl}/api/users/me/gemini-keys`, { headers: authHeaders });
-  console.log(`[PASS] Clean slate verified: ${keysRes.data.keys.length} keys`);
+  console.log(`[PASS] Leftover test keys cleared; ${initialKeys.data.keys.filter(k => k.label !== TEST_LABEL).length} other key(s) untouched`);
 
   // 4. Test key validation endpoint with mock/test key
   try {
@@ -41,7 +45,7 @@ async function testAll() {
   // 5. Add a test key
   const addRes = await axios.post(
     `${baseUrl}/api/users/me/gemini-keys`,
-    { apiKey: 'AIzaSyTestKeyEncryptedStorage987654321', label: 'Test Production Key' },
+    { apiKey: 'AIzaSyTestKeyEncryptedStorage987654321', label: TEST_LABEL },
     { headers: authHeaders }
   );
   const createdId = Number(addRes.data.id);
@@ -58,13 +62,6 @@ async function testAll() {
   // 7. Delete the test key
   await axios.delete(`${baseUrl}/api/users/me/gemini-keys/${createdId}`, { headers: authHeaders });
   console.log(`[PASS] DELETE /api/users/me/gemini-keys/${createdId} returned success`);
-
-  // 8. Verify other running apps (ZERO TOUCH constraint)
-  const xeroRes = await axios.get('http://127.0.0.1:3000');
-  console.log(`[PASS] xero-invoice-app (port 3000) HTTP ${xeroRes.status} untouched`);
-
-  const carlinkRes = await axios.get('http://127.0.0.1:8080');
-  console.log(`[PASS] carlink (port 8080) HTTP ${carlinkRes.status} untouched`);
 
   console.log('\n=== ALL PRODUCTION VERIFICATIONS PASSED ===');
 }

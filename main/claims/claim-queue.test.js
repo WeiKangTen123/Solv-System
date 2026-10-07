@@ -3,6 +3,13 @@ const path = require('path');
 const claimQueue = require('./claim-queue');
 const claimWorker = require('./claim-worker');
 
+// Until `check` holds, or two seconds pass: a fixed 50 ms sleep raced the
+// worker whenever the machine was busy.
+async function waitFor(check, ms = 2000) {
+  const end = Date.now() + ms;
+  while (!check() && Date.now() < end) await new Promise(r => setTimeout(r, 10));
+}
+
 describe('claims/claim-queue', () => {
   const userId = `test-user-queue-${Date.now()}`;
 
@@ -97,7 +104,7 @@ describe('claims/claim-queue', () => {
     });
 
     // Worker tick should poison-retire it
-    await new Promise(r => setTimeout(r, 50));
+    await waitFor(() => claimQueue.get(userId, job.id).stage === 'failed');
     const stored = claimQueue.get(userId, job.id);
     expect(stored.stage).toBe('failed');
     expect(stored.error).toMatch(/protect system stability/i);

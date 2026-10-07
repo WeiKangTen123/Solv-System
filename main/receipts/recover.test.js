@@ -31,8 +31,10 @@ describe('receipts/recover', () => {
     const part = store.createExpense({ companyId: u.companyId, userId: u.id, receiptId: r.id, status: 'reading', page: 2 });
     const gone = store.createExpense({ companyId: u.companyId, userId: u.id, status: 'reading' });
     const before = new Date(Date.now() + 1000).toISOString();
-    await new Promise(res => setTimeout(res, 1100));
     const fresh = store.createExpense({ companyId: u.companyId, userId: u.id, status: 'reading' });
+    // Made after the boot: dated past `before` directly, rather than waiting a
+    // second of real time for the clock to get there.
+    require('../db').prepare('UPDATE expenses SET created_at = ? WHERE id = ?').run(new Date(Date.now() + 2000).toISOString(), fresh.id);
     const out = await recover.recoverStuckReads({ before });
     expect(out).toEqual({ reread: 0, released: 3 });
     for (const id of [e.id, part.id, gone.id]) expect(store.getExpense(id)).toMatchObject({ status: 'review-needed', errorMsg: expect.stringMatching(/interrupted/) });
