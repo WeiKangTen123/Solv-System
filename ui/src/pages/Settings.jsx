@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { formatDate, formatRelative } from '../utils/formatDate';
+import { formatDate, formatDateTime, formatRelative, TIMEZONE_OPTIONS } from '../utils/formatDate';
 import { fmtMoney } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { useConfirm } from '../context/ConfirmContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
 import ExchangeRates from '../components/settings/ExchangeRates';
@@ -42,13 +43,17 @@ export default function Settings() {
   const [adminTab, setAdminTab] = useState('monitoring');
   const [nameInput, setNameInput] = useState('');
   const [company, setCompany] = useState(null);
-  const [columns, setColumns] = useState('');
+  // The printed claim's columns, in order. Picked from the company's
+  // categories: typed as free text, a column that matched no category (a
+  // typo, "Meal" for "Meals") silently collected nothing.
+  const [columns, setColumns] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [users, setUsers] = useState([]);
   const [keys, setKeys] = useState([]);
   const [keysMeta, setKeysMeta] = useState({ models: [], fallbackKey: false });
   const [keyTests, setKeyTests] = useState({});     // key id -> { busy } or { tone, text }
   const [xero, setXero] = useState(null);
-  const [xeroForm, setXeroForm] = useState({ XERO_CLIENT_ID: '', XERO_CLIENT_SECRET: '', XERO_OAUTH_CLIENT_ID: '', XERO_OAUTH_CLIENT_SECRET: '', DEFAULT_ACCOUNT_CODE: '' });
+  const [xeroForm, setXeroForm] = useState({ XERO_CLIENT_ID: '', XERO_CLIENT_SECRET: '', XERO_OAUTH_CLIENT_ID: '', XERO_OAUTH_CLIENT_SECRET: '', DEFAULT_ACCOUNT_CODE: '', ADVANCES_ACCOUNT_CODE: '' });
   const [params, setParams] = useSearchParams();
   const [newKey, setNewKey] = useState({ apiKey: '', label: '' });
   const [currencies, setCurrencies] = useState([]);
@@ -68,7 +73,8 @@ export default function Settings() {
   async function loadAll() {
     const c = await api.get('/company');
     setCompany(c.company);
-    setColumns(c.company.reportColumns.join(', '));
+    setColumns(c.company.reportColumns || []);
+    setCategories(c.categories || []);
     setCurrencies(c.currencies || []);
     if (isAdmin) {
       setUsers((await api.get('/users')).users);
@@ -77,9 +83,10 @@ export default function Settings() {
       setXero(x);
       setXeroForm(f => ({
         ...f,
-        XERO_CLIENT_ID: x.fields.XERO_CLIENT_ID.value,
-        XERO_OAUTH_CLIENT_ID: x.fields.XERO_OAUTH_CLIENT_ID.value,
-        DEFAULT_ACCOUNT_CODE: x.fields.DEFAULT_ACCOUNT_CODE.value,
+        XERO_CLIENT_ID: x.fields.XERO_CLIENT_ID.value ?? '',
+        XERO_OAUTH_CLIENT_ID: x.fields.XERO_OAUTH_CLIENT_ID.value ?? '',
+        DEFAULT_ACCOUNT_CODE: x.fields.DEFAULT_ACCOUNT_CODE.value ?? '',
+        ADVANCES_ACCOUNT_CODE: x.fields.ADVANCES_ACCOUNT_CODE?.value ?? '',
         XERO_CLIENT_SECRET: '',
         XERO_OAUTH_CLIENT_SECRET: ''
       }));
@@ -130,10 +137,11 @@ export default function Settings() {
     await once('company', async () => { try {
       await api.patch('/company', {
         name: company.name,
-        baseCurrency: company.baseCurrency.toUpperCase(),
+        // Once anything is priced the base is fixed, and the box is shut.
+        ...(company.baseCurrencyLocked ? {} : { baseCurrency: company.baseCurrency.toUpperCase() }),
         fxPolicy: company.fxPolicy,
         timezone: company.timezone,
-        reportColumns: columns.split(',').map(s => s.trim()).filter(Boolean),
+        reportColumns: columns,
         allowRegistration: !!company.allowRegistration,
       });
       forgetCompany();
@@ -154,12 +162,35 @@ export default function Settings() {
     } catch (err) { fail(err); } });
   }
 
-  async function patchUser(id, patch) {
+  async function patchUser(id, patch, done) {
     try {
       await api.patch(`/users/${id}`, patch);
       await loadAll();
+      if (done) ok(done);
     } catch (err) { fail(err); }
   }
+
+  // A role is a lot to hand over on one slip of a select box: an admin sees
+  // every claim in the company and runs these settings.
+  function askRole(u, role) {
+    const who = u.name || u.email;
+    setAsk({
+      title: role === 'admin' ? `Make ${who} an admin?` : `Make ${who} a user?`,
+      message: role === 'admin'
+        ? 'They will see everyone’s cases, can correct anyone’s receipt details, and run these settings: people, keys, rates and the Xero connection.'
+        : 'They keep their own receipts and cases, and lose everyone else’s and these settings.',
+      label: role === 'admin' ? 'Make admin' : 'Make user',
+      danger: false,
+      run: () => patchUser(u.id, { role }, `${who} is now ${role === 'admin' ? 'an admin' : 'a user'}.`),
+    });
+  }
+
+  // Columns are moved one place at a time, which is all a list this short needs.
+  const moveColumn = (i, by) => setColumns(cs => {
+    const next = [...cs];
+    [next[i], next[i + by]] = [next[i + by], next[i]];
+    return next;
+  });
 
   async function loadKeys() {
     const k = await api.get('/company/llm-keys');
@@ -183,7 +214,12 @@ export default function Settings() {
   async function saveXero(e) {
     e.preventDefault();
     await once('xero', async () => { try {
-      await api.patch('/xero/credentials', xeroForm);
+      // Strings only: the server refuses anything else. The advances account
+      // is sent only to a server that knows it.
+      const body = Object.fromEntries(Object.entries(xeroForm)
+        .filter(([k]) => k !== 'ADVANCES_ACCOUNT_CODE' || xero.fields.ADVANCES_ACCOUNT_CODE)
+        .map(([k, v]) => [k, v == null ? '' : String(v)]));
+      await api.patch('/xero/credentials', body);
       await loadAll();
       ok('Xero settings saved.');
     } catch (err) { fail(err); } });
@@ -215,6 +251,10 @@ export default function Settings() {
   }
 
   if (!company) return <div style={{ color: 'var(--text-muted)', padding: 24 }}>{msg?.text || 'Loading settings…'}</div>;
+  // A removed person keeps their row, for their claims' sake, but is not an
+  // account anyone can use: counting them made the totals read high.
+  const activeUsers = users.filter(u => !u.removed);
+  const removedCount = users.length - activeUsers.length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 920 }}>
@@ -231,7 +271,9 @@ export default function Settings() {
             <button
               key={t.key}
               type="button"
-              onClick={() => setAdminTab(t.key)}
+              // A message belongs to the tab it came from; carried over, a
+              // "Saved" from one tab sat on top of the next.
+              onClick={() => { setAdminTab(t.key); setMsg(null); }}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 14px', borderRadius: 8, fontSize: 13,
                 fontWeight: adminTab === t.key ? 600 : 500,
@@ -268,7 +310,7 @@ export default function Settings() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
             <div>
               <div className="card-title">Users & Usage Monitoring</div>
-              <div className="card-subtitle">Real-time overview of user activity, receipts uploaded, and expense claims.</div>
+              <div className="card-subtitle">Who is using it, the receipts they have recorded, and the cases they have claimed.</div>
             </div>
             <button className="btn btn-primary btn-sm" type="button" onClick={() => setAdding(a => !a)}>{adding ? 'Close' : '+ Add a person'}</button>
           </div>
@@ -297,13 +339,16 @@ export default function Settings() {
             marginBottom: 16,
           }}>
             <div style={{ background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Accounts</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', marginTop: 2 }}>{users.length}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Accounts</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', marginTop: 2 }}>
+                {activeUsers.length}
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400 }}> active{removedCount ? ` (${removedCount} removed)` : ''}</span>
+              </div>
             </div>
             <div style={{ background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Online Now</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--success, #10b981)', marginTop: 2 }}>
-                {users.filter(u => u.online).length}
+                {activeUsers.filter(u => u.online).length}
               </div>
             </div>
             <div style={{ background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border)' }}>
@@ -353,7 +398,7 @@ export default function Settings() {
                         className="form-input"
                         style={{ padding: '3px 8px', fontSize: 12, width: 'auto' }}
                         value={u.role}
-                        onChange={e => patchUser(u.id, { role: e.target.value })}
+                        onChange={e => askRole(u, e.target.value)}
                         disabled={u.id === user.id || u.removed}
                       >
                         {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
@@ -383,8 +428,10 @@ export default function Settings() {
                           Online
                         </span>
                       ) : (
-                        <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                          {u.lastSeenAt ? `Seen ${formatDate(u.lastSeenAt, user?.timezone)}` : 'Offline'}
+                        // How long ago, which is what the column is read for;
+                        // the moment itself is on hover.
+                        <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }} title={u.lastSeenAt ? formatDateTime(u.lastSeenAt, user?.timezone) : undefined}>
+                          {u.lastSeenAt ? `Seen ${formatRelative(u.lastSeenAt)}` : 'Offline'}
                         </span>
                       )}
                     </td>
@@ -418,15 +465,50 @@ export default function Settings() {
       {isAdmin && adminTab === 'company' && (
         <form className="card" onSubmit={saveCompany}>
           <div className="card-title">Company & Policy Settings</div>
-          <div className="card-subtitle">The base currency every report totals in, and how foreign amounts are converted.</div>
+          <div className="card-subtitle">The base currency every case totals in, and how foreign amounts are converted.</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0 12px' }}>
             <div className="form-group"><label className="form-label" htmlFor="c-name">Name</label><input id="c-name" className="form-input" value={company.name} onChange={e => setCompany({ ...company, name: e.target.value })} /></div>
-            <div className="form-group"><label className="form-label" htmlFor="c-ccy">Base currency</label><input id="c-ccy" className="form-input" value={company.baseCurrency} maxLength={3} onChange={e => setCompany({ ...company, baseCurrency: e.target.value })} /></div>
-            <div className="form-group"><label className="form-label" htmlFor="c-tz">Timezone</label><input id="c-tz" className="form-input" value={company.timezone} onChange={e => setCompany({ ...company, timezone: e.target.value })} /></div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="c-ccy">Base currency</label>
+              {/* Every converted amount is stored in the base of the day it was
+                  priced, so once anything is priced the server refuses a new
+                  one. The box used to take it and fail on Save. */}
+              <input id="c-ccy" className="form-input" value={company.baseCurrency} maxLength={3} disabled={!!company.baseCurrencyLocked}
+                     onChange={e => setCompany({ ...company, baseCurrency: e.target.value.toUpperCase().slice(0, 3) })} />
+              {company.baseCurrencyLocked && (
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Fixed: receipts have already been converted to {company.baseCurrency}, and every converted amount is in it.
+                </div>
+              )}
+            </div>
+            <div className="form-group"><label className="form-label" htmlFor="c-tz">Time zone</label>
+              <select id="c-tz" className="form-input" value={company.timezone} onChange={e => setCompany({ ...company, timezone: e.target.value })}>
+                {/* One set before this list existed stays choosable. */}
+                {!TIMEZONE_OPTIONS.some(o => o.value === company.timezone) && <option value={company.timezone}>{company.timezone}</option>}
+                {TIMEZONE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select></div>
             <div className="form-group"><label className="form-label" htmlFor="c-fx">Exchange-rate policy</label>
               <select id="c-fx" className="form-input" value={company.fxPolicy} onChange={e => setCompany({ ...company, fxPolicy: e.target.value })}>{POLICIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
           </div>
-          <div className="form-group"><label className="form-label" htmlFor="c-cols">Report columns (in order, comma separated)</label><input id="c-cols" className="form-input" value={columns} onChange={e => setColumns(e.target.value)} /></div>
+          <div className="form-group">
+            <label className="form-label" htmlFor="c-cols">Columns on the printed claim, in order</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+              {columns.map((c, i) => (
+                <span key={c} className="badge badge-gray" style={{ fontSize: 12, color: 'var(--text-primary)', padding: '2px 4px 2px 10px', gap: 0 }}>
+                  {c}
+                  <button type="button" className="btn btn-ghost btn-sm" style={{ padding: '0 6px' }} disabled={i === 0} onClick={() => moveColumn(i, -1)} aria-label={`Move ${c} earlier`}>‹</button>
+                  <button type="button" className="btn btn-ghost btn-sm" style={{ padding: '0 6px' }} disabled={i === columns.length - 1} onClick={() => moveColumn(i, 1)} aria-label={`Move ${c} later`}>›</button>
+                  <button type="button" className="btn btn-ghost btn-sm" style={{ padding: '0 6px' }} onClick={() => setColumns(cs => cs.filter(x => x !== c))} aria-label={`Remove the ${c} column`}>✕</button>
+                </span>
+              ))}
+              {!columns.length && <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No columns: everything prints under Other.</span>}
+            </div>
+            <select id="c-cols" className="form-input" style={{ maxWidth: 260 }} value="" onChange={e => { const c = e.target.value; if (c) setColumns(cs => (cs.includes(c) ? cs : [...cs, c])); }}>
+              <option value="">Add a column…</option>
+              {categories.filter(c => !columns.includes(c)).map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4 }}>A receipt in a category without a column of its own prints under Other.</div>
+          </div>
           <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 13, margin: '4px 0 14px', cursor: 'pointer' }}>
             <input type="checkbox" checked={!!company.allowRegistration} onChange={e => setCompany({ ...company, allowRegistration: e.target.checked })} style={{ marginTop: 3 }} />
             <span>
@@ -454,6 +536,15 @@ export default function Settings() {
             <div className="form-group"><label className="form-label" htmlFor="x-ocid">OAuth web app client ID</label><input id="x-ocid" className="form-input" value={xeroForm.XERO_OAUTH_CLIENT_ID} onChange={e => setXeroForm({ ...xeroForm, XERO_OAUTH_CLIENT_ID: e.target.value })} /></div>
             <div className="form-group"><label className="form-label" htmlFor="x-osec">OAuth client secret {xero.fields.XERO_OAUTH_CLIENT_SECRET.isSet ? '(stored; blank keeps it)' : ''}</label><input id="x-osec" className="form-input" type="password" value={xeroForm.XERO_OAUTH_CLIENT_SECRET} onChange={e => setXeroForm({ ...xeroForm, XERO_OAUTH_CLIENT_SECRET: e.target.value })} /></div>
             <div className="form-group"><label className="form-label" htmlFor="x-acc">Default account code</label><input id="x-acc" className="form-input" placeholder="429" value={xeroForm.DEFAULT_ACCOUNT_CODE} onChange={e => setXeroForm({ ...xeroForm, DEFAULT_ACCOUNT_CODE: e.target.value })} /></div>
+            {xero.fields.ADVANCES_ACCOUNT_CODE && (
+              <div className="form-group">
+                <label className="form-label" htmlFor="x-adv">Advances account code</label>
+                <input id="x-adv" className="form-input" value={xeroForm.ADVANCES_ACCOUNT_CODE} onChange={e => setXeroForm({ ...xeroForm, ADVANCES_ACCOUNT_CODE: e.target.value })} />
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.45 }}>
+                  Where an advance already paid to the claimant is cleared on the bill (an advances or staff-receivable account). A case with an advance cannot be posted to Xero until this is set.
+                </div>
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button className="btn btn-primary" type="submit">Save Xero settings</button>
@@ -519,12 +610,14 @@ export default function Settings() {
       )}
 
       {/* Admin Tab 5: Exchange Rates — the live board and its daily log */}
+      {/* The board shows its own messages beside whatever was pressed: up
+          here they landed at the top of a long page, out of sight. */}
       {isAdmin && adminTab === 'fx' && (
-        <ExchangeRates isAdmin={isAdmin} currencies={currencies} onNotify={setMsg} />
+        <ExchangeRates isAdmin={isAdmin} currencies={currencies} />
       )}
 
       {ask && (
-        <ConfirmDialog title={ask.title} message={ask.message} confirmLabel={ask.label} danger
+        <ConfirmDialog title={ask.title} message={ask.message} confirmLabel={ask.label} danger={ask.danger !== false}
                        onConfirm={async () => { await ask.run(); setAsk(null); }} onCancel={() => setAsk(null)} />
       )}
 
@@ -534,7 +627,9 @@ export default function Settings() {
           message="They can no longer sign in, and any session they have ends now. Their receipts, cases and totals stay, and you can restore them later."
           confirmLabel="Remove"
           danger
-          onConfirm={() => api.delete(`/users/${confirm.id}`).then(loadAll).catch(fail).finally(() => setConfirm(null))}
+          onConfirm={() => api.delete(`/users/${confirm.id}`)
+            .then(() => { ok(`${confirm.name || confirm.email} removed. They can no longer sign in; their claims stay.`); return loadAll(); })
+            .catch(fail).finally(() => setConfirm(null))}
           onCancel={() => setConfirm(null)}
         />
       )}
@@ -708,6 +803,7 @@ function PasswordDialog({ target, self, onDone, onCancel }) {
 
 // ── Personal Gemini Keys Component ──────────────────────────────────────────
 function UserGeminiSection({ onNotify }) {
+  const confirm = useConfirm();
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [newKey, setNewKey] = useState({ apiKey: '', label: '' });
@@ -794,9 +890,18 @@ function UserGeminiSection({ onNotify }) {
     }
   }
 
-  async function removeKey(id) {
+  // Asked first, as the company keys are: a key cannot be got back from
+  // here once it is gone, only pasted in again.
+  async function removeKey(k) {
+    const yes = await confirm({
+      title: 'Remove this key?',
+      message: `${k.keyMasked}${k.label ? ` (${k.label})` : ''} stops being used to read your receipts. The company's keys are used instead.`,
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (!yes) return;
     try {
-      await api.delete(`/users/me/gemini-keys/${id}`);
+      await api.delete(`/users/me/gemini-keys/${k.id}`);
       await loadKeys();
       if (onNotify) onNotify({ tone: 'success', text: 'Gemini API key removed.' });
     } catch (err) {
@@ -919,7 +1024,7 @@ function UserGeminiSection({ onNotify }) {
                     type="button"
                     className="btn btn-ghost btn-sm"
                     style={{ color: 'var(--danger, #ef4444)' }}
-                    onClick={() => removeKey(k.id)}
+                    onClick={() => removeKey(k)}
                   >
                     Remove
                   </button>

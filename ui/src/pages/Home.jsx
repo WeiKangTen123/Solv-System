@@ -7,6 +7,9 @@ import { useVisiblePolling } from '../utils/useVisiblePolling';
 import { Link, useNavigate } from 'react-router-dom';
 import Insights from '../components/Insights';
 import { fmtMoney } from '../utils/format';
+import { unpriced, unpricedCount, unpricedText } from '../utils/caseTotals';
+import { useOnChanged } from '../utils/useOnChanged';
+import { useConfirm } from '../context/ConfirmContext';
 
 // Whole days since an ISO timestamp, as a sentence fragment.
 function ago(iso) {
@@ -31,15 +34,21 @@ export default function Home() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const isAdmin = user?.role === 'admin';
+  const confirm = useConfirm();
   // Only what the page shows: receipts that need checking, and checked ones not
   // in a case. It used to fetch every receipt the person ever had, every
   // twenty seconds, to filter them here.
-  const [needing, setNeeding] = useState([]);
-  const [unfiled, setUnfiled] = useState([]);
-  const [reports, setReports] = useState([]);
-  const [everyone, setEveryone] = useState([]);
+  // null until the first answer: an empty list is "nothing there", and the
+  // page used to say so ("nothing open", SGD 0.00) while it was still asking.
+  const [needing, setNeeding] = useState(null);
+  const [unfiled, setUnfiled] = useState(null);
+  const [reports, setReports] = useState(null);
+  const [everyone, setEveryone] = useState(null);
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(null);
+  // What each "File into…" box says. Left to itself the box kept showing the
+  // case it was pointed at after a refusal, as if the receipt had gone there.
+  const [filing, setFiling] = useState({});
   // Bumped only when something changed the figures, which is what Insights
   // re-fetches on. Marking a claim used to leave the dashboard below showing
   // the total from before the click.
@@ -55,24 +64,36 @@ export default function Home() {
     // expenses" rather than "the list could not be loaded".
     .catch(e => setMsg({ tone: 'error', text: `Could not load your cases: ${e.message}` })), [isAdmin]);
   useEffect(() => { load(); }, [load]);
-  useVisiblePolling(load, () => (needing.some(e => e.status === 'reading') ? 2500 : 20000));
+  useVisiblePolling(load, () => ((needing || []).some(e => e.status === 'reading') ? 2500 : 20000));
+  // An edit the assistant applies shows here too, and moves the figures below.
+  useOnChanged(() => load().then(() => setChanged(n => n + 1)));
 
   const base = user?.baseCurrency || 'SGD';
   const sum = ns => Math.round(ns.reduce((s, n) => s + (Number(n) || 0), 0) * 100) / 100;
+  const loaded = reports !== null;
 
-  const open = reports.filter(r => r.status === 'open');
-  const claimedThisMonth = reports.filter(r => r.status === 'claimed' && thisMonth(r.claimedAt, user?.timezone));
+  const open = (reports || []).filter(r => r.status === 'open');
+  const claimedThisMonth = (reports || []).filter(r => r.status === 'claimed' && thisMonth(r.claimedAt, user?.timezone));
   // Ready means the claim button will work: every receipt checked, every line
   // priced. The list carries both counts so nothing has to be opened to know.
-  const ready = r => r.expenseCount > 0 && !r.unreviewed && !r.pendingRates;
-  // A line still waiting for an exchange rate has no base amount, so it adds
-  // nothing to the figure. Left unsaid, the tile quietly understates what is
-  // open and nothing on the screen says why.
-  const awaiting = open.some(r => r.pendingRates > 0) || unfiled.some(e => e.fxPending);
+  const ready = r => r.expenseCount > 0 && !r.unreviewed && !unpricedCount(r);
+  // A receipt with no amount yet, or one still waiting for an exchange rate,
+  // has no base figure, so it adds nothing to the total. Left unsaid, the tile
+  // quietly understates what is open and nothing on the screen says why.
+  // Reviewed receipts outside a case only ever wait for a rate.
+  const apart = (reports || []).some(r => r.noAmount !== undefined && r.noAmount !== null);
+  const awaiting = unpricedText({
+    pendingRates: sum(open.map(r => r.pendingRates)) + (unfiled || []).filter(e => e.fxPending).length,
+    noAmount: apart ? sum(open.map(r => r.noAmount)) : undefined,
+  });
 
-  const openEveryone = everyone.filter(r => r.status === 'open');
-  const claimedEveryone = everyone.filter(r => r.status === 'claimed' && thisMonth(r.claimedAt, user?.timezone));
-  const stuck = everyone.filter(r => r.status === 'open' && r.pendingRates > 0);
+  const openEveryone = (everyone || []).filter(r => r.status === 'open');
+  const claimedEveryone = (everyone || []).filter(r => r.status === 'claimed' && thisMonth(r.claimedAt, user?.timezone));
+  // Stuck is waiting on a rate, which nobody in the case can type their way
+  // out of. A receipt without an amount is waiting on its owner instead.
+  const stuck = openEveryone.filter(r => { const u = unpriced(r); return u.noRate + u.either > 0; });
+  // Before the server counted the two apart, a case here might be either.
+  const stuckWhy = stuck.some(r => unpriced(r).either) ? 'without an amount or rate yet' : 'waiting for an exchange rate';
 
   async function act(key, fn, done) {
     setBusy(key);
@@ -80,18 +101,29 @@ export default function Home() {
     catch (e) { setMsg({ tone: 'error', text: e.message }); }
     finally { setBusy(null); }
   }
+  // One click used to mark a case claimed, which locks it.
+  async function markClaimed(r) {
+    const yes = await confirm({
+      title: `Mark ${r.number} claimed?`,
+      message: 'Do this once the claim has gone through your company. Its receipts are then locked; you can reopen it until it is posted to Xero.',
+      confirmLabel: 'Mark claimed',
+    });
+    if (yes) await act(r.id, () => api.post(`/reports/${r.id}/claimed`, {}), `${r.number} marked claimed.`);
+  }
   async function fileInto(expenseId, reportId) {
     if (!reportId) return;
+    setFiling(f => ({ ...f, [expenseId]: reportId }));
     try {
       // The server answers 200 with a `skipped` list for anything it refused
       // (not reviewed, already in another case). Ignoring it made a refusal
-      // look like a success and left the expense where it was.
+      // look like a success and left the receipt where it was.
       const r = await api.post(`/reports/${reportId}/expenses`, { expenseIds: [expenseId] });
       await load();
       const why = (r.skipped || []).find(s => s.id === expenseId);
       if (!why) setChanged(n => n + 1);
       setMsg(why ? { tone: 'warning', text: `Not filed: ${why.why}.` } : { tone: 'success', text: 'Filed into the case.' });
     } catch (e) { setMsg({ tone: 'error', text: e.message }); }
+    finally { setFiling(f => ({ ...f, [expenseId]: '' })); }
   }
 
   const hour = new Date().getHours();
@@ -100,9 +132,20 @@ export default function Home() {
   const num = { fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' };
   const muted = { fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' };
 
+  // Not every receipt waiting here was read by the AI: some are still being
+  // read, and one the reader could not make out was never read at all. The
+  // tile used to call them all "read by AI".
+  const readingNow = (needing || []).filter(e => e.status === 'reading').length;
+  const needingSub = !needing ? 'Loading…'
+    : !needing.length ? 'nothing to check'
+    : needing.every(e => e.aiReadAt && e.status !== 'reading') ? 'read by AI, waiting for you'
+    : readingNow ? `${readingNow} still being read`
+    : 'waiting for you';
+
   // What a case row says about itself, in one phrase.
   const state = r => {
-    if (r.pendingRates > 0) return { text: `${r.pendingRates} without a rate`, tone: 'var(--warning)' };
+    const waiting = unpricedText(r, { short: true });
+    if (waiting) return { text: waiting, tone: 'var(--warning)' };
     if (r.unreviewed > 0) return { text: `${r.unreviewed} to check`, tone: 'var(--warning)' };
     if (!r.expenseCount) return { text: 'empty', tone: 'var(--text-muted)' };
     return { text: 'ready to claim', tone: 'var(--success)' };
@@ -118,7 +161,9 @@ export default function Home() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           {/* Whatever is added here becomes a case, and the page goes to it. */}
           <ReceiptUpload onUploaded={load} onCase={c => navigate(`/reports/${c.id}`)} />
-          <Link to="/reports" className="btn btn-outline">+ New case</Link>
+          {/* Straight to the form: this used to land on the list of cases with
+              the form closed, one more click from what was asked for. */}
+          <Link to="/reports?new=1" className="btn btn-outline">+ New case</Link>
         </div>
       </div>
 
@@ -130,18 +175,18 @@ export default function Home() {
           <div className="grid-3" style={{ marginBottom: 14 }}>
             <div className="stat-card">
               <div className="stat-label">Open cases</div>
-              <div className="stat-value">{openEveryone.length}</div>
-              <div className="stat-sub">{openEveryone.length ? fmtMoney(sum(openEveryone.map(r => r.totalBase)), base) : 'nothing open'}</div>
+              <div className="stat-value">{everyone ? openEveryone.length : '…'}</div>
+              <div className="stat-sub">{!everyone ? 'Loading…' : openEveryone.length ? fmtMoney(sum(openEveryone.map(r => r.totalBase)), base) : 'nothing open'}</div>
             </div>
             <div className="stat-card">
               <div className="stat-label">Claimed this month</div>
-              <div className="stat-value">{claimedEveryone.length}</div>
-              <div className="stat-sub">{claimedEveryone.length ? fmtMoney(sum(claimedEveryone.map(r => r.totalBase)), base) : 'nothing yet'}</div>
+              <div className="stat-value">{everyone ? claimedEveryone.length : '…'}</div>
+              <div className="stat-sub">{!everyone ? 'Loading…' : claimedEveryone.length ? fmtMoney(sum(claimedEveryone.map(r => r.totalBase)), base) : 'nothing yet'}</div>
             </div>
             <div className="stat-card">
               <div className="stat-label">Stuck</div>
-              <div className="stat-value" style={stuck.length ? { color: 'var(--warning)' } : undefined}>{stuck.length}</div>
-              <div className="stat-sub">{stuck.length ? 'waiting for an exchange rate' : 'nothing waiting'}</div>
+              <div className="stat-value" style={stuck.length ? { color: 'var(--warning)' } : undefined}>{everyone ? stuck.length : '…'}</div>
+              <div className="stat-sub">{!everyone ? 'Loading…' : stuck.length ? stuckWhy : 'nothing waiting'}</div>
             </div>
           </div>
           {claimedEveryone.length > 0 && (
@@ -164,27 +209,28 @@ export default function Home() {
       <div className="grid-3" style={{ marginBottom: 24 }}>
         <div className="stat-card">
           <div className="stat-label">Open</div>
-          <div className="stat-value">{fmtMoney(sum(open.map(r => r.totalBase)), base)}</div>
+          <div className="stat-value">{loaded ? fmtMoney(sum(open.map(r => r.totalBase)), base) : '…'}</div>
           <div className="stat-sub" style={awaiting ? { color: 'var(--warning)' } : undefined}>
-            {awaiting ? 'more is waiting for an exchange rate' : open.length ? `${open.length} case${open.length === 1 ? '' : 's'}` : 'nothing open'}
+            {!loaded ? 'Loading…' : awaiting ? `Not counted: ${awaiting}` : open.length ? `${open.length} case${open.length === 1 ? '' : 's'}` : 'nothing open'}
           </div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Claimed this month</div>
-          <div className="stat-value">{fmtMoney(sum(claimedThisMonth.map(r => r.totalBase)), base)}</div>
-          <div className="stat-sub">{claimedThisMonth.length ? `${claimedThisMonth.length} case${claimedThisMonth.length === 1 ? '' : 's'}` : 'nothing yet'}</div>
+          <div className="stat-value">{loaded ? fmtMoney(sum(claimedThisMonth.map(r => r.totalBase)), base) : '…'}</div>
+          <div className="stat-sub">{!loaded ? 'Loading…' : claimedThisMonth.length ? `${claimedThisMonth.length} case${claimedThisMonth.length === 1 ? '' : 's'}` : 'nothing yet'}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Needs your check</div>
-          <div className="stat-value">{needing.length}</div>
-          <div className="stat-sub">{needing.length ? 'read by AI, waiting for you' : 'nothing to check'}</div>
+          <div className="stat-value">{needing ? needing.length : '…'}</div>
+          <div className="stat-sub">{needingSub}</div>
         </div>
       </div>
 
       <div className="card" style={{ marginBottom: 20 }}>
-        <div className="card-title">Open cases ({open.length})</div>
+        <div className="card-title">Open cases{loaded ? ` (${open.length})` : ''}</div>
         <div className="card-subtitle">Receipts go in until you put the claim through; then mark it claimed here and it is done.</div>
-        {!open.length ? <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No open cases. Add receipts above and one is made for them.</div> : open.map(r => {
+        {!loaded ? <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading…</div>
+          : !open.length ? <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No open cases. Add receipts above and one is made for them.</div> : open.map(r => {
           const s = state(r);
           return (
             <div key={r.id} style={{ ...rowStyle, flexWrap: 'wrap' }}>
@@ -194,14 +240,14 @@ export default function Home() {
               <span style={num}>{fmtMoney(r.totalBase, base)}</span>
               <span style={{ ...muted, color: s.tone }}>{s.text}</span>
               {ready(r)
-                ? <button className="btn btn-primary btn-sm" disabled={busy === r.id} onClick={() => act(r.id, () => api.post(`/reports/${r.id}/claimed`, {}), `${r.number} marked claimed.`)}>{busy === r.id ? 'Marking…' : 'Claimed'}</button>
+                ? <button className="btn btn-primary btn-sm" disabled={busy === r.id} onClick={() => markClaimed(r)}>{busy === r.id ? 'Marking…' : 'Claimed'}</button>
                 : <Link to={r.unreviewed > 0 ? `/reports/${r.id}/check` : `/reports/${r.id}`} className="btn btn-outline btn-sm">{r.unreviewed > 0 ? 'Check' : 'Open'}</Link>}
             </div>
           );
         })}
       </div>
 
-      {unfiled.length > 0 && (
+      {unfiled && unfiled.length > 0 && (
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-title">Checked, not in a case ({unfiled.length})</div>
           <div className="card-subtitle">Pick a case to file each one into.</div>
@@ -209,7 +255,8 @@ export default function Home() {
             <div key={e.id} style={{ ...rowStyle, flexWrap: 'wrap' }}>
               <span style={{ flex: '1 1 140px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.receiptDate || '—'} · {e.merchant || 'Untitled'}</span>
               <span style={num}>{e.baseTotal != null ? fmtMoney(e.baseTotal, base) : fmtMoney(e.total, e.currency)}</span>
-              <select className="form-input" style={{ flex: '1 1 150px', maxWidth: 200, padding: '4px 8px', fontSize: 12 }} defaultValue="" onChange={ev => fileInto(e.id, ev.target.value)} aria-label="File into case">
+              <select className="form-input" style={{ flex: '1 1 150px', maxWidth: 200, padding: '4px 8px', fontSize: 12 }}
+                      value={filing[e.id] || ''} disabled={!!filing[e.id]} onChange={ev => fileInto(e.id, ev.target.value)} aria-label="File into case">
                 <option value="">File into…</option>
                 {open.map(r => <option key={r.id} value={r.id}>{r.number} {r.title || ''}</option>)}
               </select>
@@ -220,7 +267,7 @@ export default function Home() {
       <Insights refresh={changed} />
 
       <div className="card">
-        <div className="card-title">Needs your check ({needing.length})</div>
+        <div className="card-title">Needs your check{needing ? ` (${needing.length})` : ''}</div>
         <div className="card-subtitle">Check the fields against the receipt, add the business purpose, then mark it reviewed.</div>
         <ExpenseTable expenses={needing} empty="Nothing waiting. Add a receipt above." />
       </div>

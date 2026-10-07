@@ -44,7 +44,15 @@ const zoneLabel = tz => (tz === 'Asia/Singapore' ? 'SGT' : tz);
 // the day before.
 const fmtDay = iso => (iso ? formatDate(`${String(iso).slice(0, 10)}T00:00:00Z`, 'UTC') : '—');
 
-export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
+// What an action said, shown beside the control that was pressed. These used
+// to go to the top of the settings page, a long scroll away from a rate typed
+// into a currency's log, so a refusal went unseen.
+function Note({ note, at }) {
+  if (!note || note.at !== at) return null;
+  return <div className={`alert alert-${note.tone}`} style={{ marginTop: 10, marginBottom: 0 }}>{note.text}</div>;
+}
+
+export default function ExchangeRates({ isAdmin, currencies = [] }) {
   const [board, setBoard] = useState(null);
   const [open, setOpen] = useState(null);         // the currency whose log is showing
   const [log, setLog] = useState(null);
@@ -52,10 +60,12 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
   const [watchInput, setWatchInput] = useState('');
   const [rateForm, setRateForm] = useState({ date: '', rate: '' });
   const [appId, setAppId] = useState('');
+  // { at: 'board' | 'watch' | 'log' | 'source', tone, text }
+  const [note, setNote] = useState(null);
 
-  const notify = useCallback((tone, text) => onNotify && onNotify({ tone, text }), [onNotify]);
+  const notify = useCallback((tone, text, at = 'board') => setNote({ tone, text, at }), []);
   const load = useCallback(() => api.get('/fx/board').then(setBoard).catch(e => notify('error', e.message)), [notify]);
-  const loadLog = useCallback(ccy => (ccy ? api.get(`/fx/log/${ccy}`).then(setLog).catch(e => notify('error', e.message)) : Promise.resolve()), [notify]);
+  const loadLog = useCallback(ccy => (ccy ? api.get(`/fx/log/${ccy}`).then(setLog).catch(e => notify('error', e.message, 'log')) : Promise.resolve()), [notify]);
 
   useEffect(() => { load(); }, [load]);
   useVisiblePolling(() => Promise.all([load(), loadLog(open)]), POLL_MS);
@@ -68,19 +78,21 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
   // to guess what changed.
   // Resolves true when it worked, so a caller clears its form only then: a
   // rate or an App ID that was refused used to be wiped from the form anyway.
-  async function act(label, fn, done) {
+  // `at` is where the answer is shown: beside the control that was pressed.
+  async function act(label, at, fn, done) {
     setBusy(label);
+    setNote(null);
     try {
       const next = await fn();
       if (next && next.rows) setBoard(next);
       if (open) await loadLog(open);
-      if (done) notify('success', done);
+      if (done) notify('success', done, at);
       return true;
-    } catch (e) { notify('error', e.message); return false; }
+    } catch (e) { notify('error', e.message, at); return false; }
     finally { setBusy(''); }
   }
 
-  if (!board) return <div className="card" style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading exchange rates…</div>;
+  if (!board) return <div className="card" style={{ color: 'var(--text-muted)', fontSize: 13 }}>{note ? `Could not load the exchange rates: ${note.text}` : 'Loading exchange rates…'}</div>;
   const { base, timezone, source } = board;
 
   return (
@@ -100,12 +112,13 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
             </span>
             {isAdmin && (
               <button className="btn btn-outline btn-sm" disabled={!!busy}
-                      onClick={() => act('refresh', () => api.post('/fx/live/refresh', {}), 'Rates refreshed.')}>
+                      onClick={() => act('refresh', 'board', () => api.post('/fx/live/refresh', {}), 'Rates refreshed.')}>
                 {busy === 'refresh' ? 'Refreshing…' : 'Refresh'}
               </button>
             )}
           </div>
         </div>
+        <Note note={note} at="board" />
 
         <div style={{ overflowX: 'auto', marginTop: 14 }}>
           <table className="data-table">
@@ -158,15 +171,16 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
                       <tr>
                         <td colSpan={6} style={{ background: 'var(--bg-secondary)', padding: '12px 14px' }}>
                           <CurrencyLog
-                            row={r} base={base} timezone={timezone} log={log} isAdmin={isAdmin} busy={busy}
+                            row={r} base={base} timezone={timezone} log={log} isAdmin={isAdmin} busy={busy} note={note}
                             rateForm={rateForm} setRateForm={setRateForm}
                             onSetRate={e => {
                               e.preventDefault();
-                              act('rate', () => api.post('/fx/rates', { from: r.currency, date: rateForm.date, rate: Number(rateForm.rate) }).then(load), 'Rate saved for that day.')
+                              act('rate', 'log', () => api.post('/fx/rates', { from: r.currency, date: rateForm.date, rate: Number(rateForm.rate) }).then(load), 'Rate saved for that day.')
                                 .then(ok => { if (ok) setRateForm({ date: '', rate: '' }); });
                             }}
-                            onRemoveRate={date => act('rate', () => api.delete(`/fx/rates?from=${r.currency}&to=${base}&date=${date}`).then(load), 'Rate removed. The day is priced from the providers again.')}
-                            onUnwatch={() => act('unwatch', () => api.delete(`/fx/watch/${r.currency}`), `${r.currency} is no longer watched.`).then(ok => { if (ok) setOpen(null); })}
+                            onRemoveRate={date => act('rate', 'log', () => api.delete(`/fx/rates?from=${encodeURIComponent(r.currency)}&to=${encodeURIComponent(base)}&date=${encodeURIComponent(date)}`).then(load), 'Rate removed. The day is priced from the providers again.')}
+                            // The log closes on success, so the answer shows on the board.
+                            onUnwatch={() => act('unwatch', 'board', () => api.delete(`/fx/watch/${r.currency}`), `${r.currency} is no longer watched.`).then(ok => { if (ok) setOpen(null); })}
                           />
                         </td>
                       </tr>
@@ -185,7 +199,7 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
 
         {isAdmin && (
           <form style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}
-                onSubmit={e => { e.preventDefault(); act('watch', () => api.post('/fx/watch', { currency: watchInput }), `${watchInput} added to the board.`).then(ok => { if (ok) setWatchInput(''); }); }}>
+                onSubmit={e => { e.preventDefault(); act('watch', 'watch', () => api.post('/fx/watch', { currency: watchInput }), `${watchInput} added to the board.`).then(ok => { if (ok) setWatchInput(''); }); }}>
             <datalist id="fx-watch-options">
               {currencies.filter(c => c.code !== base).map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
             </datalist>
@@ -196,6 +210,7 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
             </button>
           </form>
         )}
+        <Note note={note} at="watch" />
       </div>
 
       {isAdmin && (
@@ -210,7 +225,7 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', fontSize: 13 }}>
                 <span>App ID <code>{source.keyMasked}</code></span>
                 <button className="btn btn-ghost btn-sm" disabled={!!busy}
-                        onClick={() => act('source', () => api.put('/fx/live/source', { appId: '' }), 'Back on the daily feeds.')}>Remove</button>
+                        onClick={() => act('source', 'source', () => api.put('/fx/live/source', { appId: '' }), 'Back on the daily feeds.')}>Remove</button>
               </div>
             </>
           ) : (
@@ -221,7 +236,7 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
                 Their free plan updates hourly within 1,000 requests a month, and this board uses about 744 refreshing every {source.everyMinutes} minutes.
               </div>
               <form style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}
-                    onSubmit={e => { e.preventDefault(); act('source', () => api.put('/fx/live/source', { appId }), 'Open Exchange Rates connected.').then(ok => { if (ok) setAppId(''); }); }}>
+                    onSubmit={e => { e.preventDefault(); act('source', 'source', () => api.put('/fx/live/source', { appId }), 'Open Exchange Rates connected.').then(ok => { if (ok) setAppId(''); }); }}>
                 <input className="form-input" style={{ flex: 1, minWidth: 220 }} placeholder="Open Exchange Rates App ID" required
                        value={appId} onChange={e => setAppId(e.target.value.trim())} aria-label="Open Exchange Rates App ID" autoComplete="off" />
                 <button className="btn btn-primary" type="submit" disabled={!!busy || !appId}>{busy === 'source' ? 'Checking…' : 'Check and save'}</button>
@@ -229,6 +244,7 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
               </form>
             </>
           )}
+          <Note note={note} at="source" />
         </div>
       )}
     </div>
@@ -237,8 +253,8 @@ export default function ExchangeRates({ isAdmin, currencies = [], onNotify }) {
 
 // The daily log for one currency, newest first, with an admin's controls for
 // setting the rate of a particular day.
-function CurrencyLog({ row, base, timezone, log, isAdmin, busy, rateForm, setRateForm, onSetRate, onRemoveRate, onUnwatch }) {
-  if (!log || log.currency !== row.currency) return <div style={muted}>Loading the daily log…</div>;
+function CurrencyLog({ row, base, timezone, log, isAdmin, busy, note, rateForm, setRateForm, onSetRate, onRemoveRate, onUnwatch }) {
+  if (!log || log.currency !== row.currency) return <div style={muted}>{note && note.at === 'log' ? note.text : 'Loading the daily log…'}</div>;
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
@@ -302,6 +318,7 @@ function CurrencyLog({ row, base, timezone, log, isAdmin, busy, rateForm, setRat
           <span style={muted}>Beats the providers for that day, for a monthly table or a correction.</span>
         </form>
       )}
+      <Note note={note} at="log" />
     </div>
   );
 }

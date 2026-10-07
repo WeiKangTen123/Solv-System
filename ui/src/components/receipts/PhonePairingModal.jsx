@@ -1,7 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Modal from '../Modal';
 import { api } from '../../api/client';
 import { fmtMoney } from '../../utils/format';
+import { useVisiblePolling } from '../../utils/useVisiblePolling';
+
+// A thumbnail's image link is good for five minutes (routes/receipts.js).
+// Each one keeps its link for four, then takes the fresh one the next poll
+// brings: renewing on every poll downloaded every thumbnail again every three
+// seconds, and never renewing left a dialog open past five minutes with links
+// the server refused.
+const LINK_KEEP_MS = 4 * 60 * 1000;
 
 // The device-pairing pattern people already know from WhatsApp Web and banking
 // apps: a big scannable code, numbered steps, and visible confirmation.
@@ -24,10 +32,11 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
   const arrivedRef = useRef(onArrived);
   arrivedRef.current = onArrived;
   const seenRef = useRef(0);
-  // The first image link each photo arrived with. The server signs a fresh
-  // one on every poll, and a new URL made every thumbnail download again
-  // every three seconds.
+  // Each photo's image link and when it was taken: receipt id -> { token, at }.
   const linkRef = useRef({});
+  // Set once the code can take nothing more and every photo it took has been
+  // read: from then on the answer cannot change, so the poll stops asking.
+  const doneRef = useRef(false);
 
   // Mint the pairing once, on open.
   useEffect(() => {
@@ -41,42 +50,46 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
   }, []);
 
   // Poll for arrivals. One request carries the countdown, the count and the
-  // photos, so the panel needs nothing else.
-  useEffect(() => {
-    if (!pair) return undefined;
-    let stop = false;
-
-    async function poll() {
-      try {
-        const s = await api.get(`/receipts/pair/${pair.token}`);
-        if (stop) return;
-        setSecs(Math.max(0, Math.round(s.expiresInMs / 1000)));
-        setSpent(!!s.spent);
-        // An expired or used-up code gets no more photos; stop asking.
-        if (s.expiresInMs <= 0 || s.spent) { stop = true; clearInterval(timer); }
-        if (s.receipts) {
-          // Parsed fields arrive over later polls, so replace wholesale rather
-          // than appending — a row's merchant and total fill in as they are read.
-          // The arrival is announced outside the state update: React may run
-          // an updater twice, and the parent then counted every photo twice.
-          if (s.receipts.length !== seenRef.current) { seenRef.current = s.receipts.length; arrivedRef.current?.(); }
-          setRcpts(s.receipts);
+  // photos, so the panel needs nothing else. It runs only while the tab is
+  // looked at, like every other poll in the app.
+  const poll = useCallback(async () => {
+    if (!pair || doneRef.current) return;
+    try {
+      const s = await api.get(`/receipts/pair/${pair.token}`);
+      setSecs(Math.max(0, Math.round(s.expiresInMs / 1000)));
+      setSpent(!!s.spent);
+      const list = s.receipts || [];
+      // The list only grows. Once a code has expired the server forgets it
+      // and answers with no photos, which is not the photos going away.
+      if (list.length >= seenRef.current) {
+        const now = Date.now();
+        for (const r of list) {
+          const had = linkRef.current[r.id];
+          if (r.imageToken && (!had || now - had.at > LINK_KEEP_MS)) linkRef.current[r.id] = { token: r.imageToken, at: now };
         }
-      } catch { /* transient — the next tick tries again */ }
-    }
-
-    let timer = null;
-    poll();
-    timer = setInterval(poll, 3000);
-    return () => { stop = true; clearInterval(timer); };
+        // Parsed fields arrive over later polls, so replace wholesale rather
+        // than appending — a row's merchant and total fill in as they are read.
+        // The arrival is announced outside the state update: React may run
+        // an updater twice, and the parent then counted every photo twice.
+        if (list.length !== seenRef.current) { seenRef.current = list.length; arrivedRef.current?.(); }
+        setRcpts(list);
+      }
+      // An expired or used-up code gets no more photos, but the last few may
+      // still be being read; stop asking once they are.
+      if ((s.expiresInMs <= 0 || s.spent) && list.every(r => r.parsed)) doneRef.current = true;
+    } catch { /* transient — the next tick tries again */ }
   }, [pair]);
+  useEffect(() => { poll(); }, [poll]);
+  useVisiblePolling(poll, 3000);
 
   // Revoke on close so a code that was on screen dies immediately rather than
-  // lingering for the rest of its ten minutes.
-  async function close() {
+  // lingering for the rest of its ten minutes. The parent is handed the
+  // revocation: it may delete the case this session made, and only once the
+  // link is dead can it know nothing more is on its way.
+  function close() {
     const token = pair?.token;
-    onClose();
-    if (token) { try { await api.delete(`/receipts/pair/${token}`); } catch { /* it expires anyway */ } }
+    const revoked = token ? api.delete(`/receipts/pair/${token}`).catch(() => { /* it expires anyway */ }) : Promise.resolve();
+    onClose({ revoked });
   }
 
   const mmss = `${Math.floor(secsLeft / 60)}:${String(secsLeft % 60).padStart(2, '0')}`;
@@ -95,7 +108,7 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
           <div>
             <div style={{ fontSize: 16, fontWeight: 700 }}>Scan with your phone</div>
             <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 4 }}>
-              Photograph receipts straight into your expenses.
+              Photograph receipts straight into the case.
             </div>
           </div>
           <button onClick={close} aria-label="Close"
@@ -155,14 +168,20 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
                           retina screen — rather than the stored receipt, which
                           can be 3MB. The server falls back to the original if it
                           cannot scale, so this never fails to show a photo. */}
-                      <img src={`/api/receipts/${r.id}/image?w=160&token=${encodeURIComponent(linkRef.current[r.id] || (linkRef.current[r.id] = r.imageToken))}`}
+                      <img src={`/api/receipts/${r.id}/image?w=160&token=${encodeURIComponent(linkRef.current[r.id]?.token || r.imageToken)}`}
                            alt="" loading="lazy" decoding="async" width={76} height={76}
                            style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     </div>
-                    {/* Fills in a poll or two later, once the image has been read. */}
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, textAlign: 'center',
+                    {/* Fills in a poll or two later, once the image has been read.
+                        A photo the reader could not make out used to say
+                        "Reading…" for ever; the server says when it is done,
+                        and whether anything came of it, as the phone shows. */}
+                    <div title={r.parsed && r.unreadable ? 'Saved, but the reader could not make it out. Fill it in yourself.' : undefined}
+                         style={{ fontSize: 11, color: r.parsed && r.unreadable ? 'var(--warning)' : 'var(--text-muted)', marginTop: 4, textAlign: 'center',
                                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {r.total ? fmtMoney(r.total, r.currency || '') : (r.merchant || 'Reading…')}
+                      {!r.parsed ? 'Reading…'
+                        : r.unreadable ? 'Not read'
+                        : r.total ? fmtMoney(r.total, r.currency || '') : (r.merchant || 'Amount not read')}
                     </div>
                   </div>
                 ))}
@@ -170,7 +189,7 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
             )}
 
             {(expired || spent) && (
-              <button className="btn btn-sm" onClick={close} style={{ marginTop: 14, width: '100%' }}>
+              <button className="btn btn-primary btn-sm" onClick={close} style={{ marginTop: 14, width: '100%' }}>
                 Done — close and show a new code if you need one
               </button>
             )}

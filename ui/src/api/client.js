@@ -25,6 +25,11 @@ async function request(path, options = {}) {
 
   if (!res.ok) {
     if (res.status === 401) clearSession();
+    // Refused for who you are. The role is checked live on the server, so an
+    // admin made a user since the page loaded kept seeing admin tabs that
+    // answered nothing but 403; AuthContext reloads the account on this and
+    // the screen drops to what the account may now do.
+    if (res.status === 403) window.dispatchEvent(new CustomEvent('solv:forbidden'));
     // A 401 throws too. On most pages the navigation above wins the race and
     // the caller never runs; on /login (no navigation) a wrong password used to
     // come back as `undefined` and blow up as "cannot read 'token'" instead of
@@ -82,7 +87,9 @@ export async function streamPost(path, body, onEvent) {
 
 export const api = {
   get:    (path)       => request(path),
-  post:   (path, body) => request(path, { method: 'POST',   body: JSON.stringify(body) }),
+  // `headers` is for the one call that must name its own session: signing out
+  // sends the token it is ending after the page has already forgotten it.
+  post:   (path, body, headers) => request(path, { method: 'POST', body: JSON.stringify(body), headers }),
   // PUT is only used to replace an expense's lines, but leaving it out broke
   // that one call with "api.put is not a function" — and because Mark reviewed,
   // Refresh rate and Change rate all save first, the whole review step died

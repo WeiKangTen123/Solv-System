@@ -3,11 +3,15 @@ import StatusBadge from './StatusBadge';
 import { fmtMoney } from '../utils/format';
 import { useAuth } from '../context/AuthContext';
 
-// One table for Home and My expenses. A row is the receipt as read: date,
+// One table for Home and My receipts. A row is the receipt as read: date,
 // merchant, original amount, category, state. Click to review.
-export default function ExpenseTable({ expenses, empty = 'No expenses yet.' }) {
+//
+// `expenses` is null until the first answer arrives. The empty message used
+// to show meanwhile, telling everyone they had no receipts for a second.
+export default function ExpenseTable({ expenses, empty = 'No receipts yet.' }) {
   const navigate = useNavigate();
   const base = useAuth()?.user?.baseCurrency || 'SGD';
+  if (!expenses) return <div style={{ padding: '22px 0', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>;
   if (!expenses.length) return <div style={{ padding: '22px 0', color: 'var(--text-muted)', fontSize: 13 }}>{empty}</div>;
   return (
     <div style={{ overflowX: 'auto' }}>

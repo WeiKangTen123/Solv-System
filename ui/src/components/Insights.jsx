@@ -69,7 +69,7 @@ function Share({ rows, base, empty }) {
   );
 }
 
-const SCOPE = { own: 'your expenses', team: 'you and your team', company: 'the whole company' };
+const SCOPE = { own: 'your receipts', team: 'you and your team', company: 'the whole company' };
 
 // `refresh` changes when something on the page has actually altered the
 // figures. Deliberately not tied to the home page's polling: these are SQL
@@ -132,9 +132,9 @@ export default function Insights({ refresh = 0 }) {
         </div>
 
         <div className="card">
-          <div className="card-title">Currencies claimed</div>
+          <div className="card-title">Currencies spent</div>
           <div className="card-subtitle">Shared out by what each came to in {base}.</div>
-          <Share rows={ccys} base={base} empty="Nothing claimed yet." />
+          <Share rows={ccys} base={base} empty="Nothing recorded yet." />
         </div>
 
         <div className="card">
