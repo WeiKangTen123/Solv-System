@@ -61,6 +61,8 @@ async function makeForm(rows) {
 }
 
 const jpegBytes = tail => Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, tail]);
+// What the photo reader answers for an image holding one receipt.
+const one = r => ({ receipts: [r], split: false, reason: 'single' });
 
 describe('routes/claims', () => {
   let app, users, jwtSecret, testUser, store, receiptStore, claimImport, parser;
@@ -76,8 +78,8 @@ describe('routes/claims', () => {
     claimImport._reset();
     require('../claims/claim-worker')._reset();
     parser = require('../receipts/receipt-parser');
-    parser.parseReceiptBatch.mockReset();
-    parser.parseReceiptBatch.mockImplementation(async (userId, images) => images.map(() => null));
+    parser.parseReceiptImage.mockReset();
+    parser.parseReceiptImage.mockResolvedValue(null);
     testUser = await users.createUser({ email: `c${Date.now()}@solv.sg`, password: 'password123' });
     app = express();
     app.use(express.json({ limit: '30mb' }));
@@ -125,7 +127,7 @@ describe('routes/claims', () => {
       expect(idle.body.job).toBeNull();
       let release;
       const holdOpen = new Promise(resolve => { release = resolve; });
-      parser.parseReceiptBatch.mockImplementationOnce(async (userId, images) => { await holdOpen; return images.map(() => null); });
+      parser.parseReceiptImage.mockImplementationOnce(async () => { await holdOpen; return null; });
       const zip = makeZip([{ name: 'a.jpg', data: jpegBytes(3) }]);
       const { body } = await start({ archives: [{ name: 'c.zip', data: b64(zip) }] }).expect(202);
       const active = await request(serverFor(app)).get('/api/claims/active').set('Authorization', auth()).expect(200);
@@ -139,8 +141,8 @@ describe('routes/claims', () => {
 
   test('nine loose receipts import as nine expenses with lines, not zero', async () => {
     const zip = makeZip(Array.from({ length: 9 }, (_, i) => ({ name: `r${i}.jpg`, data: jpegBytes(10 + i) })));
-    parser.parseReceiptBatch.mockImplementation(async (userId, images) =>
-      images.map((_, i) => ({ merchant: `Shop ${i}`, date: '2026-08-24', currency: 'SGD', total: 10 + i, category: 'Meals' })));
+    let i = 0;
+    parser.parseReceiptImage.mockImplementation(async () => { const n = i++; return one({ merchant: `Shop ${n}`, date: '2026-08-24', currency: 'SGD', total: 10 + n, category: 'Meals' }); });
     const { body } = await start({ archives: [{ name: 'c.zip', data: b64(zip) }] }).expect(202);
     const done = await finish(body.jobId);
     expect(done.stage).toBe('done');
@@ -167,7 +169,7 @@ describe('routes/claims', () => {
     test('the same receipt twice in one archive: the second is marked, not dropped', async () => {
       const same = jpegBytes(7);
       const zip = makeZip([{ name: 'a.jpg', data: same }, { name: 'copy-of-a.jpg', data: same }]);
-      parser.parseReceiptBatch.mockImplementation(async (userId, images) => images.map(() => ({ merchant: 'Grab', date: '2026-08-24', currency: 'SGD', total: 18.4 })));
+      parser.parseReceiptImage.mockResolvedValue(one({ merchant: 'Grab', date: '2026-08-24', currency: 'SGD', total: 18.4 }));
       const done = await finish((await start({ archives: [{ name: 'c.zip', data: b64(zip) }] })).body.jobId);
       const rows = rowsOf(done.result.groupId);
       expect(rows).toHaveLength(2);
@@ -197,7 +199,7 @@ describe('routes/claims', () => {
 
     test('matching merchant, date and amount is only flagged', async () => {
       const zip = makeZip([{ name: 'a.jpg', data: jpegBytes(30) }, { name: 'b.jpg', data: jpegBytes(31) }]);
-      parser.parseReceiptBatch.mockImplementation(async (userId, images) => images.map(() => ({ merchant: 'Grab', date: '2026-08-24', currency: 'SGD', total: 18.4 })));
+      parser.parseReceiptImage.mockResolvedValue(one({ merchant: 'Grab', date: '2026-08-24', currency: 'SGD', total: 18.4 }));
       const done = await finish((await start({ archives: [{ name: 'c.zip', data: b64(zip) }] })).body.jobId);
       const rows = rowsOf(done.result.groupId);
       expect(rows.every(r => r.status === 'review-needed')).toBe(true);
@@ -207,7 +209,8 @@ describe('routes/claims', () => {
 
     test('two different receipts are left alone', async () => {
       const zip = makeZip([{ name: 'a.jpg', data: jpegBytes(40) }, { name: 'b.jpg', data: jpegBytes(41) }]);
-      parser.parseReceiptBatch.mockImplementation(async (userId, images) => images.map((_, i) => ({ merchant: `Shop ${i}`, date: '2026-08-24', currency: 'SGD', total: 10 + i })));
+      let i = 0;
+      parser.parseReceiptImage.mockImplementation(async () => { const n = i++; return one({ merchant: `Shop ${n}`, date: '2026-08-24', currency: 'SGD', total: 10 + n }); });
       const done = await finish((await start({ archives: [{ name: 'c.zip', data: b64(zip) }] })).body.jobId);
       expect(done.result.summary.duplicates).toBe(0);
       expect(done.result.summary.suspectedDuplicates).toBe(0);
@@ -249,7 +252,7 @@ describe('routes/claims', () => {
     test('matched lines carry the claimant figures, and the discrepancy is recorded', async () => {
       const form = await makeForm([{ no: 1, date: '2026-08-24', description: 'Taxi to client', amount: 18.4 }]);
       const zip = makeZip([{ name: 'a.jpg', data: jpegBytes(80) }]);
-      parser.parseReceiptBatch.mockImplementation(async (userId, images) => images.map(() => ({ merchant: 'Grab', date: '2026-08-24', currency: 'SGD', total: 23.8 })));
+      parser.parseReceiptImage.mockResolvedValue(one({ merchant: 'Grab', date: '2026-08-24', currency: 'SGD', total: 23.8 }));
       const done = await finish((await start({ archives: [{ name: 'c.zip', data: b64(zip) }], forms: [{ name: 'f.xlsx', data: b64(form) }] })).body.jobId);
       const rows = rowsOf(done.result.groupId);
       expect(rows).toHaveLength(1);
@@ -267,6 +270,77 @@ describe('routes/claims', () => {
       expect(rows[0].receiptId).toBeNull();
       expect(rows[0].errorMsg).toMatch(/No receipt found/);
       expect(done.result.missingReceipts).toHaveLength(1);
+    });
+  });
+
+  describe('a photo and an archive read as an upload is', () => {
+    test('a photo of two receipts in the archive becomes two records sharing it, as an upload does', async () => {
+      // Photos went five to a call through the batch reader, which reads one
+      // receipt per image: the second receipt was lost.
+      parser.parseReceiptImage.mockResolvedValue({ split: true, receipts: [
+        { merchant: 'Grab', date: '2026-08-24', currency: 'SGD', total: 18.4, box: [0, 0, 1000, 480] },
+        { merchant: 'Gojek', date: '2026-08-25', currency: 'SGD', total: 9.6, box: [0, 520, 1000, 1000] },
+      ] });
+      const zip = makeZip([{ name: 'two.jpg', data: jpegBytes(90) }]);
+      const done = await finish((await start({ archives: [{ name: 'c.zip', data: b64(zip) }] })).body.jobId);
+      const rows = rowsOf(done.result.groupId);
+      expect(rows.map(r => r.merchant).sort()).toEqual(['Gojek', 'Grab']);
+      expect(new Set(rows.map(r => r.receipt.file)).size).toBe(1);
+      expect(rows.every(r => Array.isArray(r.box))).toBe(true);
+    });
+
+    test('two archives with the same name keep their own files', async () => {
+      const first = makeZip([{ name: 'a.jpg', data: jpegBytes(91) }]);
+      const second = makeZip([{ name: 'a.jpg', data: jpegBytes(92) }]);
+      const done = await finish((await start({ archives: [{ name: 'receipts.zip', data: b64(first) }, { name: 'receipts.zip', data: b64(second) }] })).body.jobId);
+      const rows = rowsOf(done.result.groupId);
+      expect(rows).toHaveLength(2);
+      expect(new Set(rows.map(r => r.receipt.file)).size).toBe(2);
+    });
+  });
+
+  describe('finding an import again, and where it goes', () => {
+    test('GET /latest returns the finished import, until it is undone', async () => {
+      const empty = await request(serverFor(app)).get('/api/claims/latest').set('Authorization', auth()).expect(200);
+      expect(empty.body.job).toBeNull();
+      const zip = makeZip([{ name: 'a.jpg', data: jpegBytes(93) }]);
+      const done = await finish((await start({ archives: [{ name: 'c.zip', data: b64(zip) }] })).body.jobId);
+      const latest = await request(serverFor(app)).get('/api/claims/latest').set('Authorization', auth()).expect(200);
+      expect(latest.body.job).toMatchObject({ id: done.id, stage: 'done' });
+      expect(latest.body.job.result.groupId).toBe(done.result.groupId);
+      await request(serverFor(app)).delete(`/api/claims/group/${done.result.groupId}`).set('Authorization', auth()).expect(200);
+      const after = await request(serverFor(app)).get('/api/claims/latest').set('Authorization', auth()).expect(200);
+      expect(after.body.job).toBeNull();
+    });
+
+    test('an import started from a case goes into that case', async () => {
+      const reports = require('../store/reports');
+      const mine = reports.createReport({ companyId: testUser.companyId, userId: testUser.id, kind: 'case', title: 'Trip to KL' });
+      const zip = makeZip([{ name: 'a.jpg', data: jpegBytes(94) }, { name: 'b.jpg', data: jpegBytes(95) }]);
+      const done = await finish((await start({ archives: [{ name: 'c.zip', data: b64(zip) }], reportId: mine.id })).body.jobId);
+      expect(done.result).toMatchObject({ caseId: mine.id, caseIsNew: false, inCase: 2 });
+      expect(reports.getReport(mine.id).expenses).toHaveLength(2);
+    });
+
+    test("an import cannot be started into someone else's case", async () => {
+      const reports = require('../store/reports');
+      const other = await users.createUser({ email: `k${Date.now()}@solv.sg`, password: 'password123', companyId: testUser.companyId });
+      const theirs = reports.createReport({ companyId: testUser.companyId, userId: other.id, kind: 'case', title: 'Theirs' });
+      const zip = makeZip([{ name: 'a.jpg', data: jpegBytes(96) }]);
+      await start({ archives: [{ name: 'c.zip', data: b64(zip) }], reportId: theirs.id }).expect(403);
+    });
+
+    test('a label or a file name that is not text is refused', async () => {
+      const zip = b64(makeZip([{ name: 'a.jpg', data: jpegBytes(97) }]));
+      await start({ archives: [{ name: 'c.zip', data: zip }], label: { evil: true } }).expect(400);
+      await start({ archives: [{ name: ['c.zip'], data: zip }] }).expect(400);
+    });
+
+    test('stopping an import that has finished leaves it finished', async () => {
+      const zip = makeZip([{ name: 'a.jpg', data: jpegBytes(98) }]);
+      const done = await finish((await start({ archives: [{ name: 'c.zip', data: b64(zip) }] })).body.jobId);
+      const res = await request(serverFor(app)).delete(`/api/claims/import/${done.id}`).set('Authorization', auth()).expect(200);
+      expect(res.body.stage).toBe('done');
     });
   });
 });

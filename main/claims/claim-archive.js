@@ -15,9 +15,11 @@ const { sniffMime } = require('../receipts/receipt-store');
 // attachment, so there is no point extracting it.
 const IMAGE_EXT = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', pdf: 'application/pdf' };
 
-// A claim archive of more than this is a mistake, not a claim. Each entry costs
-// a vision call, so an unbounded archive is an unbounded bill.
-const MAX_ENTRIES = 100;
+// An import of more receipts than this is a mistake, not a claim. Each one
+// costs a vision call, so an unbounded import is an unbounded bill. The limit
+// is the whole import's: the caller gives each archive what the ones before it
+// left (claim-import.js), since three archives of sixty are one claim of 180.
+const MAX_RECEIPTS = 100;
 const MAX_ENTRY_BYTES = 15 * 1024 * 1024;   // before compression to ≤3MB
 // A per-file cap is not a budget: 100 files of 15MB is 1.5GB held in memory at
 // once, and a zip that compresses that well is a few megabytes to upload. The
@@ -38,8 +40,8 @@ function isJunk(name) {
 
 // Returns { entries: [{ name, mime, buffer }], skipped: [...] }. Never throws —
 // a corrupt archive yields no entries and a reason, so an import can report it
-// rather than dying.
-function readArchive(buffer) {
+// rather than dying. `max` is how many receipts this archive may still add.
+function readArchive(buffer, { max = MAX_RECEIPTS } = {}) {
   return new Promise(resolve => {
     if (!Buffer.isBuffer(buffer) || !buffer.length) {
       return resolve({ entries: [], skipped: [], error: 'empty archive' });
@@ -59,10 +61,13 @@ function readArchive(buffer) {
         const name = entry.fileName;
 
         if (isJunk(name)) return zip.readEntry();
-        if (entries.length >= MAX_ENTRIES) { skipped.push({ name, reason: 'archive limit reached' }); return zip.readEntry(); }
 
+        // The type is checked before the limit, so a stray text file past the
+        // hundredth receipt is skipped as what it is rather than counted as one
+        // receipt too many.
         const mime = mimeFor(name);
         if (!mime) { skipped.push({ name, reason: 'not a receipt file type' }); return zip.readEntry(); }
+        if (entries.length >= max) { skipped.push({ name, reason: 'archive limit reached' }); return zip.readEntry(); }
         if (entry.uncompressedSize > MAX_ENTRY_BYTES) { skipped.push({ name, reason: 'file too large' }); return zip.readEntry(); }
         if (unpacked + entry.uncompressedSize > MAX_TOTAL_BYTES) { skipped.push({ name, reason: 'the archive unpacks to more than the limit' }); return zip.readEntry(); }
         unpacked += entry.uncompressedSize;
@@ -92,4 +97,4 @@ function readArchive(buffer) {
   });
 }
 
-module.exports = { readArchive, mimeFor, isJunk, MAX_ENTRIES, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES };
+module.exports = { readArchive, mimeFor, isJunk, MAX_RECEIPTS, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES };

@@ -17,7 +17,19 @@ describe('claims/claim-categories', () => {
         line(2, 'Hotel in KL', 'HOTEL ACCOMODATION (SGD)'),
         line(3, 'Taxi home'),
       ]);
-      expect(lines.map(l => l.rowNo)).toEqual(['1', '3']);
+      expect(lines.map(l => l.description)).toEqual(['Grab to meeting', 'Taxi home']);
+    });
+
+    test('two forms with the same row numbers are told apart', () => {
+      // Both forms have a row "1": the model used to see "1." twice, and the
+      // answer for one was applied to the other.
+      const lines = linesNeedingCategory([
+        { row: { no: '1', key: '0:9', description: 'Lunch' }, receipt: null },
+        { row: { no: '1', key: '1:9', description: 'Taxi to airport' }, receipt: null },
+      ]);
+      expect(lines.map(l => l.rowNo)).toEqual(['1', '2']);
+      const out = normaliseSuggestions([{ rowNo: '1', category: CATEGORIES[1] }, { rowNo: '2', category: CATEGORIES[2] }], lines, CATEGORIES);
+      expect(out.map(s => [s.key, s.category])).toEqual([['0:9', CATEGORIES[1]], ['1:9', CATEGORIES[2]]]);
     });
 
     test('the receipt merchant is included as evidence when known', () => {

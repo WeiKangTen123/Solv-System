@@ -102,4 +102,45 @@ describe('claims/claim-queue', () => {
     expect(stored.stage).toBe('failed');
     expect(stored.error).toMatch(/protect system stability/i);
   });
+
+  test('a progress write with the copy the worker holds does not read the job back', () => {
+    const { job } = claimQueue.enqueue(userId, { archives: [], forms: [] });
+    const running = claimQueue.markRunning(userId, job.id);
+    const read = jest.spyOn(fs, 'readFileSync');
+    try {
+      claimQueue.save(userId, { id: job.id, receiptsRead: 3, cancelled: true }, running);
+      expect(read).not.toHaveBeenCalled();
+    } finally { read.mockRestore(); }
+    expect(claimQueue.get(userId, job.id)).toMatchObject({ receiptsRead: 3, attempts: 1, cancelled: true });
+  });
+
+  test('a queue already read once is not read again to find what is pending', () => {
+    claimQueue.enqueue(userId, { archives: [], forms: [] });
+    const jobs = claimQueue.list(userId);
+    const read = jest.spyOn(fs, 'readdirSync');
+    try {
+      expect(claimQueue.getPending(userId, jobs)).toHaveLength(1);
+      expect(claimQueue.getPoisoned(userId, jobs)).toHaveLength(0);
+      expect(read).not.toHaveBeenCalled();
+    } finally { read.mockRestore(); }
+  });
+
+  test('finished jobs past their hour are swept with no worker running', () => {
+    // The sweep ran only on a worker, which stops once nothing is waiting.
+    const { job } = claimQueue.enqueue(userId, { archives: [], forms: [] });
+    claimQueue.save(userId, { id: job.id, stage: 'done' });
+    const file = path.join(require('../utils/paths').userDir(userId), 'claim-queue', `${job.id}.que`);
+    const aged = JSON.parse(fs.readFileSync(file, 'utf8'));
+    aged.updatedAt = new Date(Date.now() - 2 * claimQueue.JOB_TTL_MS).toISOString();
+    fs.writeFileSync(file, JSON.stringify(aged));
+    jest.useFakeTimers();
+    try {
+      claimWorker.startSweeper();
+      jest.advanceTimersByTime(10 * 60 * 1000);
+      expect(claimQueue.get(userId, job.id)).toBeNull();
+    } finally {
+      claimWorker._reset();
+      jest.useRealTimers();
+    }
+  });
 });
