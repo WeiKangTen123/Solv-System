@@ -5,7 +5,7 @@ const store     = require('../store/expenses');
 const { findDuplicate } = require('../intake/dedup');
 const { canonicalCategory } = require('../intake/categories');
 const logger    = require('../utils/logger');
-const { firstReceipt, readSomething } = require('./parse-result');
+const { firstReceipt, readSomething, overlapFraction } = require('./parse-result');
 
 // The one place that decides HOW a stored file is read and what the read does
 // to the expense rows. Callers (the upload route, the phone route, the batch
@@ -241,9 +241,10 @@ async function readParts(userId, buffer, mime) {
     const scans = ((rendered && rendered.pages) || []).filter(p => blank.includes(p.page));
     if (scans.length < blank.length) note(`Only ${scans.length} of the ${blank.length} scanned pages were read; check the rest by hand.`);
     parts.push(...await _readScans(userId, scans, note));
-    // A single text part covering the whole file now sits beside page parts:
-    // pin it to the first typed page so each row knows its place.
-    if (parts.length > 1 && parts[0].page === null) parts[0].page = extracted.pages.findIndex(pdfPages.pageHasText) + 1;
+    // A single text part read from the typed pages together keeps page null,
+    // which means the whole file, beside the scanned pages' parts. It used to
+    // be pinned to the first typed page, and a re-read then sent that page
+    // alone: a folio whose total is on its last page went from 45,000 to 5,000.
   }
   return { parts, numPages, parsed, notes };
 }
@@ -333,31 +334,62 @@ async function readReceipt({ companyId, userId, receiptId, expenseId, buffer, mi
 
 // When the expense owns a region of a shared image, the receipt whose box
 // lies nearest that region is the one being re-read; otherwise the first.
+// The nearest must also lie over the region. When the re-read found only the
+// other receipt, or none with a box, it used to be taken, and one half of a
+// split photo was re-read with the other half's figures. Nothing is better
+// than that: the re-read answers unreadable.
+const MIN_REREAD_OVERLAP = 0.5;
 function _nearest(out, box) {
-  if (!out || !out.receipts || !out.receipts.length) return null;
-  if (!box || out.receipts.length < 2) return out.receipts[0];
+  const first = firstReceipt(out);
+  if (!first || !box) return first;
   const centre = b => [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
   const [cy, cx] = centre(box);
   const withBox = out.receipts.filter(r => r.box);
-  if (!withBox.length) return out.receipts[0];
-  return withBox.reduce((best, r) => { const [ry, rx] = centre(r.box); const d = Math.hypot(ry - cy, rx - cx); return d < best.d ? { r, d } : best; }, { r: withBox[0], d: Infinity }).r;
+  if (!withBox.length) return null;
+  const best = withBox.reduce((b, r) => { const [ry, rx] = centre(r.box); const d = Math.hypot(ry - cy, rx - cx); return d < b.d ? { r, d } : b; }, { r: withBox[0], d: Infinity }).r;
+  return overlapFraction(best.box, box) >= MIN_REREAD_OVERLAP ? best : null;
+}
+
+// One page of a PDF, drawn and read like a photo.
+async function _scannedPage(userId, buffer, page, box) {
+  const rendered = await pdfRender.renderPdfPages(buffer, { pages: [page] });
+  const p = rendered && rendered.pages.find(x => x.page === page);
+  return p ? _nearest(await parser.parseReceiptImage(userId, p.buffer, 'image/jpeg'), box) : null;
 }
 
 // One document, read again onto ONE expense (no split): a photo goes back to
 // the vision reader; a PDF to its text, or its rendered pages when it has none.
 // Returns the normalised receipt or null.
+//
+// `page` is where the row's receipt is, null for the whole file. What was read
+// as part of a whole is read as part of that whole again, and a scanned page
+// as the image it is.
 async function readOne(userId, buffer, mime, { page = null, box = null } = {}) {
   if (mime !== 'application/pdf') return _nearest(await parser.parseReceiptImage(userId, buffer, mime), box);
   const extracted = await pdfPages.extractPages(buffer);
   if (extracted.failed) return null;
   if (extracted.hasText) {
-    const text = page ? extracted.pages[page - 1] : extracted.pages.join('\n\n');
-    return firstReceipt(await parser.parseReceiptText(userId, text));
+    // A scanned page among typed ones has no text to send: the text reader
+    // was handed an empty page and could only answer unreadable.
+    if (page && !pdfPages.pageHasText(extracted.pages[page - 1])) return _scannedPage(userId, buffer, page, box);
+    // Typed pages read together the first time are read together again,
+    // whichever of them the row names: rows made before page null meant the
+    // whole file were pinned to the first typed page.
+    const alone = page && pdfPages.splittablePages(extracted).split;
+    return firstReceipt(await parser.parseReceiptText(userId, alone ? extracted.pages[page - 1] : extracted.pages.join('\n\n')));
   }
-  const rendered = await pdfRender.renderPdfPages(buffer, page ? { pages: [page] } : { maxPages: MAX_PAGES_ONE_DOC });
+  // A scan of up to ten pages was read whole, so it is read whole again and
+  // the row's receipt found by the pages it is on; a receipt on pages 2 and 3
+  // re-read from page 2 alone lost its total. A page of a longer scan was
+  // read on its own, and so is one the reader no longer keeps apart.
+  const whole = !page || (extracted.numPages > 1 && extracted.numPages <= MAX_PAGES_ONE_DOC);
+  if (!whole) return _scannedPage(userId, buffer, page, box);
+  const rendered = await pdfRender.renderPdfPages(buffer, { maxPages: MAX_PAGES_ONE_DOC });
   if (!rendered || !rendered.pages.length) return null;
-  const pages = page ? rendered.pages.filter(p => p.page === page) : rendered.pages.slice(0, MAX_PAGES_ONE_DOC);
-  return _nearest(await parser.parseReceiptPages(userId, pages.map(p => ({ buffer: p.buffer, mime: 'image/jpeg' }))), box);
+  const out = await parser.parseReceiptPages(userId, rendered.pages.slice(0, MAX_PAGES_ONE_DOC).map(p => ({ buffer: p.buffer, mime: 'image/jpeg' })));
+  if (!page) return _nearest(out, box);
+  const mine = out && out.split ? out.receipts.find(r => r.pages && r.pages.includes(page)) : null;
+  return mine || _scannedPage(userId, buffer, page, box);
 }
 
 module.exports = { readReceipt, readParts, readOne, applyRead, buildLines, flagIfSuspected, currencyNote, withoutCurrencyNote, CURRENCY_NOTE_RE, MAX_PAGES_ONE_DOC };

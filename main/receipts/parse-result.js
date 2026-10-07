@@ -15,4 +15,15 @@ function readSomething(r) {
   return !!r && ((r.total !== null && r.total !== undefined) || !!r.merchant);
 }
 
-module.exports = { firstReceipt, readSomething };
+// How much two receipt boxes ([ymin, xmin, ymax, xmax], 0-1000) overlap, as a
+// share of the SMALLER: a small box wholly inside a large one is 1. The
+// reader asks it to decide a split, a re-read to find its own half again.
+function area(b) { return (b[2] - b[0]) * (b[3] - b[1]); }
+function overlapFraction(a, b) {
+  const dy = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
+  const dx = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+  if (dy <= 0 || dx <= 0) return 0;
+  return (dy * dx) / Math.min(area(a), area(b));
+}
+
+module.exports = { firstReceipt, readSomething, area, overlapFraction };

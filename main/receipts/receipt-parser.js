@@ -1,6 +1,6 @@
 const logger = require('../utils/logger');
 const { imagePart } = require('./image-prep');
-const { firstReceipt, readSomething } = require('./parse-result');
+const { firstReceipt, readSomething, area, overlapFraction } = require('./parse-result');
 const { callGemini } = require('../llm/gemini-client');
 const { parseLlmJson } = require('../llm/llm-json');
 
@@ -277,14 +277,8 @@ function _box(value) {
   return [ymin, xmin, ymax, xmax];
 }
 
-function _area(b) { return (b[2] - b[0]) * (b[3] - b[1]); }
-
-function _overlapFraction(a, b) {
-  const dy = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
-  const dx = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
-  if (dy <= 0 || dx <= 0) return 0;
-  return (dy * dx) / Math.min(_area(a), _area(b));
-}
+const _area = area;
+const _overlapFraction = overlapFraction;
 
 // The smallest slice of the frame a real receipt could plausibly occupy. Below
 // this it is far more likely to be a stray box than a document.
