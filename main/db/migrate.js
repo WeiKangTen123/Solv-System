@@ -41,6 +41,10 @@ function run() {
   _ensureColumn('fx_rates', 'closed_at', 'closed_at TEXT');
   // An Open Exchange Rates App ID, for a live board that moves within the day.
   _ensureColumn('company_credentials', 'fx_oxr_app_id', 'fx_oxr_app_id TEXT');
+  // The account an advance already paid is cleared against on the bill. It
+  // used to be taken off the default expense account, which understated the
+  // expense and left the advance owed for ever.
+  _ensureColumn('company_credentials', 'advances_account_code', 'advances_account_code TEXT');
   // What the reader last saw from each key, so Settings can say which one
   // works and which ran out — rather than only listing them.
   for (const table of ['company_gemini_keys', 'user_gemini_keys']) {

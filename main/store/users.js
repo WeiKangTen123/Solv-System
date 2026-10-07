@@ -77,6 +77,7 @@ const CRED_COLUMNS = {
   XERO_OAUTH_CLIENT_ID: 'xero_oauth_client_id', XERO_OAUTH_CLIENT_SECRET: 'xero_oauth_client_secret',
   XERO_OAUTH_REFRESH_TOKEN: 'xero_oauth_refresh_token', XERO_OAUTH_CONNECTED_AT: 'xero_oauth_connected_at',
   XERO_CONNECTION_TYPE: 'xero_connection_type', DEFAULT_ACCOUNT_CODE: 'default_account_code',
+  ADVANCES_ACCOUNT_CODE: 'advances_account_code',
   FX_OXR_APP_ID: 'fx_oxr_app_id',
 };
 const CRED_TO_KEY = Object.fromEntries(Object.entries(CRED_COLUMNS).map(([k, v]) => [v, k]));

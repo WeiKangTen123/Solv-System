@@ -1,5 +1,6 @@
 const db = require('../db');
 const { newId } = require('../utils/ids');
+const { localDate } = require('../utils/zone-date');
 const expenses = require('./expenses');
 
 // Expense reports: the cover, the workflow state and the audit trail. Lines
@@ -18,12 +19,14 @@ function _row(r) {
 }
 
 // EXP-<year>-<0001>, counted per company. The counter lives on the company row
-// so two reports created in the same millisecond cannot share a number.
+// so two reports created in the same millisecond cannot share a number. The
+// year is the company's: the server's clock runs in UTC, so a case opened in
+// Singapore before 08:00 on 1 January was numbered for the year before.
 const nextNumber = db.transaction(companyId => {
-  const c = db.prepare('SELECT next_report_no FROM companies WHERE id = ?').get(companyId);
+  const c = db.prepare('SELECT next_report_no, timezone FROM companies WHERE id = ?').get(companyId);
   if (!c) throw new Error('Company not found');
   db.prepare('UPDATE companies SET next_report_no = next_report_no + 1 WHERE id = ?').run(companyId);
-  return `EXP-${new Date().getFullYear()}-${String(c.next_report_no).padStart(4, '0')}`;
+  return `EXP-${localDate(c.timezone).slice(0, 4)}-${String(c.next_report_no).padStart(4, '0')}`;
 });
 
 const COVER = { kind: 'kind', title: 'title', purpose: 'purpose', periodFrom: 'period_from', periodTo: 'period_to', destination: 'destination', nights: 'nights', notes: 'notes' };
@@ -42,12 +45,17 @@ function createReport({ id = newId(), companyId, userId, kind = 'trip', title = 
   return getReport(id);
 }
 
+// pendingRates: receipts with an amount still waiting for a rate. noAmount:
+// receipts with no amount at all yet (nothing read, nothing typed). They used
+// to be one count, so an unread receipt was shown as "waiting for an
+// exchange rate", which no rate would ever fix.
 function _totals(list) {
   const byCategory = {};
-  let baseCents = 0, pendingRates = 0, unreviewed = 0, lineCount = 0;
+  let baseCents = 0, pendingRates = 0, noAmount = 0, unreviewed = 0, lineCount = 0;
   for (const e of list) {
     if (e.status !== 'reviewed') unreviewed++;
-    if (e.fxPending || !e.lines.length) pendingRates++;
+    if (!e.lines.length) noAmount++;
+    else if (e.fxPending) pendingRates++;
     for (const l of e.lines) {
       lineCount++;
       if (l.baseAmount === null || l.baseAmount === undefined) continue;
@@ -58,14 +66,14 @@ function _totals(list) {
     }
   }
   for (const k of Object.keys(byCategory)) byCategory[k] = byCategory[k] / 100;
-  return { totalBase: baseCents / 100, byCategory, pendingRates, unreviewed, expenseCount: list.length, lineCount };
+  return { totalBase: baseCents / 100, byCategory, pendingRates, noAmount, unreviewed, expenseCount: list.length, lineCount };
 }
 
 // The case's own row and nothing else: its number, state and owner. For
 // callers that need to know about a case without loading every receipt in it.
 function head(id) {
-  const r = id ? db.prepare('SELECT id, number, title, status, xero_invoice_id, xero_error, user_id, company_id FROM expense_reports WHERE id = ?').get(id) : null;
-  return r ? { id: r.id, number: r.number, title: r.title || null, status: r.status, xeroInvoiceId: r.xero_invoice_id || null, xeroError: r.xero_error || null, userId: r.user_id, companyId: r.company_id } : null;
+  const r = id ? db.prepare('SELECT id, number, title, status, xero_invoice_id, xero_error, user_id, company_id, updated_at FROM expense_reports WHERE id = ?').get(id) : null;
+  return r ? { id: r.id, number: r.number, title: r.title || null, status: r.status, xeroInvoiceId: r.xero_invoice_id || null, xeroError: r.xero_error || null, userId: r.user_id, companyId: r.company_id, updatedAt: r.updated_at || null } : null;
 }
 
 function getReport(id) {
@@ -94,15 +102,17 @@ function listReports({ companyId, userId, userIds, status } = {}) {
     SELECT r.*, u.name AS owner_name, u.email AS owner_email,
       (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id) AS expense_count,
       (SELECT SUM(l.base_cents) FROM expense_lines l JOIN expenses e ON e.id = l.expense_id WHERE e.report_id = r.id) AS base_cents,
-      -- Receipts without a rate, as the case page counts them: one with three
-      -- unpriced lines is one receipt waiting, not three.
-      (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id AND (
-         NOT EXISTS (SELECT 1 FROM expense_lines l WHERE l.expense_id = e.id)
-         OR EXISTS (SELECT 1 FROM expense_lines l WHERE l.expense_id = e.id AND l.base_cents IS NULL))) AS pending_lines,
+      -- Receipts waiting for a rate, and receipts with no amount yet, as the
+      -- case page counts them: one with three unpriced lines is one receipt
+      -- waiting, not three.
+      (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id
+         AND EXISTS (SELECT 1 FROM expense_lines l WHERE l.expense_id = e.id AND l.base_cents IS NULL)) AS pending_lines,
+      (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id
+         AND NOT EXISTS (SELECT 1 FROM expense_lines l WHERE l.expense_id = e.id)) AS no_amount,
       (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id AND e.status != 'reviewed') AS unreviewed
     FROM expense_reports r JOIN users u ON u.id = r.user_id
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY r.created_at DESC`).all(...args);
-  return rows.map(x => ({ ..._row(x), ownerName: x.owner_name, ownerEmail: x.owner_email, expenseCount: x.expense_count, totalBase: toDollars(x.base_cents) ?? 0, pendingRates: x.pending_lines, unreviewed: x.unreviewed }));
+  return rows.map(x => ({ ..._row(x), ownerName: x.owner_name, ownerEmail: x.owner_email, expenseCount: x.expense_count, totalBase: toDollars(x.base_cents) ?? 0, pendingRates: x.pending_lines, noAmount: x.no_amount, unreviewed: x.unreviewed }));
 }
 
 function updateReport(id, patch) {
@@ -121,18 +131,36 @@ function updateReport(id, patch) {
 // condition in its WHERE decides it: exactly one caller gets `true`.
 //
 // A marker older than POST_STALE_MS belongs to a post that died with its
-// process (the bill is recorded as soon as Xero makes it, so a dead post
-// either made nothing or is already recorded): it is taken over rather than
-// refusing every later attempt for good.
+// process, and is taken over rather than refusing every later attempt for
+// good. A post that died after Xero made the bill but before it was recorded
+// would make a second one on takeover, so every attempt at the same bill
+// sends the same idempotency key (xero/bills.js) and Xero answers with the
+// first bill instead.
+//
+// Only a claimed case can be claimed for posting, in the same statement: the
+// check used to be made earlier, and a case could be reopened, changed and
+// posted while the chart of accounts was loading.
 const POSTING = 'posting';
 const POST_STALE_MS = 10 * 60 * 1000;
 function claimForPost(id) {
   const stale = new Date(Date.now() - POST_STALE_MS).toISOString();
   const info = db.prepare(`UPDATE expense_reports SET xero_error = ?, updated_at = ?
-                           WHERE id = ? AND xero_invoice_id IS NULL
+                           WHERE id = ? AND xero_invoice_id IS NULL AND status = 'claimed'
                              AND (COALESCE(xero_error, '') != ? OR COALESCE(updated_at, '') < ?)`)
     .run(POSTING, now(), id, POSTING, stale);
   return info.changes === 1;
+}
+// Whether a case is being posted right now: a fresh marker, not a dead one.
+function isPosting(r) {
+  if (!r || r.xeroError !== POSTING) return false;
+  return !(r.updatedAt && Date.parse(r.updatedAt) < Date.now() - POST_STALE_MS);
+}
+// The bill Xero made, recorded once. A second attempt that also got a bill
+// back (it should get the same one; see claimForPost) does not overwrite the
+// first: false tells the caller so.
+function recordBill(id, invoiceId, note) {
+  return db.prepare('UPDATE expense_reports SET xero_invoice_id = ?, xero_error = ?, updated_at = ? WHERE id = ? AND xero_invoice_id IS NULL')
+    .run(invoiceId, note, now(), id).changes === 1;
 }
 function releasePost(id, error = null) {
   db.prepare(`UPDATE expense_reports SET xero_error = ?, updated_at = ? WHERE id = ? AND xero_error = ?`)
@@ -164,4 +192,4 @@ function listEvents(reportId) {
 }
 
 module.exports = {
-  claimForPost, releasePost, createReport, getReport, head, listReports, updateReport, setState, addExpense, removeExpense, deleteReport, addEvent, listEvents, nextNumber };
+  claimForPost, releasePost, isPosting, recordBill, POST_STALE_MS, createReport, getReport, head, listReports, updateReport, setState, addExpense, removeExpense, deleteReport, addEvent, listEvents, nextNumber };

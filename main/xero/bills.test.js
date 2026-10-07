@@ -45,7 +45,42 @@ describe('xero/bills — buildBill', () => {
   test('with no chart and no default, lines go without an account code and Xero decides', () => {
     const b = buildBill(payload, {});
     expect(b.invoice.lineItems.every(l => l.accountCode === undefined)).toBe(true);
-    expect(b.invoice.lineItems.every(l => l.taxType === 'NONE')).toBe(true);
+    // With no tax rates to choose from, a taxed local line carries no tax type,
+    // so Xero applies the account's own; the rest say NONE.
+    expect(b.invoice.lineItems.map(l => l.taxType)).toEqual(['NONE', 'NONE', undefined, 'NONE']);
+  });
+
+  // Several 9% purchase types exist in a Singapore organisation. "The highest
+  // rate" picked whichever Xero listed first, which could be blocked input tax.
+  test("a taxed line takes its account's own tax type, else standard-rated purchases, never blocked or imports by default", () => {
+    const { purchaseTax } = require('./bills');
+    const sg = [
+      { name: 'Blocked Input Tax', taxType: 'BLINPUT3', status: 'ACTIVE', displayTaxRate: 9 },
+      { name: 'Imports', taxType: 'IMINPUT2', status: 'ACTIVE', displayTaxRate: 9 },
+      { name: 'Standard-Rated Purchases', taxType: 'TXINPUT9', status: 'ACTIVE', displayTaxRate: 9 },
+      { name: 'No Tax', taxType: 'NONE', status: 'ACTIVE', displayTaxRate: 0 },
+    ];
+    expect(purchaseTax(null, [], sg).taxType).toBe('TXINPUT9');
+    expect(purchaseTax('420', [{ code: '420', taxType: 'IMINPUT2' }], sg).taxType).toBe('IMINPUT2');
+    expect(purchaseTax(null, [], sg.filter(r => !/Standard/.test(r.name)))).toBeNull();   // no right guess among the special kinds
+    expect(purchaseTax(null, [], [{ name: 'No Tax', taxType: 'NONE', displayTaxRate: 0 }])).toBeNull();
+  });
+
+  test('an advance is cleared against the advances account, not the expense account', () => {
+    const b = buildBill({ ...payload, report: { ...payload.report, advances: 100 } }, { accounts: chart, defaultAccountCode: '429', advancesAccountCode: '610', taxRates: rates });
+    const advance = b.invoice.lineItems.at(-1);
+    expect(advance).toMatchObject({ unitAmount: -100, accountCode: '610', taxType: 'NONE' });
+    expect(b.total).toBe(1029.12);
+  });
+
+  test('the same bill always has the same idempotency key, and a changed one a new key', () => {
+    const { idempotencyKey } = require('./bills');
+    const a = buildBill(payload, { accounts: chart, taxRates: rates });
+    const same = buildBill(payload, { accounts: chart, taxRates: rates });
+    const changed = buildBill({ ...payload, lines: payload.lines.slice(1) }, { accounts: chart, taxRates: rates });
+    expect(idempotencyKey('r1', a)).toBe(idempotencyKey('r1', same));
+    expect(idempotencyKey('r1', a)).not.toBe(idempotencyKey('r1', changed));
+    expect(idempotencyKey('r1', a)).toMatch(/^solv-r1-[0-9a-f]{24}$/);
   });
 });
 
@@ -119,10 +154,72 @@ describe('xero/bills — postReport', () => {
   });
 
   test('advances above the claim are refused before anything is sent', async () => {
+    users.saveCompanyConfig(admin.companyId, { ADVANCES_ACCOUNT_CODE: '610' });
     reports.updateReport(report.id, { advances: 5 });
     wf.markClaimed(report.id, emp);
     await expect(bills.postReport(report.id, emp)).rejects.toThrow(/advances are more than the claim/);
     expect(mockCreateInvoices).not.toHaveBeenCalled();
+    expect(reports.getReport(report.id).xeroError).toBeNull();     // the claim was released
+  });
+
+  test('a case with an advance does not post until the advances account is set', async () => {
+    reports.updateReport(report.id, { advances: 1 });
+    wf.markClaimed(report.id, emp);
+    await expect(bills.postReport(report.id, emp)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/advances account/) });
+    expect(mockCreateInvoices).not.toHaveBeenCalled();
+    const dry = await bills.postReport(report.id, emp, { dryRun: true });
+    expect(dry.needsAdvancesAccount).toBe(true);
+    users.saveCompanyConfig(admin.companyId, { ADVANCES_ACCOUNT_CODE: '610' });
+    mockCreateInvoices.mockResolvedValue({ body: { invoices: [{ invoiceID: 'xero-bill-adv' }] } });
+    await bills.postReport(report.id, emp);
+    expect(mockCreateInvoices.mock.calls[0][1].invoices[0].lineItems.at(-1)).toMatchObject({ unitAmount: -1, accountCode: '610' });
+  });
+
+  // The bill used to be built before the case was claimed for posting. While
+  // the chart of accounts loaded, the case was reopened and changed, or an
+  // admin corrected an amount, and Xero got one figure while the case, now
+  // final, said another.
+  test('while a case is being posted it cannot be reopened and its receipts cannot be corrected', async () => {
+    wf.markClaimed(report.id, emp);
+    const edit = require('../receipts/edit');
+    const id = reports.getReport(report.id).expenses[0].id;
+    let during = {};
+    mockCreateInvoices.mockImplementation(async () => {
+      try { wf.reopen(report.id, emp); during.reopen = 'allowed'; } catch (err) { during.reopen = err.status; }
+      try { await edit.editDetails(id, { merchant: 'Changed' }, admin); during.edit = 'allowed'; } catch (err) { during.edit = err.status; }
+      return { body: { invoices: [{ invoiceID: 'xero-bill-3' }] } };
+    });
+    await bills.postReport(report.id, emp);
+    expect(during).toEqual({ reopen: 409, edit: 409 });
+    expect(store.getExpense(id).merchant).toBe('Courtyard');
+  });
+
+  test('a case reopened before the post begins is not posted', async () => {
+    wf.markClaimed(report.id, emp);
+    wf.reopen(report.id, emp);
+    expect(reports.claimForPost(report.id)).toBe(false);
+    await expect(bills.postReport(report.id, emp)).rejects.toMatchObject({ status: 409 });
+    expect(mockCreateInvoices).not.toHaveBeenCalled();
+  });
+
+  test('a second bill never replaces the one the case already records', async () => {
+    wf.markClaimed(report.id, emp);
+    expect(reports.recordBill(report.id, 'bill-A', null)).toBe(true);
+    expect(reports.recordBill(report.id, 'bill-B', null)).toBe(false);
+    expect(reports.getReport(report.id).xeroInvoiceId).toBe('bill-A');
+  });
+
+  // Xero's daily limit answers "retry after" twelve hours. Waiting that long
+  // outlived the posting marker, a second click made a bill, and the first
+  // attempt then woke and made another.
+  test("a long 'retry after' from Xero fails at once and releases the case", async () => {
+    wf.markClaimed(report.id, emp);
+    mockCreateInvoices.mockRejectedValue({ response: { statusCode: 429, headers: { 'retry-after': '43200' } } });
+    const t0 = Date.now();
+    await expect(bills.postReport(report.id, emp)).rejects.toMatchObject({ status: 502, message: expect.stringMatching(/about 12 hours/) });
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(mockCreateInvoices).toHaveBeenCalledTimes(1);
+    expect(reports.claimForPost(report.id)).toBe(true);      // released, so a later attempt can take it
   });
 
   test('the bill is recorded the moment Xero makes it, before the receipts go up, and is sent with an idempotency key', async () => {
@@ -132,7 +229,7 @@ describe('xero/bills — postReport', () => {
     mockAttach.mockImplementationOnce(async () => { seenDuringUpload = reports.getReport(report.id).xeroInvoiceId; });
     await bills.postReport(report.id, emp);
     expect(seenDuringUpload).toBe('xero-bill-2');
-    expect(mockCreateInvoices.mock.calls[0][4]).toMatch(new RegExp(`^solv-${report.id}-\\d+$`));
+    expect(mockCreateInvoices.mock.calls[0][4]).toMatch(new RegExp(`^solv-${report.id}-[0-9a-f]{24}$`));
     expect(mockAttach.mock.calls[0][5]).toBe('xero-bill-2-R1.pdf');
     expect(reports.getReport(report.id).xeroError).toBeNull();
   });

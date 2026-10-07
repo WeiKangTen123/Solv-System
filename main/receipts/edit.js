@@ -50,6 +50,7 @@ function detailsBlocked(e, actor) {
   if (!e) return { status: 404, error: 'Expense not found' };
   if (!canEditDetails(actor, e.userId, e.companyId)) return { status: 404, error: 'Expense not found' };
   if (wf.isPosted(e)) return { status: 409, error: 'This receipt is in a case that has been posted to Xero, which is final.' };
+  if (wf.inPosting(e)) return { status: 409, error: 'This receipt\'s case is being posted to Xero right now. Try again once that has finished.' };
   if (e.status === 'duplicate') return { status: 400, error: 'A duplicate cannot be edited; delete it or restore it first' };
   // The reader's answer would land on top of whatever was typed meanwhile.
   if (e.status === 'reading') return { status: 409, error: 'This receipt is still being read. Edit it once the reading is done.' };

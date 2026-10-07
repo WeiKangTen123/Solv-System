@@ -10,11 +10,30 @@ describe('store/reports', () => {
     lines: [{ category: 'Lodging', amount: 60, baseAmount: 0.8, fxRate: 0.01341, fxRateDate: '2026-09-04', fxSource: 'frankfurter', fxFetchedAt: 'x' }, { category: 'Meals', amount: 40, baseAmount: 0.54, fxRate: 0.01341, fxRateDate: '2026-09-04', fxSource: 'frankfurter', fxFetchedAt: 'x' }], ...extra });
 
   test('numbers run per company and per year', () => {
+    const year = require('../utils/zone-date').localDate('Asia/Singapore').slice(0, 4);
     const a = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'India trip' });
     const b = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'Another' });
-    expect(a.number).toBe(`EXP-${new Date().getFullYear()}-0001`);
-    expect(b.number).toBe(`EXP-${new Date().getFullYear()}-0002`);
+    expect(a.number).toBe(`EXP-${year}-0001`);
+    expect(b.number).toBe(`EXP-${year}-0002`);
     expect(a.status).toBe('open');
+  });
+
+  // The server runs in UTC; Singapore's New Year arrives eight hours earlier.
+  test("the number's year is the company's, not the server's", () => {
+    jest.useFakeTimers({ now: new Date('2026-12-31T17:00:00Z'), doNotFake: ['setImmediate', 'nextTick'] });
+    try {
+      expect(reports.createReport({ companyId: u.companyId, userId: u.id, title: 'New Year' }).number).toMatch(/^EXP-2027-/);
+    } finally { jest.useRealTimers(); }
+  });
+
+  // One with no amount was counted as waiting for a rate, which no rate fixes.
+  test('a receipt with no amount is counted apart from one waiting for a rate', () => {
+    const r = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'T' });
+    reports.addExpense(r.id, exp({ lines: [] }).id);
+    reports.addExpense(r.id, exp({ lines: [{ category: 'Meals', amount: 100 }] }).id);
+    reports.addExpense(r.id, exp().id);
+    expect(reports.getReport(r.id).totals).toMatchObject({ noAmount: 1, pendingRates: 1 });
+    expect(reports.listReports({ userId: u.id })[0]).toMatchObject({ noAmount: 1, pendingRates: 1 });
   });
 
   test('filing expenses gives totals by category, a reimbursement, and flags what is not ready', () => {

@@ -5,7 +5,14 @@ const logger = require('../utils/logger');
  * Handles 429 rate-limit responses using Retry-After header when available,
  * falling back to exponential backoff.
  */
-async function withRetry(fn, retries = 5, delayMs = 2000) {
+// The longest a call waits on Xero's say-so before giving up. Xero's daily
+// limit answers "retry after" twelve hours: waiting that long held a case's
+// posting marker past its ten minutes, a second click took it over and made a
+// bill, and the first attempt then woke and made another. A minute is the
+// per-minute limit; anything longer is a "not today", said as one.
+const MAX_WAIT_MS = 60 * 1000;
+
+async function withRetry(fn, retries = 5, delayMs = 2000, { maxWaitMs = MAX_WAIT_MS } = {}) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       return await fn();
@@ -16,6 +23,10 @@ async function withRetry(fn, retries = 5, delayMs = 2000) {
 
       if (isRateLimit && attempt < retries) {
         const wait = retryAfterMs || delayMs * Math.pow(2, attempt - 1);
+        if (wait > maxWaitMs) {
+          const hours = wait / 3600000;
+          throw new Error(`Xero has reached its limit for now and asks to wait ${hours >= 1 ? `about ${Math.round(hours)} hour${Math.round(hours) === 1 ? '' : 's'}` : `${Math.ceil(wait / 60000)} minutes`}. Nothing was sent; try again then.`);
+        }
         logger.warn(`Xero rate limited — retrying in ${Math.round(wait / 1000)}s`, { attempt, retries });
         await new Promise(r => setTimeout(r, wait));
       } else {
@@ -99,4 +110,4 @@ function xeroErrMsg(err) {
 // receipt is refused on the first real post.
 const SCOPES = 'accounting.invoices accounting.contacts accounting.settings.read accounting.attachments';
 
-module.exports = { withRetry, xeroErrMsg, _parseXeroErr, isScopeError, SCOPES };
+module.exports = { withRetry, xeroErrMsg, _parseXeroErr, isScopeError, SCOPES, MAX_WAIT_MS };

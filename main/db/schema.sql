@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS company_credentials (
   xero_oauth_connected_at  TEXT,
   xero_connection_type     TEXT,
   default_account_code     TEXT,
+  advances_account_code    TEXT,      -- where an advance already paid is cleared on the bill
   fx_oxr_app_id            TEXT       -- an Open Exchange Rates App ID, encrypted
 );
 

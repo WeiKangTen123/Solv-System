@@ -20,7 +20,7 @@ function _frontendSettingsUrl() {
   return `${process.env.FRONTEND_URL || 'http://localhost:5173'}/settings`;
 }
 
-const KEYS = ['XERO_CLIENT_ID', 'XERO_CLIENT_SECRET', 'XERO_OAUTH_CLIENT_ID', 'XERO_OAUTH_CLIENT_SECRET', 'DEFAULT_ACCOUNT_CODE'];
+const KEYS = ['XERO_CLIENT_ID', 'XERO_CLIENT_SECRET', 'XERO_OAUTH_CLIENT_ID', 'XERO_OAUTH_CLIENT_SECRET', 'DEFAULT_ACCOUNT_CODE', 'ADVANCES_ACCOUNT_CODE'];
 const SECRETS = new Set(['XERO_CLIENT_SECRET', 'XERO_OAUTH_CLIENT_SECRET']);
 
 // GET /api/xero — status: which method, which orgs, which fields are set
@@ -42,7 +42,10 @@ router.patch('/credentials', requireAuth, FINANCE, (req, res) => {
   for (const [k, v] of Object.entries(req.body || {})) {
     if (!KEYS.includes(k)) continue;
     if (SECRETS.has(k) && (v === '' || v == null)) continue;
-    patch[k] = v;
+    // Text only. An object reached the store as "[object Object]" and showed
+    // as set; an array was spread into the query and saved as its first item.
+    if (v !== null && typeof v !== 'string') return res.status(400).json({ error: `${k} must be text` });
+    patch[k] = v === null ? '' : v.trim().slice(0, 300);
   }
   users.saveCompanyConfig(u.companyId, patch);
   logger.info('Xero credentials saved', { by: req.user.id, keys: Object.keys(patch) });

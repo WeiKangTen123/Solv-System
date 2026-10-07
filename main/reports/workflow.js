@@ -29,8 +29,18 @@ function isLocked(expense) {
   return !!r && !EDITABLE.has(r.status);
 }
 
-// Being posted: the bill is on its way to Xero and not yet confirmed.
-const isPosting = report => !!report && report.xeroError === 'posting';
+// Being posted: the bill is on its way to Xero and not yet confirmed. A
+// marker from a post that died long ago does not count (store/reports.js).
+const isPosting = report => reports.isPosting(report);
+
+// A receipt whose case is being posted. Its details cannot change until the
+// bill is made: the bill is built from them, and an admin's correction in
+// those seconds used to land after the payload was taken, so Xero got one
+// amount and the case, now final, said another.
+function inPosting(expense) {
+  if (!expense || !expense.reportId) return false;
+  return isPosting(reports.head(expense.reportId));
+}
 
 // Posted means: in a case that is in Xero. That is final for everybody —
 // details included — because the bill already exists.
@@ -57,6 +67,7 @@ function markClaimed(reportId, actor) {
   if (!r.expenses.length) fail(400, 'Add at least one receipt before claiming');
   const unreviewed = r.expenses.filter(e => e.status !== 'reviewed');
   if (unreviewed.length) fail(400, `${unreviewed.length} receipt${unreviewed.length === 1 ? ' is' : 's are'} not checked yet`);
+  if (r.totals.noAmount) fail(400, `${r.totals.noAmount} receipt${r.totals.noAmount === 1 ? ' has' : 's have'} no amount yet`);
   if (r.totals.pendingRates) fail(400, `${r.totals.pendingRates} receipt${r.totals.pendingRates === 1 ? ' has' : 's have'} no exchange rate yet`);
   // A receipt already put through on its own would be claimed, and paid, twice.
   const alone = r.expenses.filter(e => e.claimedAt);
@@ -119,4 +130,4 @@ function markExpenseClaimed(expenseId, actor, claimed = true) {
   return expenses.updateExpense(expenseId, { claimedAt: claimed ? new Date().toISOString() : null });
 }
 
-module.exports = { markClaimed, reopen, markExpenseClaimed, isEditable, isLocked, isPosted, isPosting, EDITABLE };
+module.exports = { markClaimed, reopen, markExpenseClaimed, isEditable, isLocked, isPosted, isPosting, inPosting, EDITABLE };
