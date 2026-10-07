@@ -19,6 +19,10 @@ describe('intake/document currency detection', () => {
     ['Total ¥12,345',                 'JPY', 'yen'],
     ['Currency: IDR',                 'IDR', 'a labelled code'],
     ['Charged USD 240.00',            'USD', 'a code beside the amount'],
+    // "US$" contains "S$" and "CA$" contains "A$": both used to be misread.
+    ['Total US$240.00',               'USD', 'US dollar, not SGD'],
+    ['Total CA$99.00',                'CAD', 'Canadian dollar, not AUD'],
+    ['Total A$99.00',                 'AUD', 'Australian dollar'],
   ];
   test.each(cases)('%s → %s (%s)', (text, want) => {
     expect(detectCurrency(text)).toBe(want);

@@ -204,7 +204,7 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
       )}
 
       {importing && (
-        <ClaimImport key={runningJobId || 'new'} onClose={() => { setImporting(false); setRunningJobId(null); }} onImported={onUploaded} initialJobId={runningJobId} />
+        <ClaimImport key={runningJobId || 'new'} onClose={() => { setImporting(false); setRunningJobId(null); }} onImported={onUploaded} initialJobId={runningJobId} reportId={reportId} />
       )}
     </div>
   );

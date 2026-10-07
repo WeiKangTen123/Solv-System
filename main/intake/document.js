@@ -114,8 +114,12 @@ function detectCurrency(text) {
   // Symbols that name a currency. A bare "$" does not — it is used by USD, SGD,
   // AUD, CAD, HKD and NZD — so it is deliberately not handled. Nor is a bare
   // "¥", which China and Japan both print.
-  if (/S\$/.test(text))        return 'SGD';
-  if (/A\$/.test(text))        return 'AUD';
+  // Each symbol only where it starts: "US$" contains "S$" and "CA$" contains
+  // "A$", and both were read as SGD and AUD.
+  if (/(^|[^A-Z])US\$/.test(text)) return 'USD';
+  if (/(^|[^A-Z])CA?\$/.test(text)) return 'CAD';
+  if (/(^|[^A-Z])S\$/.test(text))  return 'SGD';
+  if (/(^|[^A-Z])A\$/.test(text))  return 'AUD';
   if (/NT\$/.test(text))       return 'TWD';
   if (/HK\$/.test(text))       return 'HKD';
   if (/£/.test(text))          return 'GBP';
