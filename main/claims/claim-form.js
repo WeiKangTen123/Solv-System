@@ -1,4 +1,5 @@
 const ExcelJS = require('exceljs');
+const yauzl   = require('yauzl');
 const logger  = require('../utils/logger');
 
 // Reads a company expense-claim spreadsheet into rows.
@@ -99,26 +100,50 @@ function locateHeader(sheet, headers = FIELD_HEADERS, minHits = 3) {
   return best;
 }
 
-// Returns { rows, categories, title }. Never throws: a form that cannot be read
-// must degrade to "no rows" so the receipts alone can still be imported.
 // A spreadsheet is a zip of XML, and the library opens all of it in memory.
-// An 18 MB upload that compresses well can unpack to gigabytes, so the sizes
-// its own directory declares are added up first and anything past this is
-// refused before it is opened. A real claim form is a few hundred kilobytes.
+// An 18 MB upload that compresses well can unpack to gigabytes. The sizes the
+// zip's directory declares are only what the file says about itself, and the
+// library never checks them, so every entry is inflated here first, as a
+// stream that keeps nothing, and the real bytes are counted: past the limit it
+// stops at once. yauzl also holds each entry to its declared size, so one
+// that lies is refused a few kilobytes past what it declared rather than
+// inflated to the end. A real claim form is a few hundred kilobytes.
 const MAX_UNPACKED_BYTES = 30 * 1024 * 1024;
 function unpackedSize(buffer) {
   return new Promise(resolve => {
-    require('yauzl').fromBuffer(buffer, { lazyEntries: true }, (err, zip) => {
+    yauzl.fromBuffer(buffer, { lazyEntries: true }, (err, zip) => {
       if (err || !zip) return resolve(null);
       let total = 0;
-      zip.on('entry', e => { total += e.uncompressedSize; if (total > MAX_UNPACKED_BYTES) { zip.close(); resolve(total); } else zip.readEntry(); });
-      zip.on('end', () => resolve(total));
-      zip.on('error', () => resolve(null));
+      let settled = false;
+      const settle = value => {
+        if (settled) return;
+        settled = true;
+        zip.close();
+        resolve(value);
+      };
+      zip.on('entry', entry => {
+        if (entry.fileName.endsWith('/')) return zip.readEntry();
+        zip.openReadStream(entry, (streamErr, stream) => {
+          if (streamErr || !stream) return settle(null);
+          stream.on('data', chunk => {
+            total += chunk.length;
+            if (total > MAX_UNPACKED_BYTES) { stream.destroy(); settle(total); }
+          });
+          // Destroyed as well, or the inflater behind the stream that failed
+          // could carry on with nobody reading it.
+          stream.on('error', () => { stream.destroy(); settle(null); });
+          stream.on('end', () => { if (!settled) zip.readEntry(); });
+        });
+      });
+      zip.on('end', () => settle(total));
+      zip.on('error', () => settle(null));
       zip.readEntry();
     });
   });
 }
 
+// Returns { rows, categories, title, error }. Never throws: a form that cannot
+// be read must degrade to "no rows" so the receipts alone can still be imported.
 async function parseClaimForm(buffer) {
   const empty = { rows: [], categories: [], title: null, error: null };
   if (!Buffer.isBuffer(buffer) || !buffer.length) return { ...empty, error: 'empty file' };

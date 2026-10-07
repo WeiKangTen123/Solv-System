@@ -1,5 +1,5 @@
 const ExcelJS = require('exceljs');
-const { parseClaimForm, excelSerialToISO, cellDate, cellNumber, normaliseHeader } = require('./claim-form');
+const { parseClaimForm, excelSerialToISO, cellDate, cellNumber, normaliseHeader, MAX_UNPACKED_BYTES } = require('./claim-form');
 
 // Builds a spreadsheet shaped like the real BLACKSTAR claim form: a title block,
 // a header row several rows down, filled lines, blank template lines, then a
@@ -146,5 +146,58 @@ describe('claims/claim-form', () => {
     ] });
     const out = await parseClaimForm(buf);
     expect(out.rows.map(r => r.description)).toEqual(['Grab to client', 'Petrol at Total Energies station', 'Parking']);
+  });
+});
+
+// ── A spreadsheet that unpacks to far more than it says ─────────────────────
+describe('claims/claim-form — the unpacked size is counted, not taken on trust', () => {
+  const zlib = require('zlib');
+
+  // A zip of one deflated entry of `megabytes` of zeros, whose directory
+  // declares `declared` bytes. One compressed megabyte repeated is a valid
+  // deflate stream, so the test never holds the whole of it.
+  function bomb(megabytes, declared) {
+    const block = zlib.deflateRawSync(Buffer.alloc(1024 * 1024), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+    const body = Buffer.concat([...Array(megabytes).fill(block), zlib.deflateRawSync(Buffer.alloc(0))]);
+    const name = Buffer.from('xl/worksheets/sheet1.xml');
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(8, 8);
+    local.writeUInt32LE(body.length, 18); local.writeUInt32LE(declared, 22); local.writeUInt16LE(name.length, 26);
+    const cen = Buffer.alloc(46);
+    cen.writeUInt32LE(0x02014b50, 0); cen.writeUInt16LE(20, 4); cen.writeUInt16LE(20, 6); cen.writeUInt16LE(8, 10);
+    cen.writeUInt32LE(body.length, 20); cen.writeUInt32LE(declared, 24); cen.writeUInt16LE(name.length, 28);
+    const cd = Buffer.concat([cen, name]);
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10);
+    end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(local.length + name.length + body.length, 16);
+    return Buffer.concat([local, name, body, cd, end]);
+  }
+
+  // Counts what the inflater really produces. zlib's exports are read-only,
+  // so the factory is swapped with defineProperty and put back afterwards.
+  let inflated = 0;
+  const original = Object.getOwnPropertyDescriptor(zlib, 'createInflateRaw');
+  beforeEach(() => {
+    inflated = 0;
+    Object.defineProperty(zlib, 'createInflateRaw', { ...original, value: (...args) => {
+      const stream = original.value.apply(zlib, args);
+      const push = stream.push.bind(stream);
+      stream.push = (chunk, encoding) => { if (chunk) inflated += chunk.length; return push(chunk, encoding); };
+      return stream;
+    } });
+  });
+  afterEach(() => Object.defineProperty(zlib, 'createInflateRaw', original));
+
+  test('an entry whose directory under-states its size is refused without being inflated', async () => {
+    const out = await parseClaimForm(bomb(200, 100));
+    expect(out.error).toBe('not a readable spreadsheet');
+    expect(inflated).toBeGreaterThan(0);
+    expect(inflated).toBeLessThan(1024 * 1024);          // of 200 MB
+  });
+
+  test('one that states its size honestly is stopped at the limit', async () => {
+    const out = await parseClaimForm(bomb(200, 200 * 1024 * 1024));
+    expect(out.error).toMatch(/unpacks to far more/);
+    expect(inflated).toBeLessThan(2 * MAX_UNPACKED_BYTES);
   });
 });
