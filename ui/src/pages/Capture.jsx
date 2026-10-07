@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { prepareReceipt, blobToBase64, humanSize, ACCEPT_ATTR } from '../components/receipts/receipt-upload';
+// Only a timer that pauses in a hidden tab: it asks nothing of a session, so
+// it serves this signed-out page as well as any other.
+import { useVisiblePolling } from '../utils/useVisiblePolling';
 
 // The page a phone lands on after scanning the QR code shown on the desktop.
 //
@@ -38,34 +41,38 @@ export default function Capture() {
   }, [token]);
 
   // Parsing happens after the upload responds, so the amounts arrive a moment
-  // later. Poll only while something is still unread, then stop.
-  useEffect(() => {
-    if (state !== 'ready' || !sent.length) return undefined;
-    if (sent.every(s => s.parsed)) return undefined;
-
-    let stop = false;
-    const timer = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/receipts/capture/${encodeURIComponent(token)}/status`);
-        if (stop) return;
-        if (res.status === 401) {
-          // The link died while we were waiting. Asking again every few
-          // seconds would only tell us the same thing.
-          setState('expired');
-          setError('This link has expired. Show a new QR code on your computer.');
-          return;
-        }
-        if (!res.ok) return;
-        const body = await res.json();
-        const byId = new Map((body.receipts || []).map(r => [r.id, r]));
-        setSent(list => list.map(item => {
-          const got = item.id ? byId.get(item.id) : null;
-          return got ? { ...item, ...got } : item;
-        }));
-      } catch { /* transient — try again next tick */ }
-    }, 5000);
-    return () => { stop = true; clearInterval(timer); };
-  }, [state, sent, token]);
+  // later. Asks only while something is still unread.
+  //
+  // This was an interval rebuilt whenever the list changed, and every answer
+  // made a new list, so the timer was torn down and started again on each
+  // tick. The poll now reads the list as it is when it fires.
+  const statusGone = useRef(false);
+  const poll = async () => {
+    if (state !== 'ready' || statusGone.current || !sent.some(s => s.id && !s.parsed)) return;
+    try {
+      const res = await fetch(`/api/receipts/capture/${encodeURIComponent(token)}/status`);
+      if (res.status === 401) {
+        // Asking again every few seconds would only tell us the same thing.
+        statusGone.current = true;
+        // After its twentieth photo the link takes no more, and the server
+        // stopped answering this as well. That is the limit, not an expired
+        // link: the page says so and keeps the list of what was sent.
+        if (usesLeft === 0) return;
+        setState('expired');
+        setError('This link has expired. Show a new QR code on your computer.');
+        return;
+      }
+      if (!res.ok) return;
+      const body = await res.json();
+      if (body.usesLeft === 0 || body.spent) setUses(0);
+      const byId = new Map((body.receipts || []).map(r => [r.id, r]));
+      setSent(list => list.map(item => {
+        const got = item.id ? byId.get(item.id) : null;
+        return got ? { ...item, ...got } : item;
+      }));
+    } catch { /* transient — try again next tick */ }
+  };
+  useVisiblePolling(poll, 5000);
 
   // Object URLs hold the decoded image in memory until released. The list is
   // held in a ref so the cleanup runs once, when the page goes away: with
@@ -81,7 +88,11 @@ export default function Capture() {
     setBusy(true);
     setError('');
 
+    // Several photos picked at once can run past the link's limit; the ones
+    // beyond it are not sent, rather than each failing as "expired".
+    let left = usesLeft, over = 0;
     for (const file of list) {
+      if (left === 0) { over++; continue; }
       try {
         const { blob, mime, originalBytes, bytes } = await prepareReceipt(file);
         const data = await blobToBase64(blob);
@@ -103,11 +114,13 @@ export default function Capture() {
           from: originalBytes, to: bytes,
           merchant: null, total: null, currency: null, parsed: false, unreadable: false,
         }]);
+        if (left !== null) left = Math.max(0, left - 1);
         setUses(n => (n === null ? null : Math.max(0, n - 1)));
       } catch (err) {
         setError(err.message);
       }
     }
+    if (over) setError(`${over} not sent: this link has taken all the photos it can.`);
 
     setBusy(false);
     if (fileRef.current) fileRef.current.value = '';
@@ -120,7 +133,10 @@ export default function Capture() {
     return <div style={wrap}><span style={{ color: 'var(--text-muted)', fontSize: 14 }}>Checking link…</span></div>;
   }
 
-  if (state === 'expired') {
+  // With nothing sent there is nothing else to show. Once photos have gone,
+  // they stay listed under the message, so it is clear what made it.
+  const expired = state === 'expired';
+  if (expired && !sent.length) {
     return (
       <div style={wrap}>
         <div style={{ fontSize: 40 }}>⏱</div>
@@ -132,7 +148,7 @@ export default function Capture() {
 
   return (
     <div style={wrap}>
-      <h2 style={{ fontSize: 19, margin: 0 }}>{openCase ? 'Add to this case' : 'Add an expense'}</h2>
+      <h2 style={{ fontSize: 19, margin: 0 }}>{expired ? 'Link expired' : openCase ? 'Add to this case' : 'Add a receipt'}</h2>
       {openCase && (
         <div style={{ background: 'var(--accent-subtle)', border: '1px solid var(--border)', borderRadius: 10, padding: '8px 14px', maxWidth: 320 }}>
           <div style={{ fontSize: 13, fontWeight: 700 }}>{openCase.title || 'Untitled case'}</div>
@@ -159,8 +175,8 @@ export default function Capture() {
       />
 
       <button
-        className="btn"
-        disabled={busy || usesLeft === 0}
+        className="btn btn-primary btn-lg"
+        disabled={busy || usesLeft === 0 || expired}
         onClick={() => fileRef.current?.click()}
         // Large tap target: this is the only control on the page and it is being
         // used one-handed, probably standing up.
@@ -169,9 +185,9 @@ export default function Capture() {
         {busy ? 'Sending…' : '📷  Take photo'}
       </button>
 
-      {usesLeft === 0 && (
-        <p style={{ color: 'var(--text-muted)', fontSize: 12.5, maxWidth: 300, lineHeight: 1.6 }}>
-          This link has reached its limit. Show a new QR code on your computer to carry on.
+      {usesLeft === 0 && !expired && (
+        <p style={{ color: 'var(--text-secondary)', fontSize: 12.5, maxWidth: 300, lineHeight: 1.6, margin: 0 }}>
+          <strong>Limit reached.</strong> This link has taken all the photos it can. Show a new QR code on your computer to carry on.
         </p>
       )}
 
@@ -201,7 +217,7 @@ export default function Capture() {
                 ) : s.parsed ? (
                   <>
                     <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      <span style={{ color: 'var(--success)' }}>✓</span> {s.merchant || 'Expense'}
+                      <span style={{ color: 'var(--success)' }}>✓</span> {s.merchant || 'Receipt'}
                     </div>
                     <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
                       {s.total != null ? `${s.currency ? s.currency + ' ' : ''}${s.total}` : 'Amount not read'}
@@ -217,7 +233,7 @@ export default function Capture() {
             </div>
           ))}
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 12, lineHeight: 1.55, textAlign: 'center' }}>
-            All of these are waiting on your computer for review.
+            All of these are waiting on your computer to be checked.
           </div>
         </div>
       )}

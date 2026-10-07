@@ -346,6 +346,20 @@ body {
   transform: none;
 }
 
+/* A .btn with no variant is a plain secondary action. It used to have no
+   colours of its own, so the browser's grey button showed through, and in the
+   dark theme that read as a disabled one. The variants below are left alone. */
+.btn:not(.btn-primary, .btn-outline, .btn-ghost, .btn-danger, .btn-success) {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1.5px solid var(--border);
+}
+
+.btn:not(.btn-primary, .btn-outline, .btn-ghost, .btn-danger, .btn-success):hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+}
+
 /* The one gradient on the page. Indigo to violet, primary action only. */
 .btn-primary {
   background: var(--accent-gradient);

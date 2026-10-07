@@ -99,8 +99,9 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
     if (failures.length) setError(failures.join(' · '));
     if (fileRef.current) fileRef.current.value = '';  // let the same file be picked again
     if (made && !ok) {
-      // Nothing landed, so the case it was made for is not a case.
-      try { await api.delete(`/reports/${made.id}`); } catch { /* it will show as empty; not worth an error on top of the upload's */ }
+      // Nothing landed, so the case it was made for is not a case. Asked as
+      // "only if empty", so a case that did get something is never lost.
+      try { await api.delete(`/reports/${made.id}?ifEmpty=1`); } catch { /* it will show as empty; not worth an error on top of the upload's */ }
       return;
     }
     if (!mounted.current) return;
@@ -115,12 +116,20 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
     catch (err) { setError(`Could not start a case: ${err.message}`); }
   }
 
-  async function endPhone() {
+  // `revoked` settles once the phone's link is dead, so nothing more can land.
+  // `arrived` only counts what the dialog's last poll saw: a photo taken in
+  // the three seconds before closing, or still uploading, was missed, and the
+  // case was deleted with it. The server decides instead: it deletes the case
+  // only while it is empty and answers 409 when something is in it.
+  async function endPhone({ revoked } = {}) {
     const p = pairing;
     setPairing(null);
     if (!p || !p.made) return;
-    if (p.arrived > 0) { if (onCase) onCase(p.report); return; }
-    try { await api.delete(`/reports/${p.id}`); } catch { /* an empty case is the worst outcome; not an error */ }
+    const keep = () => { if (onCase && mounted.current) onCase(p.report); };
+    if (p.arrived > 0) { keep(); return; }
+    await revoked;
+    try { await api.delete(`/reports/${p.id}?ifEmpty=1`); }
+    catch (err) { if (err.status === 409) keep(); /* otherwise an empty case is the worst outcome; not an error */ }
   }
 
   return (
@@ -141,10 +150,10 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
           onClick={() => fileRef.current?.click()}
           style={{ background: 'var(--accent-subtle)', color: 'var(--accent-ink)', border: '1px solid var(--accent)', whiteSpace: 'nowrap' }}
         >
-          {busy ? 'Uploading…' : '+ Add expense'}
+          {busy ? 'Uploading…' : '+ Add receipts'}
         </button>
         <button
-          className="btn btn-sm"
+          className="btn btn-outline btn-sm"
           onClick={() => setImporting(true)}
           style={{ whiteSpace: 'nowrap' }}
           title="Import a zip of receipts with its claim form, as emailed"
@@ -152,7 +161,7 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
           Import a claim
         </button>
         <button
-          className="btn btn-sm"
+          className="btn btn-outline btn-sm"
           disabled={busy}
           onClick={startPhone}
           style={{ whiteSpace: 'nowrap' }}
