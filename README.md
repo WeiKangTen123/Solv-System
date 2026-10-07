@@ -1,8 +1,8 @@
 # Solv Expenses
 
-Expense claims for a company that pays its staff back in SGD for receipts in any currency. Staff add receipts (drag-drop, phone camera by QR code, or a ZIP with the claim-form spreadsheet); the reader extracts merchant, date, invoice number, currency, total, tax and category lines, including from scanned multi-page hotel folios; every foreign line is converted at a live exchange rate that is frozen on the line and can be edited with a reason; receipts are bundled into a case with a cover; the claimant marks the case claimed once they have put it through, and an admin can post it to Xero as a draft bill with the receipts attached; the case exports as PDF, XLSX or CSV with the rate footnote and the receipts appended.
+Expense claims for a company that pays its staff back in SGD for receipts in any currency. Staff add receipts (drag-drop, phone camera by QR code, or a ZIP with the claim-form spreadsheet); the reader extracts merchant, date, invoice number, currency, total, tax and category lines, including from scanned multi-page hotel folios; every foreign line is converted at a live exchange rate that is frozen on the line and can be edited with a reason; receipts are bundled into a case with a cover; the claimant marks the case claimed once they have put it through, and can post it to Xero as a draft bill with the receipts attached; the case exports as PDF, XLSX or CSV with the rate footnote and the receipts appended.
 
-Built on the same stack as `xero-invoice-app-master`, with its proven modules ported (reader, duplicate detection, job queue, phone capture, batch import, Xero connection) and five things added: scanned-PDF rendering, multi-page single-document reads, the exchange-rate service, expense reports with approval, and the exports.
+Built on the same stack as `xero-invoice-app-master`, with its proven modules ported (reader, duplicate detection, job queue, phone capture, batch import, Xero connection) and five things added: scanned-PDF rendering, multi-page single-document reads, the exchange-rate service, cases with a printed cover, and the exports.
 
 ## Run it
 
@@ -12,7 +12,7 @@ cp main/.env.example main/.env          # set JWT_SECRET and ENCRYPTION_KEY (64 
 npm run dev                             # server on :4000, UI on :5173
 ```
 
-Open http://localhost:5173. The first account registered becomes the administrator and creates the company (Solv, SGD, Asia/Singapore). In **Settings** add a Gemini API key for the reader (or put `Gemini_API_KEY` in `main/.env`), add staff with roles and managers, set the report columns, and connect Xero when ready.
+Open http://localhost:5173. The first account registered becomes the administrator and creates the company (Solv, SGD, Asia/Singapore). In **Settings** add a Gemini API key for the reader (or put `Gemini_API_KEY` in `main/.env`), add staff, set the report columns, and connect Xero when ready (with an advances account if claims carry advances).
 
 Production: `npm run build:ui` then `NODE_ENV=production npm start` (serves the built UI). `npm run preflight` says whether a machine is fit to run it before you find out from a restart loop, and `npm run deploy` ships to your server and refuses to call it deployed until the running process reports the commit you shipped. Set the target once in `main/.deploy.env` (gitignored; template beside it). Everything about the box — nginx, TLS, backups, restore, rollback, crashes, key rotation — is in [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
@@ -49,7 +49,7 @@ The step belongs to the claimant. Solv does not move money, so it cannot know th
 
 ## The assistant
 
-The **Ask** button on every page opens a chat ([main/assistant/](main/assistant/)) that uses the same Gemini keys as the reader, from Settings → LLM API Setup. Answers stream in as they are written. What the person most likely asks about (the receipt or case on screen, their open items, latest receipts and this month's spending) is looked up before the model is asked, so most questions take one model call. A person waiting for an answer goes ahead of receipts being read in the company's queue, the fast model is tried on every key before the slow fallback, and a key that ran out is left alone until Google says it may be asked again.
+The **Ask** button on every page opens a chat ([main/assistant/](main/assistant/)) that uses the same Gemini keys as the reader, from Settings → LLM API Setup. Answers stream in as they are written. What the person most likely asks about (the receipt or case on screen, their open items, latest receipts and this month's spending) is looked up before the model is asked, so most questions take one model call. Each key is held to its own per-minute quota whoever is using it, a person waiting for an answer goes ahead of receipts being read and always has a slot kept for them, the fast model is tried on every key before the slow fallback, and a key that ran out is left alone until Google says it may be asked again; receipts read while every key is resting wait for the first one back rather than failing.
 
 - **What it does.** It finds and explains receipts and cases, checks a receipt for problems, looks at the receipt's picture or PDF to compare it with what was saved, summarises spending, and looks up exchange rates. An admin can ask about anyone in the company; a user, about their own.
 - **How it changes things.** It never changes anything itself. It proposes a change as a card, and nothing happens until the person presses **Apply**. Applying goes through the same rules as the page and is logged on the receipt as having come through the assistant. A card fails rather than overwrites if the receipt changed after it was proposed, and expires after a day.
@@ -109,7 +109,7 @@ Inter Tight carries the interface and IBM Plex Mono every figure, so amounts lin
 
 | Command | What |
 |---|---|
-| `npm test` | 58 suites, jest + supertest, everything mocked at the network edge |
+| `npm test` | the whole suite, jest + supertest, everything mocked at the network edge |
 | `npm run lint` | eslint over server and UI (errors fail the suite too) |
 | `node main/scripts/read-sample.js <file>` | read one receipt with the live model and print the fields and lines |
 | `node main/scripts/fx-sample.js samples/reads/<folio>.json` | price a saved read with the live providers |
@@ -137,5 +137,4 @@ The rate, its date, its source and the moment it was fetched are stored on every
 ## Not yet
 
 - A live post to the real Xero organisation: the code and a dry run exist; connect the org in Settings and click Post.
-- A server: the deploy path, preflight, backups and runbook exist ([docs/RUNBOOK.md](docs/RUNBOOK.md)); no box has been provisioned and nothing is running anywhere yet.
 - Email intake of claims, mileage, per-diem, policy limits, multi-level approval.

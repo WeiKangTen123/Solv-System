@@ -1,6 +1,10 @@
 # Solv documentation
 
-Everything written about the system, in the order it was produced.
+Everything written about the system, in the order it was produced. The specs
+and plans are the record of what was decided before the build, and some of it
+was decided again since (managers and approval became two roles and a claim the
+claimant records; reports became cases). Where they and the code disagree, the
+code and the repository's README say what is true now.
 
 | Folder | What is in it |
 |---|---|

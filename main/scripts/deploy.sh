@@ -31,7 +31,7 @@
 # pull), runs the tests there, builds the UI, runs preflight, takes a verified
 # backup before restarting, reloads through ecosystem.config.js so the restart
 # policy is the committed one, checks the RUNNING process reports the shipped
-# commit, installs the daily backup cron, and tags the commit deploy/<timestamp>
+# commit, installs the daily backup and health-watch cron, and tags the commit deploy/<timestamp>
 # so a rollback has a name. If anything fails after the server's files have
 # moved and before the restart, the checkout is put back where it was, so the
 # next crash-restart does not pick up code that failed its own tests.
@@ -332,8 +332,10 @@ fi
 # mentioning main/db/backup.js, including the Xero app's on the same box.
 NODE_BIN=$(remote 'command -v node' | tr -d '[:space:]')
 [ -n "$NODE_BIN" ] || NODE_BIN=node
-remote "(crontab -l 2>/dev/null | grep -v 'cd $APP && .*main/db/backup.js' ; printf '0 19 * * * cd %s && %s main/db/backup.js >> logs/backup.log 2>&1\n' $APP $NODE_BIN) | crontab -" >/dev/null 2>&1 \
-  && info "daily backup cron installed (03:00 Singapore, $NODE_BIN)" || ylw "  ! could not install the backup cron"
+# The health watch (main/scripts/healthwatch.js) runs every five minutes and
+# posts to Slack after two misses in a row.
+remote "(crontab -l 2>/dev/null | grep -v 'cd $APP && .*main/db/backup.js' | grep -v 'cd $APP && .*main/scripts/healthwatch.js' ; printf '0 19 * * * cd %s && %s main/db/backup.js >> logs/backup.log 2>&1\n*/5 * * * * cd %s && %s main/scripts/healthwatch.js >> logs/healthwatch.log 2>&1\n' $APP $NODE_BIN $APP $NODE_BIN) | crontab -" >/dev/null 2>&1 \
+  && info "daily backup and five-minute health watch installed in cron ($NODE_BIN)" || ylw "  ! could not install the cron lines"
 # pm2's own log files grow without limit otherwise; the module rotates them.
 remote 'pm2 jlist | grep -q pm2-logrotate || (pm2 install pm2-logrotate > /dev/null 2>&1 && pm2 set pm2-logrotate:max_size 10M > /dev/null && pm2 set pm2-logrotate:retain 14 > /dev/null)' >/dev/null 2>&1 \
   || ylw "  ! could not set up pm2 log rotation"
