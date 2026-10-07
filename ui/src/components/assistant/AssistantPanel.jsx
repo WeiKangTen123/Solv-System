@@ -10,8 +10,10 @@ import { formatDateTime } from '../../utils/formatDate';
 // applies or dismisses. Conversations are the person's own; the server has no
 // route that shows one to anybody else.
 //
-// The open state and the conversation in progress are remembered per browser,
-// so moving between pages keeps the thread.
+// The conversation in progress is remembered per browser, so moving between
+// pages keeps the thread. The panel itself closes on moving to another page:
+// on a desktop it covers the receipt page's fields, and it stayed open over
+// every page after.
 
 const KEY = 'solv.assistant';
 const remember = v => { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch { /* private mode */ } };
@@ -63,10 +65,24 @@ function Rich({ text }) {
 
 const STATUS = { applied: 'Applied', dismissed: 'Dismissed', failed: 'Not applied' };
 
+// Whose receipt a card would change, and whether it has been claimed. Text a
+// colleague put on a receipt can steer an admin's assistant into proposing
+// changes to other people's receipts, so a card says so before Apply.
+function About({ about }) {
+  if (!about) return null;
+  return (
+    <div className="assistant-muted" style={{ marginBottom: 2 }}>
+      {about.mine ? 'Your receipt' : <strong>{`${about.owner || 'Someone else'}'s receipt`}</strong>}
+      {` · ${about.case ? `case ${about.case}` : 'not in a case'} · ${about.claimed ? 'claimed' : 'not claimed'}`}
+    </div>
+  );
+}
+
 function ActionCard({ action, onApply, onDismiss, busy }) {
   const pending = action.status === 'pending';
   return (
     <div className={`assistant-card assistant-card-${action.status}`}>
+      <About about={action.payload?.about} />
       <div className="assistant-card-summary">{action.summary}</div>
       {action.payload?.reason && <div className="assistant-card-reason">{action.payload.reason}</div>}
       {pending ? (
@@ -88,7 +104,7 @@ export default function AssistantPanel() {
   const { isMobile } = useViewMode();
   const location = useLocation();
   const saved = useRef(recall());
-  const [open, setOpen] = useState(!!saved.current.open);
+  const [open, setOpen] = useState(false);
   const [conversationId, setConversationId] = useState(saved.current.conversationId || null);
   const [messages, setMessages] = useState([]);
   const [actions, setActions] = useState([]);
@@ -106,8 +122,17 @@ export default function AssistantPanel() {
   const [error, setError] = useState(null);
   const endRef = useRef(null);
   const inputRef = useRef(null);
+  // Whether to follow the conversation down as it grows: yes, unless the
+  // person has scrolled up to read something earlier.
+  const following = useRef(true);
+  const lastPath = useRef(location.pathname);
 
-  useEffect(() => { remember({ open, conversationId }); }, [open, conversationId]);
+  useEffect(() => { remember({ conversationId }); }, [conversationId]);
+  useEffect(() => {
+    if (lastPath.current === location.pathname) return;
+    lastPath.current = location.pathname;
+    setOpen(false);
+  }, [location.pathname]);
 
   const loadConversation = useCallback(async id => {
     if (!id) { setMessages([]); setActions([]); return; }
@@ -122,11 +147,21 @@ export default function AssistantPanel() {
 
   useEffect(() => {
     if (!open) return;
+    following.current = true;
     api.get('/assistant/status').then(setStatus).catch(() => {});
-    loadConversation(conversationId);
+    // While a question is being answered the thread on screen is ahead of
+    // the server's: it has the question, which is stored with the answer.
+    // Reloading it would take the question out of view.
+    if (!asking.current) loadConversation(conversationId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-  useEffect(() => { if (open && view === 'chat') endRef.current?.scrollIntoView({ block: 'end' }); }, [messages, actions, thinking, open, view]);
+  useEffect(() => {
+    if (open && view === 'chat' && following.current) endRef.current?.scrollIntoView({ block: 'end' });
+  }, [messages, actions, thinking, live.text, live.status, open, view]);
+  const onScroll = e => {
+    const el = e.currentTarget;
+    following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  };
   useEffect(() => { if (open && view === 'chat') inputRef.current?.focus(); }, [open, view]);
 
   async function send(text) {
@@ -137,6 +172,7 @@ export default function AssistantPanel() {
     const ticket = { conversationId };
     asking.current = ticket;
     const mine = () => asking.current === ticket;
+    following.current = true;
     setMessages(ms => [...ms, optimistic]);
     setDraft('');
     let done = null, failure = null;
@@ -159,7 +195,9 @@ export default function AssistantPanel() {
         if (done.usage) setStatus(s => ({ ...(s || {}), ...done.usage }));
       } else {
         setMessages(ms => ms.filter(m => m.id !== optimistic.id));
-        setDraft(message);
+        // The question goes back in the box to try again, unless something
+        // new has been typed there meanwhile.
+        setDraft(d => (d.trim() ? d : message));
         setError(failure);
       }
       asking.current = null;
@@ -238,7 +276,7 @@ export default function AssistantPanel() {
           ))}
         </div>
       ) : (
-        <div className="assistant-body">
+        <div className="assistant-body" onScroll={onScroll}>
           {!messages.length && (
             <div className="assistant-welcome">
               <p className="assistant-p">I can check your receipts, compare them with the paper, explain rates and summarise spending. I can propose corrections too. Nothing changes until you press <strong>Apply</strong>.</p>
@@ -252,13 +290,16 @@ export default function AssistantPanel() {
           {messages.map(m => {
             const cards = m.role === 'assistant' ? (byMessage.get(m.id) || []) : [];
             const pending = cards.filter(a => a.status === 'pending');
+            // Only the person's own receipts are applied together. A card on
+            // somebody else's is pressed on its own, once it has been read.
+            const own = pending.filter(a => a.payload?.about?.mine);
             return (
               <div key={m.id} className={`assistant-msg assistant-msg-${m.role}`}>
                 <div className="assistant-bubble">{m.role === 'assistant' ? <Rich text={m.content} /> : m.content}</div>
                 {cards.map(a => <ActionCard key={a.id} action={a} onApply={apply} onDismiss={dismiss} busy={!!applying[a.id]} />)}
-                {pending.length > 1 && (
-                  <button className="btn btn-outline btn-sm" style={{ alignSelf: 'flex-start' }} disabled={pending.some(a => applying[a.id])} onClick={() => applyAll(pending)}>
-                    Apply all {pending.length}
+                {own.length > 1 && (
+                  <button className="btn btn-outline btn-sm" style={{ alignSelf: 'flex-start' }} disabled={own.some(a => applying[a.id])} onClick={() => applyAll(own)}>
+                    Apply all {own.length}{own.length < pending.length ? ' of yours' : ''}
                   </button>
                 )}
               </div>
