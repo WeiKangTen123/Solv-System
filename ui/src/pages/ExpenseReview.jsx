@@ -10,6 +10,8 @@ import StatusBadge from '../components/StatusBadge';
 import { fmtMoney, fmtRate } from '../utils/format';
 import { useVisiblePolling } from '../utils/useVisiblePolling';
 import { getCompany } from '../utils/useCompany';
+import { fxSourceLong } from '../utils/fxSources';
+import { useLeaveGuard } from '../utils/useLeaveGuard';
 
 // Image on the left, fields on the right, so a figure is checked against the
 // receipt without switching context. Below the fields, the split into report
@@ -18,7 +20,6 @@ const FIELDS = [
   ['merchant', 'Merchant', 'text'], ['receiptDate', 'Receipt date', 'date'], ['receiptTime', 'Time', 'text'], ['invoiceNo', 'Invoice no.', 'text'],
   ['currency', 'Currency', 'text'], ['total', 'Total', 'number'], ['tax', 'Tax included', 'number'], ['purpose', 'Business purpose', 'text'],
 ];
-const SOURCE_LABEL = { frankfurter: 'European Central Bank reference rate', 'open.er-api': 'ExchangeRate-API daily rate', base: 'Base currency', same: 'Same currency' };
 const pick = e => Object.fromEntries(FIELDS.map(([k]) => [k, e[k] ?? '']));
 const cents = v => Math.round(Number(v || 0) * 100);
 // The lines as the server would store them, to tell whether they were edited.
@@ -67,9 +68,13 @@ export default function ExpenseReview() {
   // What the fields said when they were loaded. Save sends only what differs:
   // sending every field wrote back blanks for anything that had changed on
   // the server since, such as what the reader filled in a moment later.
-  const baseline = useRef({ form: {}, lines: '[]' });
-  // Where Prev or Next would go with unsaved changes, waiting for a yes.
-  const [leaveTo, setLeaveTo] = useState(null);
+  const baseline = useRef({ form: {}, lines: '[]', raw: [] });
+  // Prev, Next, a link, the browser's back button or closing the tab: any of
+  // them asks first while something typed has not been saved.
+  const leaveDialog = useLeaveGuard(() => dirty.current, 'What you typed on this receipt has not been saved.');
+  // The number and title of the case this receipt is in, when the list of
+  // cases below does not have it: a claimed case, or anyone else's.
+  const [caseHead, setCaseHead] = useState(null);
 
   const load = useCallback(async ({ preserveEdits } = {}) => {
     const asked = id;
@@ -82,7 +87,7 @@ export default function ExpenseReview() {
       const f = { ...pick(d.expense), reportId: d.expense.reportId || '' };
       const ls = d.expense.lines.map(l => ({ category: l.category || '', description: l.description || '', amount: l.amount, onBehalfOf: l.onBehalfOf || '' }));
       setForm(f); setLines(ls);
-      baseline.current = { form: f, lines: sameLines(ls) };
+      baseline.current = { form: f, lines: sameLines(ls), raw: ls };
       dirty.current = false;
     }
     const rid = d.expense.receipt ? d.expense.receipt.id : null;
@@ -123,6 +128,19 @@ export default function ExpenseReview() {
     if (!perm.isOwner) { setCases([]); return; }
     api.get('/reports?status=open').then(d => setCases(d.reports || [])).catch(() => {});
   }, [perm.isOwner, id]);
+  // The case it is in, named. A claimed case is not among the open ones, and
+  // an admin has no list at all, so the box used to read "Its case".
+  const inCase = exp?.reportId || null;
+  const caseListed = !!inCase && cases.some(r => r.id === inCase);
+  useEffect(() => {
+    setCaseHead(null);
+    if (!inCase || caseListed) return undefined;
+    let alive = true;
+    api.get(`/reports/${inCase}`)
+      .then(d => { if (alive && d.report) setCaseHead({ id: d.report.id, number: d.report.number, title: d.report.title }); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [inCase, caseListed]);
   // Quickly while the reader works, slowly after; and not at all in a tab
   // nobody is looking at.
   useVisiblePolling(() => load({ preserveEdits: true }).catch(() => {}), () => (exp?.status === 'reading' ? 2500 : 4 * 60 * 1000));
@@ -142,7 +160,15 @@ export default function ExpenseReview() {
   const totalCents = cents(form.total);
   const linesCents = lines.reduce((s, l) => s + cents(l.amount), 0);
   const reconciled = lines.length > 0 && totalCents === linesCents;
-  const set = (k, v) => { dirty.current = true; setForm(f => ({ ...f, [k]: v })); };
+  const set = (k, v) => {
+    dirty.current = true;
+    setForm(f => ({ ...f, [k]: v }));
+    // A single line follows the total, as it does on the server when the
+    // total is saved (receipts/edit.js). Left behind on screen, it showed a
+    // red "≠ total" and held Mark reviewed back over a difference Save was
+    // about to put right by itself.
+    if (k === 'total') setLines(ls => (ls.length === 1 ? [{ ...ls[0], amount: v }] : ls));
+  };
   const setLine = (i, k, v) => { dirty.current = true; setLines(ls => ls.map((l, j) => (j === i ? { ...l, [k]: v } : l))); };
   const editLines = fn => { dirty.current = true; setLines(fn); };
 
@@ -158,7 +184,12 @@ export default function ExpenseReview() {
       // Filing is the owner's; anyone else's save leaves the case alone.
       if (perm.canAct && (form.reportId || '') !== (was.reportId || '')) body.reportId = form.reportId || null;
       if (Object.keys(body).length) await api.patch(`/expenses/${id}`, body);
-      if (lines.length && sameLines(lines) !== baseline.current.lines) {
+      // The server has already moved a single line with a new total, so a
+      // line that only followed the total needs no second request.
+      const was1 = baseline.current.raw;
+      const followed = 'total' in body && lines.length === 1 && was1.length === 1 && cents(lines[0].amount) === cents(form.total);
+      const compare = followed ? [{ ...lines[0], amount: was1[0].amount }] : lines;
+      if (lines.length && sameLines(compare) !== baseline.current.lines) {
         await api.put(`/expenses/${id}/lines`, { lines: lines.map(l => ({ ...l, amount: Number(l.amount), onBehalfOf: String(l.onBehalfOf || '').trim() || null })) });
       }
       dirty.current = false;
@@ -206,7 +237,8 @@ export default function ExpenseReview() {
   }
   async function remove() {
     setConfirm(null);
-    try { await api.delete(`/expenses/${id}`); navigate('/expenses'); } catch (e) { setMsg({ tone: 'error', text: e.message }); }
+    // Deleted, so nothing typed on it is left to lose: leave without asking.
+    try { await api.delete(`/expenses/${id}`); dirty.current = false; navigate('/expenses'); } catch (e) { setMsg({ tone: 'error', text: e.message }); }
   }
 
   if (!exp) return <div style={{ color: 'var(--text-muted)' }}>{msg?.text || 'Loading…'}</div>;
@@ -214,8 +246,6 @@ export default function ExpenseReview() {
   // Locked while a save runs too: what was typed during it was overwritten
   // by the reload that followed.
   const detailsLocked = !perm.canEditDetails || exp.status === 'duplicate' || busy === 'save';
-  // Prev and Next ask first when something typed has not been saved.
-  const go = to => { if (dirty.current) setLeaveTo(to); else navigate(to); };
   async function openOriginal() {
     if (!exp.receipt) return;
     // Opened inside the click so the browser allows it, then pointed at a
@@ -253,12 +283,12 @@ export default function ExpenseReview() {
     <div>
       <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><Link to="/expenses" style={{ color: 'inherit' }}>← My expenses</Link></div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><Link to="/expenses" style={{ color: 'inherit' }}>← My receipts</Link></div>
           <h1 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>{exp.merchant || 'Untitled receipt'} <StatusBadge status={exp.status} /></h1>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {prev && <button className="btn btn-outline btn-sm" onClick={() => go(`/expenses/${prev.id}`)}>← Prev</button>}
-          {next && <button className="btn btn-outline btn-sm" onClick={() => go(`/expenses/${next.id}`)}>Next →</button>}
+          {prev && <button className="btn btn-outline btn-sm" onClick={() => navigate(`/expenses/${prev.id}`)}>← Prev</button>}
+          {next && <button className="btn btn-outline btn-sm" onClick={() => navigate(`/expenses/${next.id}`)}>Next →</button>}
           {perm.isOwner && <button className="btn btn-outline btn-sm" disabled={actionsLocked} title={locked ? 'The case it is in has been claimed' : ''} onClick={() => setConfirm('delete')}>Delete</button>}
         </div>
       </div>
@@ -331,7 +361,7 @@ export default function ExpenseReview() {
               <label className="form-label" htmlFor="f-report">Case</label>
               <select id="f-report" className="form-input" value={form.reportId || ''} onChange={e => set('reportId', e.target.value)} disabled={actionsLocked}>
                 <option value="">Not in a case</option>
-                {!caseKnown && <option value={exp.reportId}>Its case</option>}
+                {!caseKnown && <option value={exp.reportId}>{caseHead && caseHead.id === exp.reportId ? `${caseHead.number} ${caseHead.title || ''}` : 'Its case'}</option>}
                 {caseOptions.map(r => <option key={r.id} value={r.id}>{r.number} {r.title || ''}</option>)}
               </select>
             </div>
@@ -350,7 +380,7 @@ export default function ExpenseReview() {
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
                       {fx.fxSource === 'manual'
                         ? `Entered by ${fx.fxOverrideBy || 'an admin'}${fx.fxOverrideReason ? `: ${fx.fxOverrideReason}` : ''}`
-                        : `${SOURCE_LABEL[fx.fxSource] || fx.fxSource} for ${fx.fxRateDate}${fx.fxFetchedAt ? ` · fetched ${formatDateTime(fx.fxFetchedAt, user?.timezone)}` : ''}`}
+                        : `${fxSourceLong(fx.fxSource)} for ${fx.fxRateDate}${fx.fxFetchedAt ? ` · fetched ${formatDateTime(fx.fxFetchedAt, user?.timezone)}` : ''}`}
                     </div>
                     <div style={{ fontSize: 13, marginTop: 8, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>= {fmtMoney(exp.baseTotal, baseCurrency)}</div>
                     {fx.fxNotOnTheDay && (
@@ -365,7 +395,7 @@ export default function ExpenseReview() {
                 ) : (
                   <div className="alert alert-warning" style={{ marginBottom: 0 }}>
                     {l0 && l0.fxCheck
-                      ? `${l0.fxCheck} Until then this expense has no converted amount.`
+                      ? `${l0.fxCheck} Until then this receipt has no converted amount.`
                       : `No rate yet for ${exp.currency} on ${exp.receiptDate || 'this date'}. Refresh, or enter one.`}
                   </div>
                 )}
@@ -387,7 +417,7 @@ export default function ExpenseReview() {
 
           <div className="card">
             <div className="card-title">Lines</div>
-            <div className="card-subtitle">One line per category on the report. They must add up to the total{form.currency ? ` in ${form.currency}` : ''}.</div>
+            <div className="card-subtitle">One line per category on the claim. They must add up to the total{form.currency ? ` in ${form.currency}` : ''}.</div>
             {lines.map((l, i) => (
               <div key={i} className="expense-line">
                 <select className="form-input" value={l.category} disabled={detailsLocked} onChange={e => setLine(i, 'category', e.target.value)} aria-label="Category">
@@ -428,12 +458,9 @@ export default function ExpenseReview() {
         </div>
       </div>
 
-      {leaveTo && (
-        <ConfirmDialog title="Leave without saving?" message="What you typed on this receipt has not been saved." confirmLabel="Leave" danger
-                       onConfirm={() => { const to = leaveTo; setLeaveTo(null); dirty.current = false; navigate(to); }} onCancel={() => setLeaveTo(null)} />
-      )}
+      {leaveDialog}
       {confirm === 'delete' && (
-        <ConfirmDialog title="Delete this expense?" message="The receipt file goes with it unless another expense still uses it." confirmLabel="Delete" danger onConfirm={remove} onCancel={() => setConfirm(null)} />
+        <ConfirmDialog title="Delete this receipt?" message="The photo or PDF goes with it, unless another receipt still uses the same file." confirmLabel="Delete" danger onConfirm={remove} onCancel={() => setConfirm(null)} />
       )}
     </div>
   );

@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { createBrowserRouter, RouterProvider, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { ViewModeProvider } from './context/ViewModeContext';
@@ -50,10 +50,16 @@ function AppRoutes() {
   );
 }
 
+// A data router, because only a data router can hold a navigation while a page
+// with unsaved edits asks first (useLeaveGuard). The routes are the same
+// <Routes> tree as before, mounted under one catch-all, so every path and
+// every guard above is unchanged.
+const router = createBrowserRouter([{ path: '*', element: <AppRoutes /> }]);
+
 export default function App() {
   return (
     <ThemeProvider><ViewModeProvider><AuthProvider><ConfirmProvider>
-      <BrowserRouter><AppRoutes /></BrowserRouter>
+      <RouterProvider router={router} />
     </ConfirmProvider></AuthProvider></ViewModeProvider></ThemeProvider>
   );
 }

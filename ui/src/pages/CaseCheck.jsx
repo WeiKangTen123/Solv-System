@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useViewMode } from '../context/ViewModeContext';
 import { getCompany } from '../utils/useCompany';
 import { useVisiblePolling } from '../utils/useVisiblePolling';
+import { useLeaveGuard } from '../utils/useLeaveGuard';
 import StatusBadge from '../components/StatusBadge';
 import { fmtMoney } from '../utils/format';
 
@@ -61,6 +62,19 @@ export default function CaseCheck() {
   // the server since, such as the reader's figures arriving a moment later.
   const [dirtyRef] = useState(() => new Set());
   const [baseRef] = useState(() => ({}));
+  // Leaving with rows typed into and not saved asks first.
+  const leaveDialog = useLeaveGuard(() => dirtyRef.size > 0, 'What you typed in the table has not been saved.');
+
+  // On a phone the receipt opens under the table, out of sight, so a tap on
+  // a row brings it into view. Not a tap into one of the row's fields: that
+  // is someone about to type there, and scrolling away would lose their place.
+  const panelRef = useRef(null);
+  const showPanel = useRef(false);
+  useEffect(() => {
+    if (!showPanel.current || !sel || !panelRef.current) return;
+    showPanel.current = false;
+    panelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [sel]);
 
   useEffect(() => { load().catch(e => setMsg({ tone: 'error', text: e.message })); }, [load]);
   const reading = !!view?.report?.expenses?.some(e => e.status === 'reading');
@@ -97,33 +111,37 @@ export default function CaseCheck() {
   async function saveRow(e) {
     const edit = rows[e.id];
     if (!edit || !dirtyRef.has(e.id)) return true;
+    const was = baseRef[e.id] || pick(e);
+    const changed = k => String(edit[k] ?? '') !== String(was[k] ?? '');
+    // An empty currency box means "I have not typed it yet", not "this receipt
+    // has no currency": sending it cleared the currency and with it the rate,
+    // so it is left out. One or two letters is a code half typed. That used to
+    // be dropped as well while the row was marked saved, so the receipt kept
+    // its old currency and nothing said so; now the row stays unsaved and says why.
+    const ccy = String(edit.currency || '').toUpperCase();
+    if (changed('currency') && ccy && !/^[A-Z]{3}$/.test(ccy)) {
+      setMsg({ tone: 'error', text: `${e.merchant || 'A receipt'}: the currency needs all three letters, like SGD. Nothing on that row was saved.` });
+      return false;
+    }
     try {
-      const was = baseRef[e.id] || pick(e);
-      const changed = k => String(edit[k] ?? '') !== String(was[k] ?? '');
       const body = {};
-      for (const k of FIELDS) if (k !== 'category' && changed(k)) body[k] = edit[k] === '' ? null : edit[k];
-      // An empty currency box means "I have not typed it yet", not "this receipt
-      // has no currency". Sending it cleared the currency and with it the rate.
-      const ccy = String(edit.currency || '').toUpperCase();
-      if ('currency' in body) { if (/^[A-Z]{3}$/.test(ccy)) body.currency = ccy; else delete body.currency; }
+      // The category goes with the rest. On a receipt with one line the server
+      // moves that line with it (receipts/edit.js), as it moves the line with
+      // a new total. Sending it as a second request with the line rebuilt from
+      // before the save carried the old amount, and the server refused it, so
+      // a new total and a new category on one row could never both be saved.
+      for (const k of FIELDS) if (changed(k)) body[k] = edit[k] === '' ? null : edit[k];
+      if ('currency' in body) { if (ccy) body.currency = ccy; else delete body.currency; }
       if (Object.keys(body).length) await api.patch(`/expenses/${e.id}`, body);
 
-      const lines = e.lines || [];
       const amount = Number(edit.total);
-      if (!lines.length && amount > 0) {
+      if (!(e.lines || []).length && amount > 0) {
         // A receipt the reader could not make out arrives with no lines at all,
         // and an expense with no lines can never be checked. Typing the total
         // here gives it one, which is the whole point of rescuing it from this
         // table rather than opening its own page.
         await api.put(`/expenses/${e.id}/lines`, {
           lines: [{ category: edit.category || null, description: null, amount, currency: ccy || e.currency || null }],
-        });
-      } else if (lines.length === 1 && changed('category') && edit.category !== lines[0].category) {
-        // The report's column comes from the line, not the expense, so a
-        // category typed here has to reach the line or the printed report
-        // ignores it.
-        await api.put(`/expenses/${e.id}/lines`, {
-          lines: [{ ...lines[0], category: edit.category || null, amount: Number(lines[0].amount) }],
         });
       }
       dirtyRef.delete(e.id);
@@ -223,7 +241,10 @@ export default function CaseCheck() {
                 const on = e.id === sel;
                 const rowLocked = !mayEditDetails || e.status === 'duplicate' || e.status === 'reading';
                 return (
-                  <tr key={e.id} onClick={() => setSel(e.id)}
+                  <tr key={e.id} onClick={ev => {
+                        if (isMobile && e.id !== sel && !ev.target.closest('input, select, textarea, button, a')) showPanel.current = true;
+                        setSel(e.id);
+                      }}
                       style={{ cursor: 'pointer', background: on ? 'var(--bg-hover)' : undefined }}>
                     <td><input className="form-input" type="date" style={{ minWidth: 118 }}
                                disabled={rowLocked} value={row.receiptDate || ''} aria-label="Date" onChange={ev => set(e.id, 'receiptDate', ev.target.value)} /></td>
@@ -251,7 +272,7 @@ export default function CaseCheck() {
                              disabled={rowLocked} value={row.total ?? ''} onChange={ev => set(e.id, 'total', ev.target.value)} />
                     </td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
-                      {e.baseTotal != null ? fmtMoney(e.baseTotal, '') : <span style={{ color: 'var(--warning)' }}>no rate</span>}
+                      {e.baseTotal != null ? fmtMoney(e.baseTotal, '') : <span style={{ color: 'var(--warning)' }}>{(e.lines || []).length ? 'no rate' : 'no amount'}</span>}
                     </td>
                     <td><input className="form-input" style={{ minWidth: 140 }}
                                disabled={rowLocked} value={row.purpose || ''} placeholder="What it was for" aria-label="Business purpose"
@@ -269,7 +290,7 @@ export default function CaseCheck() {
         </div>
 
         {selected && (
-          <div className="card" style={isMobile ? undefined : { position: 'sticky', top: 12 }}>
+          <div className="card" ref={panelRef} style={isMobile ? { scrollMarginTop: 12 } : { position: 'sticky', top: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
               <div style={{ fontSize: 13, fontWeight: 700 }}>{selected.merchant || 'Receipt'}</div>
               <button className="btn btn-ghost btn-sm" onClick={() => setSel(null)} aria-label="Close the receipt">✕</button>
@@ -282,6 +303,7 @@ export default function CaseCheck() {
           </div>
         )}
       </div>
+      {leaveDialog}
     </div>
   );
 }
