@@ -5,6 +5,7 @@ jest.mock('../pdf/render', () => ({ renderPdfPages: jest.fn() }));
 jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 0.01341, rateDate: '2026-09-04', providerDate: '2026-09-04', source: 'frankfurter', fetchedAt: '2026-09-18T03:00:00.000Z' }) }));
 jest.mock('../pdf/pages', () => ({
   extractPages: jest.fn(), splittablePages: jest.fn(() => ({ split: false, reason: 'single' })), sameDocument: jest.fn(() => false),
+  pageHasText: jest.requireActual('../pdf/pages').pageHasText,
 }));
 
 describe('receipts/read-receipt', () => {
@@ -50,6 +51,15 @@ describe('receipts/read-receipt', () => {
     expect(lines).toEqual([{ category: 'Lodging', description: '[Lodging] Rooms and meals @ Courtyard', amount: 88188.77, onBehalfOf: null }]);
   });
 
+  test('buildLines never writes a line of nothing or less: a residual bigger than the largest line means one line', () => {
+    // Ten people's 10.00 against a total of 87.00 is inside the tolerance, and
+    // the -13.00 residual on one 10.00 line used to make it -3.00.
+    const items = Array.from({ length: 10 }, (_, i) => ({ description: `Dinner ${i}`, unitAmount: 10, category: 'Meals', onBehalfOf: `Guest ${i}` }));
+    const lines = read.buildLines({ merchant: 'Jumbo', total: 87, category: 'Meals', description: '[Meals] Dinner @ Jumbo', lineItems: items }, 'Other');
+    expect(lines).toEqual([{ category: 'Meals', description: '[Meals] Dinner @ Jumbo', amount: 87, onBehalfOf: null }]);
+    expect(read.buildLines({ merchant: 'Jumbo', total: 99, category: 'Meals', lineItems: items }, 'Other').every(l => l.amount > 0)).toBe(true);
+  });
+
   test('a scanned PDF is rendered and read as one document across pages', async () => {
     const { r, e } = seed('application/pdf');
     pdfPages.extractPages.mockResolvedValue({ pages: ['', '', '', ''], numPages: 4, hasText: false, textPageCount: 0 });
@@ -85,9 +95,21 @@ describe('receipts/read-receipt', () => {
     expect(parser.parseReceiptPages).not.toHaveBeenCalled();
   });
 
+  test('a PDF the text worker could not open is not drawn as well, and says so', async () => {
+    // A broken or hanging file used to cost the text timeout and then the
+    // render timeout, ninety seconds more, to land in the same place.
+    const { r, e } = seed('application/pdf');
+    pdfPages.extractPages.mockResolvedValue({ pages: [], numPages: 0, hasText: false, textPageCount: 0, failed: true });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('%PDF'), mime: 'application/pdf' });
+    expect(render.renderPdfPages).not.toHaveBeenCalled();
+    expect(store.getExpense(e.id)).toMatchObject({ status: 'review-needed', errorMsg: expect.stringMatching(/could not be read automatically/) });
+    expect(await read.readOne(u.id, Buffer.from('%PDF'), 'application/pdf')).toBeNull();
+    expect(render.renderPdfPages).not.toHaveBeenCalled();
+  });
+
   test('a text PDF whose pages are one document is read from the joined text', async () => {
     const { r, e } = seed('application/pdf');
-    pdfPages.extractPages.mockResolvedValue({ pages: ['page one text', 'page two text'], numPages: 2, hasText: true, textPageCount: 2 });
+    pdfPages.extractPages.mockResolvedValue({ pages: ['page one text of the Courtyard folio: rooms and meals', 'page two text of the Courtyard folio: taxes and the total'], numPages: 2, hasText: true, textPageCount: 2 });
     pdfPages.splittablePages.mockReturnValue({ split: false, pageNumbers: [], reason: 'pages of one document' });
     parser.parseReceiptText.mockResolvedValue({ receipts: [{ ...folio, lineItems: [] }], split: false });
     await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('%PDF'), mime: 'application/pdf' });
@@ -97,7 +119,7 @@ describe('receipts/read-receipt', () => {
 
   test('a text PDF of separate receipts becomes one expense per page', async () => {
     const { r, e } = seed('application/pdf');
-    pdfPages.extractPages.mockResolvedValue({ pages: ['grab one', 'grab two'], numPages: 2, hasText: true, textPageCount: 2 });
+    pdfPages.extractPages.mockResolvedValue({ pages: ['GRAB receipt one: Orchard Rd to Changi Airport, SGD 18.40', 'GOJEK receipt two: Changi Airport to Raffles Place, SGD 25.00'], numPages: 2, hasText: true, textPageCount: 2 });
     pdfPages.splittablePages.mockReturnValue({ split: true, pageNumbers: [1, 2], reason: null });
     parser.parseReceiptText
       .mockResolvedValueOnce({ receipts: [{ merchant: 'Grab', total: 18.4, currency: 'SGD', category: 'Air & Transport', confidence: 'high', lineItems: [] }] })
@@ -211,25 +233,180 @@ describe('receipts/read-receipt', () => {
     expect(sib).toMatchObject({ merchant: 'B', reportId: rep.id, currency: 'MYR' });
   });
 
+  test('an extra receipt found after its case was claimed stays out of the case, with a note saying why', async () => {
+    const { r, e } = seed();
+    const reports = require('../store/reports');
+    const rep = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'Trip' });
+    reports.addExpense(rep.id, e.id);
+    // The case is claimed while the reader is still at work on the photo.
+    parser.parseReceiptImage.mockImplementation(async () => {
+      reports.setState(rep.id, { status: 'claimed', claimedAt: new Date().toISOString() });
+      return { split: true, reason: null, receipts: [
+        { merchant: 'A', date: '2026-09-01', total: 10, currency: 'SGD', category: 'Meals', confidence: 'high', lineItems: [], box: [0, 0, 500, 1000] },
+        { merchant: 'B', date: '2026-09-01', total: 20, currency: 'SGD', category: 'Meals', confidence: 'high', lineItems: [], box: [500, 0, 1000, 1000] },
+      ] };
+    });
+    const out = await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('x'), mime: 'image/jpeg' });
+    const sib = store.getExpense(out.expenseIds[1]);
+    expect(sib).toMatchObject({ merchant: 'B', total: 20, reportId: null, status: 'review-needed' });
+    expect(sib.errorMsg).toMatch(new RegExp(`case ${rep.number}, which was claimed while it was being read`));
+    expect(reports.getReport(rep.id).expenses.map(x => x.id)).toEqual([e.id]);
+  });
+
   test('a typed cover sheet with scanned receipts behind it reads the scans too, and a long scan says what it skipped', async () => {
     const cover = 'EXPENSE CLAIM COVER SHEET Employee Aisha Rahman Department Sales Period September 2026 receipts attached';
     pdfPages.extractPages.mockResolvedValue({ pages: [cover, '', ''], numPages: 3, hasText: true, textPageCount: 1 });
     pdfPages.splittablePages.mockReturnValue({ split: false, pageNumbers: [], reason: 'fewer than two pages have readable text' });
-    pdfPages.MIN_PAGE_CHARS = 40;
     parser.parseReceiptText.mockResolvedValue({ split: false, receipts: [{ merchant: null, total: null, confidence: 'low', lineItems: [] }] });
-    render.renderPdfPages.mockResolvedValue({ numPages: 3, pages: [1, 2, 3].map(p => ({ page: p, buffer: Buffer.from(`p${p}`) })) });
-    parser.parseReceiptImage
-      .mockResolvedValueOnce({ split: false, receipts: [{ merchant: 'Grab', date: '2026-09-01', total: 18.4, currency: 'SGD', category: 'Meals', confidence: 'high', lineItems: [] }] })
-      .mockResolvedValueOnce({ split: false, receipts: [{ merchant: null, total: null, confidence: 'low', lineItems: [] }] });
+    render.renderPdfPages.mockResolvedValue({ numPages: 3, pages: [2, 3].map(p => ({ page: p, buffer: Buffer.from(`p${p}`) })) });
+    parser.parseReceiptBatch.mockResolvedValue([
+      { split: false, receipts: [{ merchant: 'Grab', date: '2026-09-01', total: 18.4, currency: 'SGD', category: 'Meals', confidence: 'high', lineItems: [] }] },
+      { split: false, receipts: [{ merchant: null, total: null, confidence: 'low', lineItems: [] }] },
+    ]);
     const out = await read.readParts(u.id, Buffer.from('%PDF'), 'application/pdf');
-    expect(out.parts.map(p => [p.page, p.r && p.r.merchant])).toEqual([[1, null], [2, 'Grab']]);
+    expect(out.parts.map(p => [p.page, p.r && p.r.merchant])).toEqual([[null, null], [2, 'Grab']]);      // null: the whole file
+    // The scans are read together through the batch reader, as whole reads.
+    expect(parser.parseReceiptImage).not.toHaveBeenCalled();
+    expect(parser.parseReceiptBatch.mock.calls[0][1]).toHaveLength(2);
+    expect(parser.parseReceiptBatch.mock.calls[0][2]).toMatchObject({ split: true });
+    expect(out.notes).toEqual(['No receipt was read on page 3; check it by hand.']);
 
+    // A thick scan: pages with no receipt make no row, and are named.
+    parser.parseReceiptBatch.mockReset();
     pdfPages.extractPages.mockResolvedValue({ pages: [], numPages: 30, hasText: false, textPageCount: 0 });
     render.renderPdfPages.mockResolvedValue({ numPages: 30, pages: Array.from({ length: 20 }, (_, i) => ({ page: i + 1, buffer: Buffer.from('x') })) });
     parser.parseReceiptBatch.mockResolvedValue(new Array(20).fill(null));
     const scan = await read.readParts(u.id, Buffer.from('%PDF'), 'application/pdf');
     expect(parser.parseReceiptBatch).toHaveBeenCalledTimes(1);          // five pages a call, inside the batch reader
     expect(scan.notes.join(' ')).toMatch(/Only the first 20 of 30 pages were read/);
-    expect(scan.parts).toHaveLength(20);
+    expect(scan.notes.join(' ')).toMatch(/No receipt was read on pages 1, 2, 3, .*, 20; check them by hand/);
+    expect(scan.parts).toHaveLength(0);
+  });
+
+  test('a scan of three taxi receipts, one to a page, becomes three expenses, each on its page', async () => {
+    const { r, e } = seed('application/pdf');
+    pdfPages.extractPages.mockResolvedValue({ pages: ['', '', ''], numPages: 3, hasText: false, textPageCount: 0 });
+    render.renderPdfPages.mockResolvedValue({ numPages: 3, pages: [1, 2, 3].map(p => ({ page: p, buffer: Buffer.from(`p${p}`) })) });
+    const ride = (merchant, invoiceNumber, total, page) => ({ merchant, invoiceNumber, total, date: '2026-09-01', currency: 'SGD', category: 'Air & Transport', confidence: 'high', lineItems: [], box: null, pages: [page] });
+    parser.parseReceiptPages.mockResolvedValue({ split: true, reason: null, receipts: [ride('Grab', 'A1', 18.4, 1), ride('Grab', 'A2', 22.1, 2), ride('ComfortDelGro', null, 30.6, 3)] });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('%PDF'), mime: 'application/pdf' });
+    const all = store.listExpenses({ receiptId: r.id }).sort((a, b) => a.page - b.page);
+    expect(all.map(x => [x.page, x.merchant, x.total, x.status])).toEqual([
+      [1, 'Grab', 18.4, 'review-needed'], [2, 'Grab', 22.1, 'review-needed'], [3, 'ComfortDelGro', 30.6, 'review-needed'],
+    ]);
+  });
+
+  test('pages the reader could not tell apart stay one expense, and a note says how many it saw', async () => {
+    const { r, e } = seed('application/pdf');
+    pdfPages.extractPages.mockResolvedValue({ pages: ['', ''], numPages: 2, hasText: false, textPageCount: 0 });
+    render.renderPdfPages.mockResolvedValue({ numPages: 2, pages: [1, 2].map(p => ({ page: p, buffer: Buffer.from(`p${p}`) })) });
+    parser.parseReceiptPages.mockResolvedValue({ split: false, reason: 'two entries may be one document', receipts: [folio, { ...folio, total: 100 }] });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('%PDF'), mime: 'application/pdf' });
+    expect(store.listExpenses({ receiptId: r.id })).toHaveLength(1);
+    expect(store.getExpense(e.id)).toMatchObject({ total: 88188.77, errorMsg: expect.stringMatching(/saw 2 receipts in these pages/) });
+  });
+
+  test('every scanned page among typed ones is read, five to a call, and a page the renderer would not draw is named', async () => {
+    const typed = 'TAX INVOICE Courtyard By Marriott Pune Chakan folio 00/000-000001 total INR 45,000.00';
+    const pages = [typed, ...new Array(24).fill('')];                    // 24 scans behind one typed page
+    pdfPages.extractPages.mockResolvedValue({ pages, numPages: 25, hasText: true, textPageCount: 1 });
+    parser.parseReceiptText.mockResolvedValue({ split: false, receipts: [{ ...folio, total: 45000, lineItems: [] }] });
+    // The renderer draws twenty pages at most.
+    render.renderPdfPages.mockImplementation(async (buf, opts) => ({ numPages: 25, pages: opts.pages.slice(0, 20).map(p => ({ page: p, buffer: Buffer.from(`p${p}`) })) }));
+    const two = { split: true, reason: null, receipts: [
+      { merchant: 'A', total: 5, currency: 'SGD', box: [0, 0, 500, 1000], lineItems: [] },
+      { merchant: 'B', total: 7, currency: 'SGD', box: [500, 0, 1000, 1000], lineItems: [] },
+    ] };
+    parser.parseReceiptBatch.mockImplementation(async (userId, images) => images.map((_, i) => (i === 0 ? two : { split: false, receipts: [{ merchant: `Shop ${i}`, total: 10 + i, lineItems: [] }] })));
+    const out = await read.readParts(u.id, Buffer.from('%PDF'), 'application/pdf');
+    expect(render.renderPdfPages.mock.calls[0][1].pages).toHaveLength(24);    // not the first ten
+    expect(parser.parseReceiptBatch).toHaveBeenCalledTimes(1);
+    expect(parser.parseReceiptImage).not.toHaveBeenCalled();
+    expect(out.notes.join(' ')).toMatch(/Only 20 of the 24 scanned pages were read/);
+    // The typed folio, then page 2 split in two like a photo, then pages 3 to 21.
+    expect(out.parts).toHaveLength(1 + 2 + 19);
+    expect(out.parts.slice(1, 3).map(p => [p.page, p.r.merchant, p.box])).toEqual([[2, 'A', [0, 0, 500, 1000]], [2, 'B', [500, 0, 1000, 1000]]]);
+    expect(out.parts.at(-1)).toMatchObject({ page: 21, r: { merchant: 'Shop 19' } });
+  });
+
+  test('a read that could not reach the AI service says so on the receipt, and the receipt is still released', async () => {
+    const { r, e } = seed();
+    parser.parseReceiptImage.mockResolvedValue({ receipts: [], split: false, reason: 'the reader could not reach the AI service', unavailable: true });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('x'), mime: 'image/jpeg' });
+    const after = store.getExpense(e.id);
+    expect(after.status).toBe('review-needed');
+    expect(after.merchant).toBeNull();
+    expect(after.errorMsg).toMatch(/could not reach the AI service.*Re-read/);
+  });
+});
+
+describe('receipts/read-receipt — reading one part of a file again', () => {
+  let parser, render, pdfPages, read;
+  const typed = 'TAX INVOICE Courtyard By Marriott Pune Chakan folio 00/000-000001 page one of the charges';
+  const typedLast = 'TAX INVOICE Courtyard By Marriott Pune Chakan folio 00/000-000001 page two total INR 45,000.00';
+  const mixed = { pages: [typed, typedLast, ''], numPages: 3, hasText: true, textPageCount: 2 };
+  const grab = { merchant: 'Grab', total: 18.4, currency: 'SGD', lineItems: [] };
+
+  beforeEach(() => {
+    jest.resetModules();
+    parser = require('./receipt-parser'); render = require('../pdf/render'); pdfPages = require('../pdf/pages');
+    read = require('./read-receipt');
+    [parser.parseReceiptImage, parser.parseReceiptText, parser.parseReceiptPages, parser.parseReceiptBatch, render.renderPdfPages, pdfPages.extractPages].forEach(f => f.mockReset());
+    pdfPages.splittablePages.mockReset(); pdfPages.splittablePages.mockReturnValue({ split: false, reason: 'pages of one document' });
+  });
+
+  test('a scanned page among typed ones is drawn and read as an image, not sent to the text reader empty', async () => {
+    pdfPages.extractPages.mockResolvedValue(mixed);
+    render.renderPdfPages.mockResolvedValue({ numPages: 3, pages: [{ page: 3, buffer: Buffer.from('p3') }] });
+    parser.parseReceiptImage.mockResolvedValue({ split: false, receipts: [grab] });
+    const r = await read.readOne('u1', Buffer.from('%PDF'), 'application/pdf', { page: 3 });
+    expect(r.merchant).toBe('Grab');
+    expect(render.renderPdfPages.mock.calls[0][1]).toEqual({ pages: [3] });
+    expect(parser.parseReceiptText).not.toHaveBeenCalled();
+  });
+
+  test('the folio beside the scans is read whole again, whether its row says page null or the old pinned page', async () => {
+    pdfPages.extractPages.mockResolvedValue(mixed);
+    parser.parseReceiptText.mockResolvedValue({ split: false, receipts: [{ merchant: 'Courtyard', total: 45000, lineItems: [] }] });
+    expect((await read.readOne('u1', Buffer.from('%PDF'), 'application/pdf', { page: null })).total).toBe(45000);
+    expect((await read.readOne('u1', Buffer.from('%PDF'), 'application/pdf', { page: 1 })).total).toBe(45000);
+    for (const [, text] of parser.parseReceiptText.mock.calls) expect(text).toMatch(/page one[\s\S]*total INR 45,000/);
+    // Typed pages that were separate receipts are still read one page at a time.
+    pdfPages.splittablePages.mockReturnValue({ split: true, pageNumbers: [1, 2], reason: null });
+    await read.readOne('u1', Buffer.from('%PDF'), 'application/pdf', { page: 2 });
+    expect(parser.parseReceiptText.mock.calls.at(-1)[1]).toBe(typedLast);
+  });
+
+  test('a receipt kept apart in a short scan is found again by its pages, or read from its page alone', async () => {
+    pdfPages.extractPages.mockResolvedValue({ pages: ['', '', ''], numPages: 3, hasText: false, textPageCount: 0 });
+    render.renderPdfPages.mockImplementation(async (buf, opts) => ({ numPages: 3, pages: (opts.pages || [1, 2, 3]).map(p => ({ page: p, buffer: Buffer.from(`p${p}`) })) }));
+    parser.parseReceiptPages.mockResolvedValue({ split: true, reason: null, receipts: [
+      { merchant: 'Grab', total: 18.4, pages: [1], box: null, lineItems: [] },
+      { merchant: 'Courtyard', total: 45000, pages: [2, 3], box: null, lineItems: [] },
+    ] });
+    // The second receipt's row is on page 2; its total is on page 3.
+    expect((await read.readOne('u1', Buffer.from('%PDF'), 'application/pdf', { page: 2 })).total).toBe(45000);
+    expect(parser.parseReceiptPages.mock.calls[0][1]).toHaveLength(3);
+    // A re-read that no longer keeps them apart reads the row's page on its own.
+    parser.parseReceiptPages.mockResolvedValue({ split: false, reason: 'two entries may be one document', receipts: [{ merchant: 'Courtyard', total: 45018.4, lineItems: [] }] });
+    parser.parseReceiptImage.mockResolvedValue({ split: false, receipts: [grab] });
+    expect((await read.readOne('u1', Buffer.from('%PDF'), 'application/pdf', { page: 1 })).merchant).toBe('Grab');
+    expect(render.renderPdfPages.mock.calls.at(-1)[1]).toEqual({ pages: [1] });
+  });
+
+  test('one half of a split photo is never re-read with the other half\'s figures', async () => {
+    const A = { merchant: 'A', total: 5, box: [0, 0, 500, 1000], lineItems: [] };
+    const B = { merchant: 'B', total: 7, box: [500, 0, 1000, 1000], lineItems: [] };
+    const again = async receipts => {
+      parser.parseReceiptImage.mockResolvedValue({ split: receipts.length > 1, receipts });
+      return read.readOne('u1', Buffer.from('x'), 'image/jpeg', { box: [500, 0, 1000, 1000] });
+    };
+    expect((await again([A, B])).merchant).toBe('B');
+    expect((await again([A, { ...B, box: [480, 20, 990, 980] }])).merchant).toBe('B');   // boxes move a little between reads
+    expect(await again([A])).toBeNull();                                                // only the other half was found
+    expect(await again([{ ...B, box: null }])).toBeNull();                              // found, but nowhere to be placed
+    // A row that owns no region takes the first, as before.
+    parser.parseReceiptImage.mockResolvedValue({ split: false, receipts: [A] });
+    expect((await read.readOne('u1', Buffer.from('x'), 'image/jpeg')).merchant).toBe('A');
   });
 });

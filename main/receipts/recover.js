@@ -42,14 +42,10 @@ async function recoverStuckReads({ before = new Date().toISOString() } = {}) {
     const whole = receipt && !receipt.parsedAt && ids.length === 1 && store.countExpensesForReceipt(receipt.id) === 1;
     const buffer = whole ? receiptStore.forUser(receipt.userId).read(receipt.file) : null;
     if (!buffer) { for (const id of ids) _release(id); released += ids.length; continue; }
+    // readReceipt never throws: however the read ends, it releases its rows.
     const e = store.getExpense(ids[0]);
-    try {
-      await readReceipt({ companyId: e.companyId, userId: e.userId, receiptId: receipt.id, expenseId: e.id, buffer, mime: receipt.mime, source: receipt.source || 'upload' });
-      reread++;
-    } catch (err) {
-      logger.warn('Re-reading an interrupted receipt failed', { expenseId: e.id, error: err.message });
-      _release(e.id); released++;
-    }
+    await readReceipt({ companyId: e.companyId, userId: e.userId, receiptId: receipt.id, expenseId: e.id, buffer, mime: receipt.mime, source: receipt.source || 'upload' });
+    reread++;
   }
   logger.info('Interrupted reads recovered', { reread, released });
   return { reread, released };

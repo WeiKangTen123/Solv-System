@@ -1,4 +1,6 @@
 jest.mock('../llm/gemini-client', () => ({ callGemini: jest.fn(), GEMINI_MODELS: ['m1'] }));
+// The real image preparation, counted.
+jest.mock('./image-prep', () => { const actual = jest.requireActual('./image-prep'); return { ...actual, imagePart: jest.fn(actual.imagePart) }; });
 const { callGemini } = require('../llm/gemini-client');
 const parser = require('./receipt-parser');
 
@@ -305,11 +307,46 @@ describe('receipt-parser — when a photo may be split', () => {
       expect(r.split).toBe(true);
     });
 
-    test('an empty or unusable response is null, not an empty split', () => {
-      expect(normaliseMany({ receipts: [] })).toBeNull();
+    test('an unusable response is null, not an empty split', () => {
       expect(normaliseMany(null)).toBeNull();
       expect(normaliseMany('nope')).toBeNull();
+      expect(normaliseMany({ receipts: [null, 'x'] })).toBeNull();
     });
+
+    test('"no receipt here", said as an empty list, is an answer and not a bad shape', () => {
+      expect(normaliseMany({ receipts: [] })).toEqual({ receipts: [], split: false, reason: 'no receipt' });
+      expect(normaliseMany([])).toEqual({ receipts: [], split: false, reason: 'no receipt' });
+    });
+  });
+});
+
+describe('receipt-parser — an empty answer, and a reader out of reach', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test('an honest "no receipt here" is taken at its word, not asked again', async () => {
+    callGemini.mockResolvedValue(JSON.stringify({ receipts: [] }));
+    const r = await parser.parseReceiptImage('u1', JPEG, 'image/jpeg');
+    expect(r).toMatchObject({ receipts: [], split: false });
+    expect(r.unavailable).toBeUndefined();
+    expect(callGemini).toHaveBeenCalledTimes(1);
+  });
+
+  test('every key out of quota comes back as unavailable, not as unreadable', async () => {
+    // What the client throws when every key and model is cooling down.
+    callGemini.mockRejectedValue(Object.assign(new Error('Every LLM key is out of quota for the moment'), { response: { status: 429 } }));
+    expect(await parser.parseReceiptImage('u1', JPEG, 'image/jpeg')).toMatchObject({ receipts: [], unavailable: true });
+    expect(callGemini).toHaveBeenCalledTimes(1);
+    callGemini.mockReset();
+    // Busy everywhere, then cooling down everywhere: the same.
+    callGemini.mockRejectedValueOnce(Object.assign(new Error('busy'), { response: { status: 503 } }))
+      .mockRejectedValueOnce(Object.assign(new Error('cooling'), { response: { status: 429 } }));
+    expect(await parser.parseReceiptText('u1', 'Grab receipt text')).toMatchObject({ unavailable: true });
+  });
+
+  test('a reader that answered last, however badly, is not called unavailable', async () => {
+    callGemini.mockRejectedValueOnce(Object.assign(new Error('busy'), { response: { status: 503 } }))
+      .mockResolvedValueOnce('not json at all');
+    expect(await parser.parseReceiptImage('u1', JPEG, 'image/jpeg')).toBeNull();
   });
 });
 
@@ -417,6 +454,56 @@ describe('receipt-parser — reading several at once', () => {
     expect(await parser.parseReceiptBatch('u1', [])).toEqual([]);
     expect(callGemini).not.toHaveBeenCalled();
   });
+
+  test('the fallback reuses each image as it was prepared for the batch', async () => {
+    // Shrinking and encoding a photo is the slow part; the reads one at a
+    // time after a failed batch used to do it all again.
+    const { imagePart } = require('./image-prep');
+    callGemini
+      .mockResolvedValueOnce(JSON.stringify([read(1, 'Grab', 15.8)]))                 // one answer for three
+      .mockResolvedValue(JSON.stringify({ receipts: [read(1, 'Single', 9.9)] }));
+    await parser.parseReceiptBatch('u1', [img(1), img(2), img(3)]);
+    expect(callGemini).toHaveBeenCalledTimes(4);
+    expect(imagePart).toHaveBeenCalledTimes(3);
+  });
+
+  test('an image the batch says holds two receipts is read on its own, where it can split', async () => {
+    const two = { receipts: [
+      { merchant: 'A', total: 5, currency: 'SGD', confidence: 'high', box_2d: [0, 0, 480, 1000] },
+      { merchant: 'B', total: 7, currency: 'SGD', confidence: 'high', box_2d: [520, 0, 1000, 1000] },
+    ] };
+    callGemini
+      .mockResolvedValueOnce(JSON.stringify([read(1, 'Grab', 15.8), { ...read(2, 'A', 5), count: 2 }]))
+      .mockResolvedValueOnce(JSON.stringify(two));
+    const whole = await parser.parseReceiptBatch('u1', [img(1), img(2)], { split: true });
+    expect(callGemini).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(callGemini.mock.calls[0][1])).toContain('\\"count\\"');
+    expect(whole[0]).toMatchObject({ split: false, receipts: [expect.objectContaining({ merchant: 'Grab' })] });
+    expect(whole[1].split).toBe(true);
+    expect(whole[1].receipts.map(r => r.merchant)).toEqual(['A', 'B']);
+
+    // Asked for one receipt an image, as the claim import asks, it is the first.
+    callGemini.mockReset();
+    callGemini
+      .mockResolvedValueOnce(JSON.stringify([read(1, 'Grab', 15.8), { ...read(2, 'A', 5), count: 2 }]))
+      .mockResolvedValueOnce(JSON.stringify(two));
+    expect((await parser.parseReceiptBatch('u1', [img(1), img(2)])).map(r => r.merchant)).toEqual(['Grab', 'A']);
+  });
+
+  test('whole reads say when a page held no receipt, and when the reader was out of reach', async () => {
+    callGemini
+      .mockResolvedValueOnce(JSON.stringify([read(1, 'Grab', 15.8), { index: 2 }]))   // the second read nothing
+      .mockResolvedValueOnce(JSON.stringify({ receipts: [] }));                       // and alone: nothing there
+    const out = await parser.parseReceiptBatch('u1', [img(1), img(2)], { split: true });
+    expect(out[1]).toEqual({ receipts: [], split: false, reason: 'no receipt' });
+    expect(callGemini).toHaveBeenCalledTimes(2);                                       // not asked a third time
+
+    callGemini.mockReset();
+    callGemini.mockRejectedValue(Object.assign(new Error('Every LLM key is out of quota for the moment'), { response: { status: 429 } }));
+    const off = await parser.parseReceiptBatch('u1', [img(1), img(2)], { split: true });
+    expect(off.every(r => r && r.unavailable)).toBe(true);
+    expect(await parser.parseReceiptBatch('u1', [img(1), img(2)])).toEqual([null, null]);
+  });
 });
 
 describe('receipt-parser — reading a PDF from its text', () => {
@@ -487,7 +574,7 @@ describe('receipt-parser — Solv extensions', () => {
     expect(r.lineItems[0].onBehalfOf).toBeNull();
   });
 
-  test('parseReceiptPages sends every page in one call and never splits', async () => {
+  test('parseReceiptPages sends every page in one call, and a doubtful second entry does not split it', async () => {
     gemini.callGemini.mockResolvedValueOnce(JSON.stringify({ receipts: [
       { merchant: 'JW Marriott Mumbai Sahar', date: '2026-09-01', currency: 'INR', total: 44309, category: 'Lodging', confidence: 'high', lineItems: [] },
       { merchant: 'ghost', total: 1 },
@@ -495,18 +582,62 @@ describe('receipt-parser — Solv extensions', () => {
     const pages = [{ buffer: Buffer.from('p1'), mime: 'image/jpeg' }, { buffer: Buffer.from('p2'), mime: 'image/jpeg' }];
     const out = await parser.parseReceiptPages('u1', pages);
     expect(out.split).toBe(false);
-    expect(out.receipts).toHaveLength(1);
     expect(out.receipts[0].merchant).toBe('JW Marriott Mumbai Sahar');
+    // The second entry says nothing of its pages, so it is not kept apart; it
+    // stays in the answer for the caller to say something was left out.
+    expect(out.receipts).toHaveLength(2);
     const messages = gemini.callGemini.mock.calls.at(-1)[1];
     const parts = messages[1].content;
     expect(parts.filter(p => p.type === 'image_url')).toHaveLength(2);
     expect(parts[0].text).toMatch(/ONE document/);
   });
 
+  test('parseReceiptPages keeps pages that are plainly separate documents apart, each with its pages', async () => {
+    // Three taxi receipts scanned one to a page used to come back as the first ride.
+    gemini.callGemini.mockResolvedValueOnce(JSON.stringify({ receipts: [
+      { merchant: 'Grab', invoiceNumber: 'A-1001', total: 18.4, currency: 'SGD', pages: [1], box_2d: [0, 0, 500, 1000] },
+      { merchant: 'Grab', invoiceNumber: 'A-1002', total: 22.1, currency: 'SGD', pages: [2] },
+      { merchant: 'ComfortDelGro', total: 30.6, currency: 'SGD', pages: [3] },
+    ] }));
+    const out = await parser.parseReceiptPages('u1', [1, 2, 3].map(n => ({ buffer: Buffer.from(`p${n}`), mime: 'image/jpeg' })));
+    expect(gemini.callGemini).toHaveBeenCalledTimes(1);
+    expect(out.split).toBe(true);
+    expect(out.receipts.map(r => [r.merchant, r.pages, r.box])).toEqual([['Grab', [1], null], ['Grab', [2], null], ['ComfortDelGro', [3], null]]);
+  });
+
+  test('a receipt keeps the pages it is printed on only when they are page numbers', () => {
+    expect(parser.normalise({ ...good, pages: [2, '1', 2] }).pages).toEqual([1, 2]);
+    expect(parser.normalise({ ...good, pages: [0, 1] })).not.toHaveProperty('pages');
+    expect(parser.normalise({ ...good, pages: 'all' })).not.toHaveProperty('pages');
+  });
+
   test('parseReceiptPages with one page behaves like a single image read', async () => {
     gemini.callGemini.mockResolvedValueOnce(JSON.stringify({ receipts: [{ merchant: 'Grab', total: 18.4, currency: 'SGD', confidence: 'high' }] }));
     const out = await parser.parseReceiptPages('u1', [{ buffer: Buffer.from('p1'), mime: 'image/jpeg' }]);
     expect(out.receipts[0].merchant).toBe('Grab');
+  });
+});
+
+describe('receipt-parser — the pages of one scan, one document or several', () => {
+  const { separateDocuments } = require('./receipt-parser');
+  const doc = (merchant, invoiceNumber, pages, total = 10) => ({ merchant, invoiceNumber, pages, total });
+
+  test('another merchant, or another receipt number, on pages of its own is another document', () => {
+    expect(separateDocuments([doc('Grab', null, [1]), doc('Gojek', null, [2])], 2).split).toBe(true);
+    expect(separateDocuments([doc('Grab', 'A1', [1]), doc('Grab', 'A12', [2])], 2).split).toBe(true);
+    expect(separateDocuments([doc('Courtyard Pune', 'F-77', [1, 2]), doc('Grab', null, [3])], 3).split).toBe(true);
+  });
+
+  test('anything doubtful stays one document', () => {
+    // One merchant under two spellings and no number to tell them apart.
+    expect(separateDocuments([doc('Grab', null, [1]), doc('GRAB Singapore', null, [2])], 2).split).toBe(false);
+    expect(separateDocuments([doc('JW Marriott', 'F-77', [1]), doc('JW Marriott', 'f 77', [2])], 2).split).toBe(false);
+    // An entry that does not say where it is, a page claimed twice, a page that is not there.
+    expect(separateDocuments([doc('Grab', null, [1]), doc('Gojek', null, undefined)], 2).split).toBe(false);
+    expect(separateDocuments([doc('Grab', null, [1, 2]), doc('Gojek', null, [2])], 2).split).toBe(false);
+    expect(separateDocuments([doc('Grab', null, [1]), doc('Gojek', null, [3])], 2).split).toBe(false);
+    // An entry with nothing a receipt has.
+    expect(separateDocuments([doc('Grab', null, [1]), { merchant: null, invoiceNumber: null, total: null, pages: [2] }], 2).split).toBe(false);
   });
 });
 
@@ -638,5 +769,16 @@ describe('receipt-parser — the tax figure against the tax lines', () => {
     // A Singapore receipt whose GST is inside the prices and listed once more as a line: the items overshoot, so the model's figure stands.
     const inclusive = [{ description: 'Kopi', unitAmount: 10 }, { description: 'Toast', unitAmount: 6.1 }, { description: 'GST 9% (included)', unitAmount: 1.33 }];
     expect(parser.normalise({ merchant: 'Cafe', total: 16.1, currency: 'SGD', tax: 1.33, lineItems: inclusive }).tax).toBe(1.33);
+  });
+
+  test('a service charge is not tax: a Singapore bill with 10.00 service and 9.90 GST keeps a tax of 9.90', () => {
+    // The items account for the total, so the tax lines are held against the
+    // model's figure. Counting the service charge made them 19.90, which then
+    // replaced the model's correct 9.90 and went to Xero.
+    const bill = [{ description: 'Food', unitAmount: 100 }, { description: 'Service Charge 10%', unitAmount: 10 }, { description: 'GST 9%', unitAmount: 9.9 }];
+    expect(parser.normalise({ merchant: 'Din Tai Fung', total: 119.9, currency: 'SGD', tax: 9.9, lineItems: bill }).tax).toBe(9.9);
+    expect(parser.normalise({ merchant: 'Din Tai Fung', total: 119.9, currency: 'SGD', tax: null, lineItems: bill }).tax).toBe(9.9);
+    const svc = [{ description: 'Food', unitAmount: 100 }, { description: 'SVC CHG', unitAmount: 10 }, { description: 'GST', unitAmount: 9.9 }];
+    expect(parser.normalise({ merchant: 'Din Tai Fung', total: 119.9, currency: 'SGD', tax: 9.9, lineItems: svc }).tax).toBe(9.9);
   });
 });

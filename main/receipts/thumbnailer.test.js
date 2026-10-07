@@ -94,6 +94,14 @@ describe('receipts/thumbnailer — generating', () => {
     const after = await thumbnailer.thumbnailPath(src, dir, 'r.jpg', 160, 'image/jpeg');
     expect(fs.statSync(after).mtimeMs).not.toBe(before);
   });
+
+  test('a transparent PNG comes out on white, not on JPEG\'s black', async () => {
+    const p = path.join(dir, 'clear.png');
+    fs.writeFileSync(p, await sharp({ create: { width: 240, height: 320, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).png().toBuffer());
+    const out = await thumbnailer.thumbnailPath(p, dir, 'clear.png', 160, 'image/png');
+    const { channels } = await sharp(out).stats();
+    for (const c of channels.slice(0, 3)) expect(c.mean).toBeGreaterThan(250);
+  });
 });
 
 describe('receipts/thumbnailer — falling back rather than failing', () => {

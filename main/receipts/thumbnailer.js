@@ -1,6 +1,7 @@
 const fs    = require('fs');
 const path  = require('path');
 const logger = require('../utils/logger');
+const { loadSharp } = require('./load-sharp');
 
 // Scaled-down copies of receipt images, cached next to the original.
 //
@@ -14,36 +15,9 @@ const logger = require('../utils/logger');
 // screen wants the full image, and a receipt that is captured and posted is
 // never shown as a thumbnail at all.
 //
-// sharp is loaded lazily so that requiring this module — which the receipts
-// route does at startup — cannot fail a boot over an image library. A box that
-// somehow has no working sharp serves originals instead of serving nothing.
-let _sharp;
-let _sharpFailed = false;
-function sharp() {
-  if (_sharpFailed) return null;
-  if (!_sharp) {
-    try {
-      _sharp = require('sharp');
-      // libvips sizes its thread pool to the CPU count by default. Resizing a
-      // receipt to 160px is not work worth parallelising, and the server this
-      // runs on has two cores it also needs for serving requests — so one
-      // thumbnail request cannot take the box with it. It also keeps the test
-      // run honest: several jest workers each spawning a CPU-sized pool
-      // oversubscribes the machine badly enough to disturb unrelated suites.
-      _sharp.concurrency(1);
-      // libvips caches recent operations, which keeps their input files open.
-      // A thumbnail is made once per receipt and never revisited, so the cache
-      // buys nothing here, and an open handle on the original stops a re-read
-      // or rotate from writing the file back in place on Windows.
-      _sharp.cache(false);
-    } catch (err) {
-      _sharpFailed = true;
-      logger.warn('sharp unavailable — receipts will be served at full size', { error: err.message });
-      return null;
-    }
-  }
-  return _sharp;
-}
+// sharp comes from load-sharp.js, loaded lazily so that requiring this module
+// cannot fail a boot. A box that somehow has no working sharp serves
+// originals instead of serving nothing.
 
 // A fixed set, not an arbitrary number. A free-form ?w= lets one caller fill the
 // disk with a thousand near-identical renderings of the same receipt, and every
@@ -81,7 +55,7 @@ async function thumbnailPath(sourcePath, destDir, filename, width, mime) {
   if (!isResizable(mime)) return null;
   const w = allowedWidth(width);
   if (!w) return null;
-  const lib = sharp();
+  const lib = loadSharp();
   if (!lib) return null;
 
   const outPath = path.join(destDir, derivativeName(filename, w));
@@ -96,6 +70,7 @@ async function thumbnailPath(sourcePath, destDir, filename, width, mime) {
     await lib(sourcePath)
       .rotate()                                   // honour the EXIF orientation a phone camera writes
       .resize({ width: w, withoutEnlargement: true })
+      .flatten({ background: '#fff' })            // a PNG's clear background, white rather than JPEG's black
       .jpeg({ quality: 78, mozjpeg: true })
       .toFile(outPath);
     return outPath;

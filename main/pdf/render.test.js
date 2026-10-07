@@ -37,6 +37,26 @@ describe('pdf/render', () => {
     expect(await renderPdfPages(Buffer.alloc(0))).toBeNull();
   }, 60000);
 
+  test('a page far larger than paper is drawn no bigger than 25 megapixels', async () => {
+    // A few hundred bytes asking for a 200-inch page. At 150 dpi that was a
+    // 30000 x 30000 canvas, about 3.4 GiB, in a process the server waits on.
+    const huge = Buffer.from([
+      '%PDF-1.4',
+      '1 0 obj <</Type /Catalog /Pages 2 0 R>> endobj',
+      '2 0 obj <</Type /Pages /Kids [3 0 R] /Count 1>> endobj',
+      '3 0 obj <</Type /Page /Parent 2 0 R /MediaBox [0 0 14400 14400]>> endobj',
+      'trailer <</Root 1 0 R>>',
+      '%%EOF',
+    ].join('\n'));
+    const out = await renderPdfPages(huge);
+    expect(out.pages).toHaveLength(1);
+    const { width, height, buffer } = out.pages[0];
+    expect(width * height).toBeLessThanOrEqual(25_000_000);
+    expect(width).toBeGreaterThan(4900);          // fitted to the cap, not refused
+    const meta = await require('sharp')(buffer).metadata();
+    expect(meta.width * meta.height).toBeLessThanOrEqual(25_000_000);
+  }, 60000);
+
   test('a scanned two-page folio renders both pages, or only the page asked for', async () => {
     const pdf = await require('../test-fixtures/make-pdf').scannedPdf(2);
     const out = await renderPdfPages(pdf);

@@ -43,6 +43,14 @@ describe('pdf/pages', () => {
       const r = await extractPages(Buffer.from('not a pdf'));
       expect(r.pages).toEqual([]);
       expect(r.hasText).toBe(false);
+      // and says it failed, which is not the same as a scan with no text:
+      // a scan is drawn next, a file that could not be opened is not.
+      expect(r.failed).toBe(true);
+    });
+
+    test('a scan is not a failure', async () => {
+      pdfParse.mockImplementation(fakePdf(['', '']));
+      expect((await extractPages(Buffer.from('%PDF'))).failed).toBeUndefined();
     });
   });
 
@@ -77,6 +85,15 @@ describe('pdf/pages', () => {
     test('page numbers are 1-based, matching what a PDF viewer shows', () => {
       const r = splittablePages({ pages: [LONG, LONG], hasText: true });
       expect(r.pageNumbers[0]).toBe(1);
+    });
+
+    test('one threshold decides whether a page has text, wherever it is asked', () => {
+      const { pageHasText, MIN_PAGE_CHARS } = require('./pages');
+      expect(pageHasText(LONG)).toBe(true);
+      expect(pageHasText('x'.repeat(MIN_PAGE_CHARS - 1))).toBe(false);
+      expect(pageHasText(`   ${'x'.repeat(MIN_PAGE_CHARS - 1)}   `)).toBe(false);
+      expect(pageHasText(null)).toBe(false);
+      expect(pageHasText(undefined)).toBe(false);
     });
 
     test('nothing at all is handled', () => {

@@ -9,24 +9,17 @@
 const MAX_SIDE  = 2400;
 const MIN_BYTES = 1.5 * 1024 * 1024;
 const SHRINKS   = new Set(['image/jpeg', 'image/png', 'image/webp']);
-
-let _sharp, _failed = false;
-function sharp() {
-  if (_failed) return null;
-  if (!_sharp) {
-    try { _sharp = require('sharp'); _sharp.concurrency(1); _sharp.cache(false); }
-    catch { _failed = true; return null; }
-  }
-  return _sharp;
-}
+const { loadSharp } = require('./load-sharp');
 
 async function forModel(buffer, mime) {
   if (!Buffer.isBuffer(buffer) || buffer.length < MIN_BYTES || !SHRINKS.has(mime)) return { buffer, mime };
-  const s = sharp();
+  const s = loadSharp();
   if (!s) return { buffer, mime };
   try {
+    // JPEG has no transparency: a PNG's clear background came out black, with
+    // the receipt's black print on it. It is laid on white paper first.
     const out = await s(buffer).resize({ width: MAX_SIDE, height: MAX_SIDE, fit: 'inside', withoutEnlargement: true })
-      .withMetadata().jpeg({ quality: 85 }).toBuffer();
+      .flatten({ background: '#fff' }).withMetadata().jpeg({ quality: 85 }).toBuffer();
     return out.length < buffer.length ? { buffer: out, mime: 'image/jpeg' } : { buffer, mime };
   } catch {
     return { buffer, mime };
