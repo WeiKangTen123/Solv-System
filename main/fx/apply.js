@@ -31,15 +31,12 @@ async function applyFx(expenseId, { force = false } = {}) {
   const today = localDate(company.timezone);
   let pending = 0, applied = 0;
 
-  const keepOverride = l => {
-    if (force || !l.fxOverrideBy || !(l.fxRate > 0)) return false;
-    store.updateLine(l.id, { baseAmount: toBase(l.amount, l.fxRate) });
-    return true;
-  };
-
+  // A receipt in the company's own currency has no rate to choose: it is 1,
+  // whatever anyone typed. A typed rate used to survive here, so an SGD
+  // receipt with "1.049" claimed 4.9% more than it said, and nothing printed
+  // showed why.
   if (!e.currency || e.currency === base) {
     for (const l of e.lines) {
-      if (keepOverride(l)) continue;
       store.updateLine(l.id, { fxRate: 1, fxRateDate: e.receiptDate || today, fxSource: 'base', fxFetchedAt: new Date().toISOString(), fxPolicy: company.fxPolicy, fxOverrideBy: null, fxOverrideReason: null, baseAmount: l.amount, fxAskedDate: e.receiptDate || today, fxCheck: null });
       applied++;
     }
@@ -52,6 +49,24 @@ async function applyFx(expenseId, { force = false } = {}) {
   // Under a fixed monthly table only the table's rate will do, so the
   // providers are not asked for one that would be thrown away.
   let r = await rates.getRate({ from: e.currency, to: base, date, force, today, manualOnly: company.fxPolicy === 'monthly_fixed' });
+
+  // The lines are read again after the wait for the rate. Somebody may have
+  // typed a rate meanwhile, which used to be overwritten without a word, or
+  // split the receipt, whose old line ids then no longer existed. A receipt
+  // whose currency changed meanwhile is left alone: that edit prices it.
+  const now = store.getExpense(expenseId);
+  if (!now || now.currency !== e.currency) return { pending: 0, applied: 0 };
+  const before = new Map(e.lines.map(l => [l.id, l]));
+  // A typed rate stays, and its base follows the line's amount. `force` (a
+  // refresh somebody asked for) drops the typed rates that were there when it
+  // was asked, but not one typed while it waited.
+  const keepOverride = l => {
+    if (!l.fxOverrideBy || !(l.fxRate > 0)) return false;
+    const was = before.get(l.id);
+    if (force && was && was.fxOverrideBy === l.fxOverrideBy && was.fxRate === l.fxRate) return false;
+    store.updateLine(l.id, { baseAmount: toBase(l.amount, l.fxRate) });
+    return true;
+  };
   // A fixed monthly table is a promise finance made; a provider's number is not it.
   if (r && company.fxPolicy === 'monthly_fixed' && r.source !== 'manual') r = null;
   // A rate that moved further than a currency moves is not put on a line: the
@@ -61,7 +76,7 @@ async function applyFx(expenseId, { force = false } = {}) {
   const blocked = r && r.blocked ? r.blocked : null;
   const note = r && r.notes && r.notes.length ? r.notes.join('; ') : null;
 
-  for (const l of e.lines) {
+  for (const l of now.lines) {
     if (keepOverride(l)) continue;
     if (!r || blocked) {
       store.updateLine(l.id, { fxRate: null, fxRateDate: date, fxSource: null, fxFetchedAt: null, fxPolicy: company.fxPolicy,
@@ -92,8 +107,9 @@ const TYPED_RATE_TOLERANCE = 0.05;
 // Why a rate this person typed for this expense would be refused, or null.
 // Shared with the assistant, so it can say so before proposing one.
 async function typedRateProblem(e, n, actor) {
-  if (actor && actor.role === 'admin') return null;
   const company = users.getCompany(e.companyId);
+  if (!e.currency || e.currency === company.baseCurrency) return `This receipt is in ${company.baseCurrency}, the company's own currency, so it has no exchange rate to change.`;
+  if (actor && actor.role === 'admin') return null;
   const date = policyDate(company.fxPolicy, e, company.timezone);
   const day = await rates.getRate({ from: e.currency, to: company.baseCurrency, date, today: localDate(company.timezone) }).catch(() => null);
   const ref = day ? day.rate : null;
@@ -110,6 +126,8 @@ async function overrideFx(expenseId, { rate, reason, actor }) {
   if (!e) throw new Error('Expense not found');
   const n = Number(rate);
   if (!(n > 0) || !Number.isFinite(n)) throw new Error('A rate must be a number above zero');
+  const base = users.getCompany(e.companyId).baseCurrency;
+  if (!e.currency || e.currency === base) throw new Error(`This receipt is in ${base}, the company's own currency, so it has no exchange rate to change.`);
   if (!reason || !String(reason).trim()) throw new Error('Say why the rate is being changed');
   const problem = await typedRateProblem(e, n, actor);
   if (problem) throw new Error(problem);
@@ -124,4 +142,13 @@ async function overrideFx(expenseId, { rate, reason, actor }) {
   return store.getExpense(expenseId);
 }
 
-module.exports = { applyFx, overrideFx, typedRateProblem, policyDate, toBase, TYPED_RATE_TOLERANCE };
+// Prices receipts again by the usual rules, typed rates kept: for a case or a
+// receipt that has just been reopened. Bounded, because the person is waiting
+// for the answer; whatever is not done in time the sweeper finishes.
+const REPRICE_WAIT_MS = 8000;
+async function reprice(expenseIds) {
+  const work = Promise.all(expenseIds.map(id => applyFx(id).catch(err => logger.warn('Re-pricing failed', { expenseId: id, error: err.message }))));
+  await Promise.race([work, new Promise(resolve => setTimeout(resolve, REPRICE_WAIT_MS).unref())]);
+}
+
+module.exports = { applyFx, overrideFx, typedRateProblem, policyDate, toBase, reprice, TYPED_RATE_TOLERANCE };

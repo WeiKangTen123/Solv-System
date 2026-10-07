@@ -113,7 +113,10 @@ function updateLine(lineId, patch) {
   for (const [k, col] of Object.entries(LINE_COLS)) { if (patch[k] === undefined) continue; sets.push(`${col} = ?`); args.push(patch[k]); }
   if (patch.baseAmount !== undefined) { sets.push('base_cents = ?'); args.push(toCents(patch.baseAmount)); }
   if (sets.length) db.prepare(`UPDATE expense_lines SET ${sets.join(', ')} WHERE id = ?`).run(...args, lineId);
-  return _line(db.prepare('SELECT * FROM expense_lines WHERE id = ?').get(lineId));
+  // A line replaced meanwhile (the receipt was split while its rate was being
+  // fetched) is gone, not an error: null, like every other lookup of nothing.
+  const row = db.prepare('SELECT * FROM expense_lines WHERE id = ?').get(lineId);
+  return row ? _line(row) : null;
 }
 
 // ── Expenses ─────────────────────────────────────────────────────────────────
@@ -233,7 +236,16 @@ function dedupView(companyId) {
   };
 }
 
+// Whether anything in the company has been converted into its base currency
+// yet. Once it has, the base cannot change: every converted amount is a number
+// in that currency, and a new base would relabel them all.
+function companyHasPriced(companyId) {
+  return !!db.prepare(`SELECT 1 FROM expense_lines l JOIN expenses e ON e.id = l.expense_id
+                       WHERE e.company_id = ? AND l.base_cents IS NOT NULL LIMIT 1`).get(companyId);
+}
+
 module.exports = {
+  companyHasPriced,
   createReceipt, getReceipt, findReceiptByHash, updateReceipt, deleteReceipt, countExpensesForReceipt, countExpensesForFile, bytesStoredBy,
   createExpense, getExpense, updateExpense, listExpenses, expensesForReceipt, deleteExpense,
   getLines, replaceLines, updateLine, linesReconcile, dedupView, toCents, toDollars,

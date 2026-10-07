@@ -24,7 +24,8 @@ router.get('/rate', requireAuth, asyncHandler(async (req, res) => {
   // any signed-in user used to be able to file junk under any string at all.
   const date = req.query.date ? String(req.query.date) : undefined;
   if (date && (!require('../intake/document').isoDate(date))) return res.status(400).json({ error: 'date must be a real YYYY-MM-DD, not in the future' });
-  const r = await rates.getRate({ from, to, date });
+  // The company's own today: a date that is still today there is not history.
+  const r = await rates.getRate({ from, to, date, today: require('../utils/zone-date').localDate(users.getCompany(me.companyId).timezone) });
   if (!r) return res.status(404).json({ error: `No rate for ${from} to ${to}` });
   res.json({ rate: r });
 }));

@@ -124,8 +124,11 @@ function _accept({ from, to, date, rate, source, providerDate, divergence = null
   return _save({ from, to, date, rate, source, providerDate, divergence, moved: m ? m.moved : null, closedAt });
 }
 
-async function _fetch(from, to, date) {
-  const historical = date < today() ? date : null;      // today or later: latest
+// `localToday` is the company's date. Judged in UTC, at 01:00 in Singapore a
+// lookup for the local yesterday counted as today, asked for "latest" and
+// stored that under yesterday.
+async function _fetch(from, to, date, localToday = null) {
+  const historical = date < (localToday || today()) ? date : null;      // today or later: latest
   const f = await providers.frankfurter(from, to, historical);
   // The second provider is asked as a check when it can answer for the same
   // day, and as the fallback when the first cannot answer at all. It only ever
@@ -172,14 +175,14 @@ async function getRate({ from, to, date, force = false, today: localToday = null
     }
   }
   if (hit && !force) {
-    const stale = day >= today() && Date.now() - Date.parse(hit.fetchedAt) > TODAY_TTL_MS;
+    const stale = day >= (localToday || today()) && Date.now() - Date.parse(hit.fetchedAt) > TODAY_TTL_MS;
     if (!stale) return hit;
   }
   if (manualOnly) return hit && hit.source === 'manual' ? hit : null;
   // Twenty receipts in one currency uploaded together asked the providers the
   // same question twenty times at once; they now share the one answer.
   const k = `${from}|${to}|${day}`;
-  if (!_inflight.has(k)) _inflight.set(k, _fetch(from, to, day).finally(() => _inflight.delete(k)));
+  if (!_inflight.has(k)) _inflight.set(k, _fetch(from, to, day, localToday).finally(() => _inflight.delete(k)));
   const fresh = await _inflight.get(k);
   return fresh || hit || null;
 }
