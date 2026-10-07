@@ -275,11 +275,24 @@ async function _readScans(userId, pages, note) {
 // Another receipt found in the same file. It goes where the first one went:
 // the same case, and the same default currency, or it was left out of the
 // claim and priced as base currency with nothing to say it was assumed.
+//
+// Only while that case is still open. A read can take a minute, and a case
+// claimed in that minute is locked: a receipt filed into it then would be
+// claimed without anyone having seen it. It is left out of any case, with a
+// note saying why. Returns the row and that note, if any.
 function _sibling({ companyId, userId, receiptId, source, page = null, box = null, parentId = null }) {
   const parent = parentId ? store.getExpense(parentId) : null;
   const sib = store.createExpense({ companyId, userId, receiptId, source, page, box, status: 'reading', currency: parent ? parent.currency : undefined });
-  if (parent && parent.reportId) require('../store/reports').addExpense(parent.reportId, sib.id);
-  return sib;
+  if (!parent || !parent.reportId) return { sib, note: null };
+  const reports = require('../store/reports');
+  const rep = reports.head(parent.reportId);
+  if (require('../reports/workflow').isEditable(rep)) {
+    reports.addExpense(parent.reportId, sib.id);
+    return { sib, note: null };
+  }
+  const note = `This receipt was in the same file as one in case ${rep ? rep.number : parent.reportId}, which was claimed while it was being read, so it was not added to that case.`;
+  store.updateExpense(sib.id, { errorMsg: note });
+  return { sib, note };
 }
 
 // The upload path: read the file, and make its parts into rows. The first
@@ -299,18 +312,20 @@ async function readReceipt({ companyId, userId, receiptId, expenseId, buffer, mi
     for (let k = 0; k < out.parts.length; k++) {
       const p = out.parts[k];
       let id = expenseId;
+      // The notes the read left on a row stay beside what applyRead writes.
+      let keep = k === 0 && out.notes.length ? out.notes.join(' ') : null;
       if (k === 0) {
         const place = {};
         if (p.page) place.page = p.page;
         if (p.box) place.box = p.box;
         if (Object.keys(place).length) store.updateExpense(expenseId, place);
       } else {
-        id = _sibling({ companyId, userId, receiptId, source, page: p.page, box: p.box, parentId: expenseId }).id;
+        const made = _sibling({ companyId, userId, receiptId, source, page: p.page, box: p.box, parentId: expenseId });
+        id = made.sib.id;
+        keep = made.note;
         touched.push(id);
       }
       if (p.r) {
-        // The notes the read left on the first row stay beside what applyRead writes.
-        const keep = k === 0 && out.notes.length ? out.notes.join(' ') : null;
         await applyRead(id, p.r);
         if (keep) { const e = store.getExpense(id); store.updateExpense(id, { errorMsg: [e.errorMsg, keep].filter(Boolean).join(' ') }); }
         flagIfSuspected(id);

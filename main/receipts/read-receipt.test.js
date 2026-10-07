@@ -233,6 +233,26 @@ describe('receipts/read-receipt', () => {
     expect(sib).toMatchObject({ merchant: 'B', reportId: rep.id, currency: 'MYR' });
   });
 
+  test('an extra receipt found after its case was claimed stays out of the case, with a note saying why', async () => {
+    const { r, e } = seed();
+    const reports = require('../store/reports');
+    const rep = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'Trip' });
+    reports.addExpense(rep.id, e.id);
+    // The case is claimed while the reader is still at work on the photo.
+    parser.parseReceiptImage.mockImplementation(async () => {
+      reports.setState(rep.id, { status: 'claimed', claimedAt: new Date().toISOString() });
+      return { split: true, reason: null, receipts: [
+        { merchant: 'A', date: '2026-09-01', total: 10, currency: 'SGD', category: 'Meals', confidence: 'high', lineItems: [], box: [0, 0, 500, 1000] },
+        { merchant: 'B', date: '2026-09-01', total: 20, currency: 'SGD', category: 'Meals', confidence: 'high', lineItems: [], box: [500, 0, 1000, 1000] },
+      ] };
+    });
+    const out = await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('x'), mime: 'image/jpeg' });
+    const sib = store.getExpense(out.expenseIds[1]);
+    expect(sib).toMatchObject({ merchant: 'B', total: 20, reportId: null, status: 'review-needed' });
+    expect(sib.errorMsg).toMatch(new RegExp(`case ${rep.number}, which was claimed while it was being read`));
+    expect(reports.getReport(rep.id).expenses.map(x => x.id)).toEqual([e.id]);
+  });
+
   test('a typed cover sheet with scanned receipts behind it reads the scans too, and a long scan says what it skipped', async () => {
     const cover = 'EXPENSE CLAIM COVER SHEET Employee Aisha Rahman Department Sales Period September 2026 receipts attached';
     pdfPages.extractPages.mockResolvedValue({ pages: [cover, '', ''], numPages: 3, hasText: true, textPageCount: 1 });
