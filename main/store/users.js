@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const db     = require('../db');
 const { encrypt, decrypt } = require('../utils/crypto');
+const { fail } = require('../utils/http-error');
 
 const DEFAULT_TIMEZONE = 'Asia/Singapore';
 const DEFAULT_COMPANY  = { name: 'Solv', baseCurrency: 'SGD', fxPolicy: 'receipt_date', timezone: DEFAULT_TIMEZONE };
@@ -131,20 +132,25 @@ function touchLastSeen(userId) {
 // account must name a company (the admin's, in practice) and is a user unless
 // a role is given.
 async function createUser({ email, password, name = null, role = null, companyId = null, employeeId = null, department = null }) {
-  if (!email || !password) throw new Error('Email and password are required');
-  if (String(password).length < MIN_PASSWORD) throw new Error(`Password must be at least ${MIN_PASSWORD} characters`);
-  if (role && !ROLES.includes(role)) throw new Error(`Unknown role "${role}"`);
+  if (!email || !password) fail(400, 'Email and password are required');
+  // One spelling, before anything is looked up or stored: " boss@x.sg" was
+  // looked up untrimmed and stored trimmed, and came back as the database's
+  // own "UNIQUE constraint failed" message.
+  email = String(email).trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, 'That is not an email address');
+  passwordProblem(password);
+  if (role && !ROLES.includes(role)) fail(400, `Unknown role "${role}"`);
   const hash = await bcrypt.hash(password, 10);
   const create = db.transaction(() => {
     const existing = _rawByEmail(email);
-    if (existing && existing.disabled_at) throw new Error('That email belongs to a removed account. Restore it in Users & Monitoring instead.');
-    if (existing) throw new Error('Email already exists');
+    if (existing && existing.disabled_at) fail(400, 'That email belongs to a removed account. Restore it in Users & Monitoring instead.');
+    if (existing) fail(400, 'Email already exists');
     const first = !hasUsers();
     const company = companyId ? getCompany(companyId) : (first ? createCompany() : null);
     if (!company) throw new Error('A company is required');
     const user = {
       id: `${Date.now()}${crypto.randomBytes(4).toString('hex')}`,
-      companyId: company.id, email: email.toLowerCase().trim(), password: hash,
+      companyId: company.id, email, password: hash,
       role: role || (first ? 'admin' : 'user'), name, employeeId, department,
       createdAt: new Date().toISOString(),
     };
@@ -179,8 +185,18 @@ function updateUser(id, patch) {
 }
 
 // A new password ends every session signed in with the old one.
+// What is wrong with a new password, thrown as a 400. bcrypt reads only the
+// first 72 bytes, so anything past them was silently ignored; eight spaces
+// passed as eight characters.
+function passwordProblem(password) {
+  const p = String(password || '');
+  if (p.length < MIN_PASSWORD) fail(400, `Password must be at least ${MIN_PASSWORD} characters`);
+  if (!p.trim()) fail(400, 'A password cannot be only spaces');
+  if (Buffer.byteLength(p, 'utf8') > 72) fail(400, 'Password is too long: at most 72 bytes (about 72 letters)');
+}
+
 async function setPassword(id, password) {
-  if (!password || String(password).length < MIN_PASSWORD) throw new Error(`Password must be at least ${MIN_PASSWORD} characters`);
+  passwordProblem(password);
   db.prepare('UPDATE users SET password = ?, token_version = token_version + 1 WHERE id = ?').run(await bcrypt.hash(password, 10), id);
 }
 

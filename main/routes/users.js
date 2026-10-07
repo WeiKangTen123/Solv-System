@@ -5,6 +5,9 @@ const { requireAuth, signSession } = require('../middleware/auth-middleware');
 const { requireRole } = require('../middleware/roles');
 const logger  = require('../utils/logger');
 const asyncHandler = require('../middleware/async-handler');
+const accountLock = require('../middleware/account-lock');
+const { ipBucket } = require('../middleware/rate-limit-key');
+const pairing = require('../receipts/pairing');
 const { testGeminiKey } = require('../llm/gemini-client');
 
 // Personal Gemini keys for any signed-in user (user or admin)
@@ -107,7 +110,10 @@ router.patch('/:id', requireAuth, (req, res) => {
     const self = target.id === req.user.id;
     if (!isAdmin && !self) return res.status(404).json({ error: 'User not found' });
     const body = req.body || {};
-    const patch = { name: _text(body.name, 120), employeeId: _text(body.employeeId, 40), department: _text(body.department, 80) };
+    // Employee ID and department are printed on the claim cover as the
+    // company's record of who claimed: an admin's to set. Anyone could set
+    // their own, so "CEO-0001" was one request away.
+    const patch = { name: _text(body.name, 120), ...(isAdmin ? { employeeId: _text(body.employeeId, 40), department: _text(body.department, 80) } : {}) };
     if (isAdmin && body.role !== undefined && body.role !== target.role) {
       // The company must keep somebody able to run it.
       if (target.role === 'admin' && !target.removed && users.countAdmins(target.companyId) <= 1) {
@@ -135,12 +141,24 @@ router.post('/:id/password', requireAuth, asyncHandler(async (req, res) => {
   const { password, currentPassword } = req.body || {};
   if (typeof password !== 'string') return res.status(400).json({ error: 'Type the new password' });
   if (self) {
+    // The same lock as signing in (middleware/account-lock.js). Without it this
+    // was a second way to guess: unlimited tries at the current password from
+    // a stolen session, turning a day's access into the account for good.
     if (!currentPassword) return res.status(400).json({ error: 'Type your current password too' });
-    if (!(await users.validatePassword(target.email, currentPassword))) return res.status(403).json({ error: 'That is not your current password' });
+    const ip = ipBucket(req.ip);
+    if (accountLock.locked(target.email, ip)) return res.status(429).json({ error: 'Too many wrong passwords. Try again in 15 minutes.' });
+    if (!(await users.validatePassword(target.email, currentPassword))) {
+      accountLock.failed(target.email, ip);
+      return res.status(403).json({ error: 'That is not your current password' });
+    }
+    accountLock.succeeded(target.email, ip);
   }
   try {
     await users.setPassword(target.id, password);
   } catch (err) { return res.status(400).json({ error: err.message }); }
+  // A new password set by an admin is how a locked-out person gets back in.
+  if (!self) accountLock.clear(target.email);
+  pairing.revokeForUser(target.id);
   logger.info('Password changed', { by: req.user.id, userId: target.id, self });
   res.json({ ok: true, ...(self ? { token: signSession(target, users.tokenVersion(target.id)) } : {}) });
 }));
@@ -153,6 +171,7 @@ router.delete('/:id', requireAuth, requireRole('admin'), (req, res) => {
   if (!target || target.companyId !== req.user.companyId) return res.status(404).json({ error: 'User not found' });
   if (target.role === 'admin' && !target.removed && users.countAdmins(target.companyId) <= 1) return res.status(400).json({ error: 'This is the only admin.' });
   users.removeUser(target.id);
+  pairing.revokeForUser(target.id);
   logger.info('User removed', { by: req.user.id, userId: target.id });
   res.json({ ok: true, user: users.findById(target.id) });
 });
@@ -161,6 +180,7 @@ router.post('/:id/restore', requireAuth, requireRole('admin'), (req, res) => {
   const target = users.findById(req.params.id);
   if (!target || target.companyId !== req.user.companyId) return res.status(404).json({ error: 'User not found' });
   const user = users.restoreUser(target.id);
+  accountLock.clear(target.email);
   logger.info('User restored', { by: req.user.id, userId: target.id });
   res.json({ ok: true, user });
 });

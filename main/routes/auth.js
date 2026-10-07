@@ -5,35 +5,22 @@ const users     = require('../store/users');
 const { requireAuth, signSession } = require('../middleware/auth-middleware');
 const logger    = require('../utils/logger');
 const asyncHandler = require('../middleware/async-handler');
+const accountLock = require('../middleware/account-lock');
+const { ipBucket } = require('../middleware/rate-limit-key');
 
-// Per address: ten tries in fifteen minutes.
+// Per address: ten tries in fifteen minutes. An IPv6 address is counted by its
+// /64, which one client can move around in freely.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: process.env.NODE_ENV === 'test' ? 1000 : 10,
-  keyGenerator: req => req.ip, standardHeaders: true, legacyHeaders: false,
+  keyGenerator: req => ipBucket(req.ip), standardHeaders: true, legacyHeaders: false,
   message: { error: 'Too many attempts from this address. Try again in 15 minutes.' },
 });
 
-// Per account as well: the address limit alone lets someone guess one
-// person's password from as many addresses as they have. Ten wrong answers for
-// one email in fifteen minutes holds that email for fifteen minutes, whoever
-// is asking. In memory, like the address limit.
-const LOCK_AFTER = 10, LOCK_WINDOW_MS = 15 * 60 * 1000;
-const _failures = new Map();   // email -> { count, first, lockedUntil }
-function _locked(email) {
-  const f = _failures.get(email);
-  if (!f) return false;
-  if (f.lockedUntil && f.lockedUntil > Date.now()) return true;
-  if (Date.now() - f.first > LOCK_WINDOW_MS) _failures.delete(email);
-  return false;
-}
-function _failed(email) {
-  const now = Date.now();
-  const f = _failures.get(email);
-  const cur = f && now - f.first <= LOCK_WINDOW_MS ? f : { count: 0, first: now, lockedUntil: 0 };
-  cur.count++;
-  if (cur.count >= LOCK_AFTER) cur.lockedUntil = now + LOCK_WINDOW_MS;
-  _failures.set(email, cur);
-}
+// Per account as well (middleware/account-lock.js): the address limit alone
+// lets someone guess one person's password from as many addresses as they
+// have, and a lock on the email alone let anyone keep its owner out.
+
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const sign = user => signSession(user, users.tokenVersion(user.id));
 
@@ -52,18 +39,24 @@ router.get('/status', (_req, res) => res.json({ hasUsers: users.hasUsers(), regi
 
 // The first account creates the company and is its admin. After that,
 // registration is closed unless an admin opens it; admins add staff.
+// One answer for an email that already has an account, removed or not: the
+// two used to differ, and told anyone asking which emails had accounts.
 router.post('/register', authLimiter, asyncHandler(async (req, res) => {
+  const { email, password, name } = req.body || {};
+  if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) return res.status(400).json({ error: 'Email and password are required' });
+  if (!EMAIL_SHAPE.test(email.trim())) return res.status(400).json({ error: 'That is not an email address' });
+  if (!registrationOpen()) return res.status(403).json({ error: 'Registration is closed. Ask your administrator to add you.' });
+  if (users.findByEmail(email.trim())) return res.status(400).json({ error: 'That email cannot be registered here. If it is yours, sign in, or ask your administrator.' });
+  const first = !users.hasUsers();
+  let user;
   try {
-    const { email, password, name } = req.body || {};
-    if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) return res.status(400).json({ error: 'Email and password are required' });
-    if (!registrationOpen()) return res.status(403).json({ error: 'Registration is closed. Ask your administrator to add you.' });
-    const first = !users.hasUsers();
-    const user = await users.createUser({ email, password, name: typeof name === 'string' ? name.slice(0, 120) : null, companyId: first ? null : users.firstCompanyId() });
-    logger.info('User registered', { userId: user.id, role: user.role });
-    res.status(201).json({ success: true, user, token: sign(user) });
+    user = await users.createUser({ email, password, name: typeof name === 'string' ? name.trim().slice(0, 120) || null : null, companyId: first ? null : users.firstCompanyId() });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    if (err.expose) return res.status(400).json({ error: err.message });
+    throw err;
   }
+  logger.info('User registered', { userId: user.id, role: user.role });
+  res.status(201).json({ success: true, user, token: sign(user) });
 }));
 
 router.post('/login', authLimiter, asyncHandler(async (req, res) => {
@@ -71,10 +64,11 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
     const { email, password } = req.body || {};
     if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) return res.status(400).json({ error: 'Email and password are required' });
     const key = email.trim().toLowerCase();
-    if (_locked(key)) return res.status(429).json({ error: 'Too many wrong passwords for this account. Try again in 15 minutes.' });
+    const ip = ipBucket(req.ip);
+    if (accountLock.locked(key, ip)) return res.status(429).json({ error: 'Too many wrong passwords for this account. Try again in 15 minutes, or ask your administrator to set a new one.' });
     const user = await users.validatePassword(key, password);
-    if (!user) { _failed(key); return res.status(401).json({ error: 'Invalid email or password' }); }
-    _failures.delete(key);
+    if (!user) { accountLock.failed(key, ip); return res.status(401).json({ error: 'Invalid email or password' }); }
+    accountLock.succeeded(key, ip);
     logger.info('User logged in', { userId: user.id, role: user.role });
     res.json({ token: sign(user), user });
   } catch (err) {
@@ -87,6 +81,7 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
 // in the browser is not the only copy, and a stolen one must die with it.
 router.post('/logout', requireAuth, (req, res) => {
   users.endSessions(req.user.id);
+  require('../receipts/pairing').revokeForUser(req.user.id);
   res.json({ ok: true });
 });
 
@@ -98,4 +93,3 @@ router.get('/me', requireAuth, (req, res) => {
 });
 
 module.exports = router;
-module.exports._failures = _failures;

@@ -149,4 +149,25 @@ describe('routes/users and routes/company', () => {
     c = await request(serverFor(app)).get('/api/company').set(as(token)).expect(200);
     expect(c.body.company.baseCurrencyLocked).toBe(true);
   });
+  // "Change my password" checked the current one with no limit: a stolen
+  // session could guess it at 500 requests a quarter-hour and keep the account.
+  test('changing your own password shares the sign-in lock, and an admin reset lifts it', async () => {
+    const m = (await request(serverFor(app)).post('/api/users').set(as(token)).send({ email: 'm@solv.sg', password: 'password123' }).expect(201)).body.user;
+    const mt = (await request(serverFor(app)).post('/api/auth/login').send({ email: 'm@solv.sg', password: 'password123' }).expect(200)).body.token;
+    for (let i = 0; i < 10; i++) await request(serverFor(app)).post(`/api/users/${m.id}/password`).set(as(mt)).send({ currentPassword: 'guess-' + i, password: 'new-password-1' }).expect(403);
+    await request(serverFor(app)).post(`/api/users/${m.id}/password`).set(as(mt)).send({ currentPassword: 'password123', password: 'new-password-1' }).expect(429);
+    await request(serverFor(app)).post('/api/auth/login').send({ email: 'm@solv.sg', password: 'password123' }).expect(429);
+    // The admin sets a new one: the lock goes with the old password.
+    await request(serverFor(app)).post(`/api/users/${m.id}/password`).set(as(token)).send({ password: 'from-the-admin' }).expect(200);
+    await request(serverFor(app)).post('/api/auth/login').send({ email: 'm@solv.sg', password: 'from-the-admin' }).expect(200);
+  });
+
+  test('employee id and department are set by an admin, not by the person themselves', async () => {
+    const e = (await request(serverFor(app)).post('/api/users').set(as(token)).send({ email: 'e@solv.sg', password: 'password123', employeeId: 'S0007' }).expect(201)).body.user;
+    const et = (await request(serverFor(app)).post('/api/auth/login').send({ email: 'e@solv.sg', password: 'password123' }).expect(200)).body.token;
+    const self = await request(serverFor(app)).patch(`/api/users/${e.id}`).set(as(et)).send({ name: 'Aisha', employeeId: 'CEO-0001', department: 'Board' }).expect(200);
+    expect(self.body.user).toMatchObject({ name: 'Aisha', employeeId: 'S0007' });
+    const byAdmin = await request(serverFor(app)).patch(`/api/users/${e.id}`).set(as(token)).send({ employeeId: 'S0008', department: 'Sales' }).expect(200);
+    expect(byAdmin.body.user).toMatchObject({ employeeId: 'S0008', department: 'Sales' });
+  });
 });

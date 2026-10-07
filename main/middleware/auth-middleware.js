@@ -5,12 +5,30 @@ const jwt = require('jsonwebtoken');
 // anything but exactly "production" — "prod", or unset — and with it anybody
 // could sign a login, an image link or an export link. index.js asks for it at
 // boot so a box without one refuses to start rather than starting open.
+//
+// Nor is the value from .env.example accepted, which is in the same public
+// repository: preflight refused it, but only for a box started through
+// deploy.sh. A production secret must also be long enough not to be guessed.
 const TEST_SECRET = 'test-secret-not-for-use-outside-jest';
+const EXAMPLE_SECRET = 'change-me-to-a-long-random-string';
+const GENERATE = 'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"';
 function jwtSecret() {
   const secret = process.env.JWT_SECRET;
-  if (secret) return secret;
+  if (secret) {
+    if (secret === EXAMPLE_SECRET) throw new Error(`FATAL SECURITY ERROR: JWT_SECRET is still the example value from .env.example. ${GENERATE}`);
+    if (process.env.NODE_ENV === 'production' && secret.length < 32) throw new Error(`FATAL SECURITY ERROR: JWT_SECRET is ${secret.length} characters; use at least 32. ${GENERATE}`);
+    return secret;
+  }
   if (process.env.NODE_ENV === 'test') return TEST_SECRET;
-  throw new Error('FATAL SECURITY ERROR: JWT_SECRET must be set. Generate one with: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"');
+  throw new Error(`FATAL SECURITY ERROR: JWT_SECRET must be set. ${GENERATE}`);
+}
+
+// The session token from "Authorization: Bearer <token>", read one way for
+// requireAuth and the rate limiter alike: they used to read it differently,
+// so the claims the limiter kept could be for a token requireAuth never saw.
+function bearerToken(req) {
+  const m = /^Bearer\s+(\S+)\s*$/.exec((req.headers && req.headers.authorization) || '');
+  return m ? m[1] : null;
 }
 
 // A session lasts a day, and ends early on sign-out, a password change or
@@ -22,7 +40,7 @@ function signSession(user, version) {
 }
 
 function requireAuth(req, res, next) {
-  const token = req.headers.authorization?.replace('Bearer ', '').trim();
+  const token = bearerToken(req);
   if (!token) return res.status(401).json({ error: 'Authentication required' });
   let claims;
   if (req._session && req._session.token === token) claims = req._session.claims;
@@ -39,9 +57,6 @@ function requireAuth(req, res, next) {
   // The token says who; the database says whether they still exist, whether
   // they were removed, and what they may do. Role is read from here, never
   // from the token, so a demotion takes effect on the next request.
-  //
-  // users.js is required lazily to avoid a require-cycle at module load
-  // (users.js doesn't need this module, but plenty of routes require both).
   const users = require('../store/users');
   const live  = users.findSession(claims.id);
   if (!live) return res.status(401).json({ error: 'Account no longer exists' });
@@ -55,13 +70,4 @@ function requireAuth(req, res, next) {
   next();
 }
 
-function requireAdmin(req, res, next) {
-  requireAuth(req, res, () => {
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-    next();
-  });
-}
-
-module.exports = { requireAuth, requireAdmin, jwtSecret, signSession, SESSION_TTL };
+module.exports = { requireAuth, jwtSecret, bearerToken, signSession, SESSION_TTL };
