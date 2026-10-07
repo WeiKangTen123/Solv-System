@@ -14,6 +14,27 @@ const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 function fail(status, message) { const err = new Error(message); err.status = status; throw err; }
 const _stale = what => fail(409, `The receipt changed after this was proposed: ${what}. Ask the assistant again.`);
 
+// A receipt's exchange rate as a rate card sees it, stored on the card when
+// it is made (tools.js) and compared again on Apply.
+function rateBasis(e) {
+  const l = (e && e.lines[0]) || {};
+  return { currency: (e && e.currency) || null, rate: l.fxRate ?? null, source: l.fxSource ?? null, reason: l.fxOverrideReason ?? null };
+}
+// A rate card refuses once the rate it was made against has moved: a rate
+// typed on the page after the card was made was being overwritten by the
+// card's, or by a refresh, without anybody seeing it.
+function _rateUnchanged(cur, p) {
+  // A rate is for one currency. An admin's rate card for INR applied after
+  // the receipt became USD turned USD 10,000 into SGD 155.
+  if (p.currency && cur.currency !== p.currency) _stale(`it is in ${cur.currency || 'no currency'} now, and the rate was for ${p.currency}`);
+  if (!p.basis) return;
+  const now = rateBasis(cur);
+  if (now.currency !== p.basis.currency) _stale(`it is in ${now.currency || 'no currency'} now, and the card was made for ${p.basis.currency || 'no currency'}`);
+  if (['rate', 'source', 'reason'].some(k => now[k] !== p.basis[k])) {
+    _stale(`the exchange rate has changed since, to ${now.rate ?? 'none'}${now.source ? ` (${now.source}${now.reason ? `: ${now.reason}` : ''})` : ''}`);
+  }
+}
+
 async function _do(a, actor) {
   const p = a.payload || {};
   const opts = { via: 'assistant' };
@@ -36,13 +57,14 @@ async function _do(a, actor) {
       if (p.total !== undefined && !edit.sameValue('total', cur.total, p.total)) _stale(`the total is now ${cur.total}`);
       return edit.editLines(p.expenseId, p.lines, actor, opts);
     }
-    case 'set_rate': {
+    case 'set_rate':
+    case 'refresh_rate': {
       const cur = store.getExpense(p.expenseId);
       if (!cur) fail(404, 'The receipt is gone.');
-      if (p.currency && cur.currency !== p.currency) _stale(`it is in ${cur.currency || 'no currency'} now, and the rate was for ${p.currency}`);
-      return edit.setRate(p.expenseId, { rate: p.rate, reason: p.reason }, actor, opts);
+      _rateUnchanged(cur, p);
+      if (a.kind === 'set_rate') return edit.setRate(p.expenseId, { rate: p.rate, reason: p.reason }, actor, opts);
+      return (await edit.refreshRate(p.expenseId, actor, opts)).expense;
     }
-    case 'refresh_rate':  return (await edit.refreshRate(p.expenseId, actor, opts)).expense;
     case 'mark_reviewed': return edit.setStatus(p.expenseId, 'reviewed', actor);
     case 'file_in_case':  return edit.fileInCase(p.expenseId, p.caseId || null, actor);
     default: return fail(400, 'Unknown change');
@@ -64,6 +86,9 @@ async function apply(id, actor) {
   } catch (err) {
     if (!err.status) logger.error('Applying an assistant change failed', { id: a.id, kind: a.kind, error: err.message });
     astore.decideAction(a.id, actor.id, 'failed', err.status ? err.message : 'It could not be applied because of a problem on the server.');
+  } finally {
+    // What the assistant already knew about this person is out of date now.
+    require('./conversation').forgetSnapshot(actor.id);
   }
   return astore.getAction(a.id, actor.id);
 }
@@ -76,4 +101,4 @@ function dismiss(id, actor) {
   return astore.getAction(a.id, actor.id);
 }
 
-module.exports = { apply, dismiss, MAX_AGE_MS };
+module.exports = { apply, dismiss, rateBasis, MAX_AGE_MS };

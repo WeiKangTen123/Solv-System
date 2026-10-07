@@ -83,9 +83,6 @@ function claimAction(id, userId) {
     .run(now(), id, userId, stale).changes > 0;
 }
 const isBeingApplied = a => !!a && a.status === 'pending' && !!a.decidedAt && Date.now() - Date.parse(a.decidedAt) < CLAIM_STALE_MS;
-function releaseAction(id, userId) {
-  db.prepare("UPDATE assistant_actions SET decided_at = NULL WHERE id = ? AND user_id = ? AND status = 'pending'").run(id, userId);
-}
 
 // ── Usage ────────────────────────────────────────────────────────────────────
 
@@ -108,6 +105,6 @@ function pruneUsage(beforeIso) { db.prepare('DELETE FROM assistant_usage WHERE a
 module.exports = {
   createConversation, getConversation, listConversations, deleteConversation,
   addMessage, messages,
-  addAction, attachActions, getAction, actionsFor, decideAction, claimAction, releaseAction, isBeingApplied, CLAIM_STALE_MS,
+  addAction, attachActions, getAction, actionsFor, decideAction, claimAction, isBeingApplied, CLAIM_STALE_MS,
   recordQuestion, refundQuestion, questionsSince, oldestSince, pruneUsage,
 };

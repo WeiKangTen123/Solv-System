@@ -56,19 +56,28 @@ export async function streamPost(path, body, onEvent) {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
+  // Events end at a blank line. A proxy may turn line endings into \r\n, and
+  // the last event can arrive without its blank line when the stream closes.
+  const events = final => {
+    buf = buf.replace(/\r\n/g, '\n');
+    let cut;
+    while ((cut = buf.indexOf('\n\n')) >= 0 || (final && buf)) {
+      const chunk = cut >= 0 ? buf.slice(0, cut) : buf;
+      buf = cut >= 0 ? buf.slice(cut + 2) : '';
+      for (const line of chunk.split('\n')) {
+        if (!line.startsWith('data:')) continue;   // ': keep-alive' and other comments
+        try { onEvent(JSON.parse(line.slice(5))); } catch { /* not an event of ours */ }
+      }
+    }
+  };
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
-    let cut;
-    while ((cut = buf.indexOf('\n\n')) >= 0) {
-      const chunk = buf.slice(0, cut); buf = buf.slice(cut + 2);
-      for (const line of chunk.split('\n')) {
-        if (!line.startsWith('data: ')) continue;
-        try { onEvent(JSON.parse(line.slice(6))); } catch { /* a partial or keep-alive line */ }
-      }
-    }
+    events(false);
   }
+  buf += decoder.decode();
+  events(true);
 }
 
 export const api = {

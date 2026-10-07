@@ -1,15 +1,18 @@
 const request = require('supertest');
 const express = require('express');
 const jwt     = require('jsonwebtoken');
+const http    = require('http');
 const { serverFor } = require('../scripts/test-server');
 
-jest.mock('../llm/gemini-client', () => ({ chatWithTools: jest.fn(), callGemini: jest.fn(), hasKeys: jest.fn(() => !!process.env.Gemini_API_KEY), forgetKeys: jest.fn() }));
+jest.mock('../llm/gemini-client', () => ({ chatWithTools: jest.fn(), callGemini: jest.fn(), hasKeys: jest.fn(() => !!process.env.Gemini_API_KEY), forgetKeys: jest.fn(),
+  errorKind: jest.requireActual('../llm/gemini-client').errorKind }));
 
 describe('routes/assistant', () => {
   let app, users, llm, admin, emp, peer, tokens;
   beforeEach(async () => {
     jest.resetModules();
     process.env.ASSISTANT_PER_HOUR = '3';
+    process.env.ASSISTANT_HEARTBEAT_MS = '20';
     process.env.Gemini_API_KEY = 'test-key';
     require('../db/migrate').run();
     users = require('../store/users'); llm = require('../llm/gemini-client');
@@ -21,7 +24,7 @@ describe('routes/assistant', () => {
     tokens = Object.fromEntries([admin, emp, peer].map(u => [u.email, jwt.sign({ id: u.id, email: u.email, role: u.role }, secret)]));
     app = express(); app.use(express.json()); app.use('/api/assistant', require('./assistant'));
   });
-  afterAll(() => { delete process.env.ASSISTANT_PER_HOUR; delete process.env.Gemini_API_KEY; });
+  afterAll(() => { delete process.env.ASSISTANT_PER_HOUR; delete process.env.ASSISTANT_HEARTBEAT_MS; delete process.env.Gemini_API_KEY; });
   const as = u => ({ Authorization: `Bearer ${tokens[u.email]}` });
 
   test('a conversation is its owner\'s alone, admins included', async () => {
@@ -101,5 +104,41 @@ describe('routes/assistant', () => {
     await request(serverFor(app)).post('/api/assistant/chat').set(as(emp)).send({ message: 'hi' }).expect(503);
     const status = await request(serverFor(app)).get('/api/assistant/status').set(as(emp)).expect(200);
     expect(status.body.used).toBe(0);
+  });
+
+  test('a long streamed answer is kept alive with comment lines, which carry no event', async () => {
+    llm.chatWithTools.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve({ role: 'assistant', content: 'Done.' }), 150)));
+    const r = await request(serverFor(app)).post('/api/assistant/chat').set(as(emp)).send({ message: 'Hi', stream: true }).expect(200);
+    expect(r.headers['x-accel-buffering']).toBe('no');
+    expect(r.text).toMatch(/\n: keep-alive\n\n/);
+    const events = r.text.split('\n\n').filter(x => x.startsWith('data: ')).map(x => JSON.parse(x.slice(6)));
+    expect(events.at(-1)).toMatchObject({ type: 'done', message: { content: 'Done.' } });
+  });
+
+  test('a closed tab stops the turn, gives the question back, and frees the person to ask again', async () => {
+    let entered;
+    const inModel = new Promise(resolve => { entered = resolve; });
+    llm.chatWithTools.mockImplementationOnce((uid, msgs, defs, opts) => new Promise((resolve, reject) => {
+      opts.signal.addEventListener('abort', () => reject(opts.signal.reason));
+      entered(opts.signal);
+    }));
+    const server = serverFor(app);
+    if (!server.listening) await new Promise(resolve => server.once('listening', resolve));
+    const body = JSON.stringify({ message: 'Hi', stream: true });
+    const tab = http.request({ port: server.address().port, path: '/api/assistant/chat', method: 'POST',
+      headers: { ...as(emp), 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, res => res.resume());
+    tab.on('error', () => { /* the tab is gone */ });
+    tab.end(body);
+    const signal = await inModel;
+    expect(signal.aborted).toBe(false);
+    tab.destroy();
+    const until = async check => { for (let i = 0; i < 100 && !(await check()); i++) await new Promise(r => setTimeout(r, 20)); };
+    await until(() => signal.aborted);
+    expect(signal.aborted).toBe(true);
+    await until(async () => (await request(server).get('/api/assistant/status').set(as(emp))).body.used === 0);
+    expect((await request(server).get('/api/assistant/status').set(as(emp))).body.used).toBe(0);
+    expect(require('../assistant/store').listConversations(emp.id)).toEqual([]);
+    llm.chatWithTools.mockResolvedValueOnce({ role: 'assistant', content: 'Here again.' });
+    await request(server).post('/api/assistant/chat').set(as(emp)).send({ message: 'again' }).expect(200);
   });
 });

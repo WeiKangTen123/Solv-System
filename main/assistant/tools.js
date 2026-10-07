@@ -9,6 +9,7 @@ const { canView } = require('../middleware/roles');
 const { CATEGORY_NAMES, canonicalCategory } = require('../intake/categories');
 const { localDate } = require('../utils/zone-date');
 const astore  = require('./store');
+const { rateBasis } = require('./actions');
 
 // What the assistant can do, as tools the model calls. Every tool runs as the
 // person in the conversation and is held to exactly what that person could do
@@ -28,7 +29,14 @@ const astore  = require('./store');
 
 const MAX_LIST = 50;
 const MAX_PROPOSALS = 25;
+const MAX_PROBLEMS = 30;
+// Every status but rejected: the receipts find_problems looks at.
+const OPEN_STATUSES = 'reading,review-needed,reviewed,duplicate';
+// Looks at receipt files in one answer. Each is a vision call with the whole
+// file, and a turn's two dozen tool calls could otherwise all be looks.
+const MAX_LOOKS = 3;
 const DATE = { type: 'string', description: 'YYYY-MM-DD' };
+const CATEGORY = { type: 'string', enum: CATEGORY_NAMES };
 
 class ToolError extends Error {}
 const no = msg => { throw new ToolError(msg); };
@@ -77,6 +85,9 @@ function _receipt(ctx, id) {
   return e;
 }
 const _category = e => (e.lines.length > 1 ? 'split across lines' : edit.categoryOf(e));
+// Today in the company's zone, worked out once per turn rather than once for
+// every receipt checked.
+const _today = ctx => ctx.today || (ctx.today = localDate(ctx.company.timezone));
 
 // One line about a receipt, for lists.
 function _brief(ctx, e) {
@@ -92,24 +103,36 @@ function _brief(ctx, e) {
 
 const _same = edit.sameValue;
 
-// What is wrong with or worth a look on one receipt. Deterministic: the same
-// receipt gives the same list, whatever the model makes of it.
-// The same merchant, day and amount as another receipt this person can see,
-// asked of the database rather than by loading every receipt they have: one
-// receipt's check used to read the whole company.
-function _twin(ctx, e) {
-  if (!e.merchant || !e.receiptDate || !(e.total > 0)) return null;
+// The same merchant, day and amount as another receipt, asked of the
+// database rather than by loading every receipt: one receipt's check used to
+// read the whole company. Asked once for a whole list, as find_problems does,
+// rather than once for each receipt in it.
+function _twins(list) {
   // The reader already said so in its note; once is enough.
-  if (e.duplicateOf || /Possible duplicate/.test(e.errorMsg || '')) return null;
+  const ids = list.filter(e => e.merchant && e.receiptDate && e.total > 0 && !e.duplicateOf && !/Possible duplicate/.test(e.errorMsg || '')).map(e => e.id);
+  const out = new Map();
+  if (!ids.length) return out;
+  const rows = db.prepare(`SELECT x.id AS id, y.user_id AS userId, y.merchant AS merchant, y.receipt_date AS receiptDate
+                           FROM expenses x JOIN expenses y
+                             ON y.company_id = x.company_id AND y.receipt_date = x.receipt_date AND y.total_cents = x.total_cents
+                            AND lower(y.merchant) = lower(x.merchant) AND y.id != x.id AND y.status != 'duplicate'
+                           WHERE x.id IN (SELECT value FROM json_each(?))`).all(JSON.stringify(ids));
+  for (const r of rows) {
+    if (!out.has(r.id)) out.set(r.id, []);
+    out.get(r.id).push(r);
+  }
+  return out;
+}
+// One of them that this person can see: a user's own, or anybody's for an
+// admin looking at a colleague's receipt.
+function _twin(ctx, e, twins = _twins([e])) {
   const mine = e.userId === ctx.actor.id || ctx.actor.role !== 'admin';
-  const row = db.prepare(`SELECT id, user_id, merchant, receipt_date FROM expenses
-                          WHERE company_id = ? AND receipt_date = ? AND total_cents = ? AND lower(merchant) = lower(?)
-                            AND id != ? AND status != 'duplicate' ${mine ? 'AND user_id = ?' : ''} LIMIT 1`)
-    .get(...[e.companyId, e.receiptDate, store.toCents(e.total), e.merchant, e.id, ...(mine ? [e.userId] : [])]);
-  return row ? { merchant: row.merchant, receiptDate: row.receipt_date, userId: row.user_id } : null;
+  return (twins.get(e.id) || []).find(t => !mine || t.userId === e.userId) || null;
 }
 
-function _issues(ctx, e) {
+// What is wrong with or worth a look on one receipt. Deterministic: the same
+// receipt gives the same list, whatever the model makes of it.
+function _issues(ctx, e, twins) {
   const out = [];
   if (e.status === 'reading') return ['Still being read.'];
   if (e.status === 'duplicate') out.push('Marked as a duplicate of another receipt.');
@@ -135,7 +158,7 @@ function _issues(ctx, e) {
   }
   if (e.tax !== null && e.tax !== undefined && e.total > 0 && e.tax > e.total) out.push('The tax is more than the total.');
   if (e.receiptDate) {
-    const today = localDate(ctx.company.timezone);
+    const today = _today(ctx);
     if (e.receiptDate > today) out.push('The date is in the future.');
     const yearAgo = `${Number(today.slice(0, 4)) - 1}${today.slice(4)}`;
     if (e.receiptDate < yearAgo) out.push('The receipt is more than a year old.');
@@ -151,7 +174,7 @@ function _issues(ctx, e) {
   }
   if (e.aiConfidence === 'low' && e.status !== 'reviewed') out.push('The reader had low confidence; check it against the picture.');
   // The same merchant, day and amount twice, among receipts this person can see.
-  const twin = _twin(ctx, e);
+  const twin = _twin(ctx, e, twins);
   if (twin) out.push(`Looks like a duplicate of another receipt from ${twin.merchant} on ${twin.receiptDate} for the same amount${twin.userId !== e.userId ? `, claimed by ${_who(ctx, twin.userId)}` : ''}.`);
   return out;
 }
@@ -226,13 +249,19 @@ const READ = {
     parameters: { type: 'object', properties: { ...SCOPE_PROPS } },
     run(ctx, a) {
       const scope = _scope(ctx, a);
-      const open = store.listExpenses(scope).filter(e => !e.claimed && e.status !== 'rejected');
+      // Rejected receipts are left out by the query, and the possible twins
+      // of everything left are found in one more; the checks themselves read
+      // nothing. It used to be one duplicate query for every receipt, with the
+      // server waiting on all of them.
+      const open = store.listExpenses({ ...scope, status: OPEN_STATUSES }).filter(e => !e.claimed);
+      const twins = _twins(open);
       const found = [];
       for (const e of open) {
-        const issues = _issues(ctx, e).filter(i => !/^No business purpose/.test(i) || e.status !== 'reviewed');
+        const issues = _issues(ctx, e, twins).filter(i => !/^No business purpose/.test(i) || e.status !== 'reviewed');
         if (issues.length) found.push({ receipt: _brief(ctx, e), issues });
       }
-      return { looked: open.length, withProblems: found.length, receipts: found.slice(0, 30), ...(found.length > 30 ? { note: 'Showing 30.' } : {}) };
+      return { looked: open.length, withProblems: found.length, receipts: found.slice(0, MAX_PROBLEMS),
+               ...(found.length > MAX_PROBLEMS ? { note: `Showing ${MAX_PROBLEMS} of ${found.length}.` } : {}) };
     },
   },
 
@@ -246,8 +275,20 @@ const READ = {
       // vision call with the whole file.
       const q = String(a.question || '').slice(0, 500);
       const k = `${e.id}|${q.trim().toLowerCase()}`;
-      if (!ctx.looks.has(k)) ctx.looks.set(k, require('./look').lookAt(ctx.actor.id, e, q, { interactive: true }));
-      return { answer: await ctx.looks.get(k) };
+      if (!ctx.looks.has(k)) {
+        if (ctx.lookCount >= MAX_LOOKS) no(`That is ${MAX_LOOKS} looks at receipts in this answer, the most there can be in one. Answer with what you have, and say which receipts were not looked at so the person can ask about them next.`);
+        ctx.lookCount++;
+        const look = require('./look').lookAt(ctx.actor.id, e, q, { interactive: true, signal: ctx.signal });
+        ctx.looks.set(k, look);
+        // A look that failed is not an answer to keep: asked again, it is
+        // tried again (and counted again).
+        look.catch(() => { if (ctx.looks.get(k) === look) ctx.looks.delete(k); });
+      }
+      try { return { answer: await ctx.looks.get(k) }; }
+      catch (err) {
+        if (err.truncated) no('The look ran out of room before it said anything. Ask a narrower question about the receipt.');
+        throw err;
+      }
     },
   },
 
@@ -358,11 +399,23 @@ const READ = {
 // ── Proposing tools ──────────────────────────────────────────────────────────
 
 const money = n => require('../utils/money').formatAmount(n, { empty: 'empty' });
-const _label = e => `${e.merchant || 'Untitled receipt'}${e.receiptDate ? `, ${e.receiptDate}` : ''}${e.total ? `, ${e.currency || ''} ${money(e.total)}`.replace(' ,', ',') : ''}`;
+// A card names whose receipt it is when it is not the person's own. Text a
+// colleague put on a receipt can steer an admin's assistant into proposing
+// changes to receipts that are not the admin's, and a card that named only
+// the merchant passed for one of their own.
+const _label = (ctx, e) => `${e.userId === ctx.actor.id ? '' : `${_who(ctx, e.userId)}'s receipt: `}${e.merchant || 'Untitled receipt'}${e.receiptDate ? `, ${e.receiptDate}` : ''}${e.total ? `, ${e.currency || ''} ${money(e.total)}`.replace(' ,', ',') : ''}`;
 const _show = (k, v) => (v === null || v === undefined || v === '' ? 'empty' : ['total', 'tax', 'subTotal'].includes(k) ? money(v) : String(v));
+// The same, for the panel to show on the card and to keep "Apply all" to
+// the person's own receipts.
+function _about(ctx, e) {
+  const c = _case(ctx, e.reportId);
+  const mine = e.userId === ctx.actor.id;
+  return { mine, owner: mine ? null : _who(ctx, e.userId), case: c ? c.number : null, claimed: !!e.claimed };
+}
 
 function _propose(ctx, { expense, kind, payload, summary }) {
   if (ctx.proposals.length >= MAX_PROPOSALS) no(`That is more than ${MAX_PROPOSALS} changes in one go. Do the first ${MAX_PROPOSALS}, then ask the person to continue.`);
+  if (expense) payload = { ...payload, about: _about(ctx, expense) };
   const action = astore.addAction({ conversationId: ctx.conversationId, userId: ctx.actor.id, expenseId: expense ? expense.id : null, kind, payload, summary });
   ctx.proposals.push(action);
   return { proposed: true, summary, note: 'A card is now in front of the person. Nothing has changed until they press Apply.' };
@@ -385,7 +438,7 @@ const PROPOSE = {
       changes: { type: 'object', properties: {
         merchant: { type: 'string' }, receiptDate: DATE, receiptTime: { type: 'string', description: 'HH:MM' }, invoiceNo: { type: 'string' },
         currency: { type: 'string' }, total: { type: 'number' }, tax: { type: 'number' }, purpose: { type: 'string', description: 'The business purpose' },
-        category: { type: 'string', enum: CATEGORY_NAMES },
+        category: CATEGORY,
       } },
       reason: REASON,
     }, required: ['id', 'changes', 'reason'] },
@@ -404,7 +457,7 @@ const PROPOSE = {
         from[k] = k === 'category' ? _category(e) : (e[k] ?? null);
       }
       if (!Object.keys(patch).length) no('Those are already the values on the receipt.');
-      const summary = `${_label(e)}: ${Object.keys(patch).map(k => `${changes.LABEL[k] || k} ${_show(k, from[k])} → ${_show(k, patch[k])}`).join('; ')}`;
+      const summary = `${_label(ctx, e)}: ${Object.keys(patch).map(k => `${changes.LABEL[k] || k} ${_show(k, from[k])} → ${_show(k, patch[k])}`).join('; ')}`;
       return _propose(ctx, { expense: e, kind: 'edit_details', payload: { expenseId: e.id, patch, from, reason: String(a.reason || '').slice(0, 300) }, summary });
     },
   },
@@ -414,7 +467,7 @@ const PROPOSE = {
     parameters: { type: 'object', properties: {
       id: { type: 'string' },
       lines: { type: 'array', items: { type: 'object', properties: {
-        category: { type: 'string', enum: CATEGORY_NAMES }, description: { type: 'string' }, amount: { type: 'number' },
+        category: CATEGORY, description: { type: 'string' }, amount: { type: 'number' },
         onBehalfOf: { type: 'string', description: 'A colleague this part was paid for, if any' },
       }, required: ['category', 'amount'] } },
       reason: REASON,
@@ -433,7 +486,7 @@ const PROPOSE = {
       });
       const sum = clean.reduce((s, l) => s + Math.round(l.amount * 100), 0);
       if (sum !== store.toCents(e.total)) no(`These lines add up to ${money(sum / 100)} but the receipt total is ${money(e.total)}. They must match to the cent; if the total is wrong, propose that first.`);
-      const summary = `${_label(e)}: lines ${changes.linesSummary(e.lines) || 'none'} → ${changes.linesSummary(clean)}`;
+      const summary = `${_label(ctx, e)}: lines ${changes.linesSummary(e.lines) || 'none'} → ${changes.linesSummary(clean)}`;
       // What the card was made against: Apply refuses if the lines or the
       // total have moved since, rather than overwriting somebody's newer split.
       return _propose(ctx, { expense: e, kind: 'edit_lines', payload: { expenseId: e.id, lines: clean, reason: String(a.reason || '').slice(0, 300), basis: changes.linesSummary(e.lines), total: e.total }, summary });
@@ -451,8 +504,12 @@ const PROPOSE = {
       _detailsOk(ctx, e);
       if (!e.currency || e.currency === ctx.base) no(`This receipt is in ${e.currency || 'no currency yet'}; it needs no exchange rate.`);
       if (!e.lines.length) no('The receipt has no lines yet, so there is nothing to price.');
+      // What the card was made against: Apply refuses once the currency, the
+      // rate, where it came from or the reason typed for it has moved, rather
+      // than overwriting a rate somebody typed since (actions.js).
+      const basis = rateBasis(e);
       if (a.refresh) {
-        return _propose(ctx, { expense: e, kind: 'refresh_rate', payload: { expenseId: e.id }, summary: `${_label(e)}: fetch the published ${e.currency} rate again, dropping any typed rate` });
+        return _propose(ctx, { expense: e, kind: 'refresh_rate', payload: { expenseId: e.id, basis }, summary: `${_label(ctx, e)}: fetch the published ${e.currency} rate again, dropping any typed rate` });
       }
       const rate = Number(a.rate);
       if (!(rate > 0) || !Number.isFinite(rate)) no('Give a rate above zero, or refresh: true.');
@@ -461,11 +518,8 @@ const PROPOSE = {
       const problem = await require('../fx/apply').typedRateProblem(e, rate, ctx.actor);
       if (problem) no(problem);
       const now = e.lines[0] && e.lines[0].fxRate;
-      // A rate is for one currency: Apply refuses once the receipt's currency
-      // has changed. An admin's rate card for INR applied after the receipt
-      // became USD turned USD 10,000 into SGD 155.
-      return _propose(ctx, { expense: e, kind: 'set_rate', payload: { expenseId: e.id, rate, reason: reason.slice(0, 200), currency: e.currency },
-        summary: `${_label(e)}: ${e.currency} rate ${now ? Number(now.toPrecision(6)) : 'none'} → ${Number(rate.toPrecision(6))} (${reason.slice(0, 80)})` });
+      return _propose(ctx, { expense: e, kind: 'set_rate', payload: { expenseId: e.id, rate, reason: reason.slice(0, 200), currency: e.currency, basis },
+        summary: `${_label(ctx, e)}: ${e.currency} rate ${now ? Number(now.toPrecision(6)) : 'none'} → ${Number(rate.toPrecision(6))} (${reason.slice(0, 80)})` });
     },
   },
 
@@ -478,7 +532,7 @@ const PROPOSE = {
       if (e.status === 'reviewed') no('It is already reviewed.');
       const why = edit.reviewBlocked(e);
       if (why) no(why);
-      return _propose(ctx, { expense: e, kind: 'mark_reviewed', payload: { expenseId: e.id }, summary: `${_label(e)}: mark reviewed` });
+      return _propose(ctx, { expense: e, kind: 'mark_reviewed', payload: { expenseId: e.id }, summary: `${_label(ctx, e)}: mark reviewed` });
     },
   },
 
@@ -495,7 +549,7 @@ const PROPOSE = {
       if ((target ? target.id : null) === (e.reportId || null)) no('It is already there.');
       const cur = _case(ctx, e.reportId);
       return _propose(ctx, { expense: e, kind: 'file_in_case', payload: { expenseId: e.id, caseId: target ? target.id : null },
-        summary: `${_label(e)}: ${target ? `file in ${target.number}${target.title ? ` (${target.title})` : ''}` : `take out of ${cur ? cur.number : 'its case'}`}` });
+        summary: `${_label(ctx, e)}: ${target ? `file in ${target.number}${target.title ? ` (${target.title})` : ''}` : `take out of ${cur ? cur.number : 'its case'}`}` });
     },
   },
 };
@@ -510,6 +564,8 @@ async function run(ctx, name, args) {
   try { return await tool.run(ctx, args && typeof args === 'object' ? args : {}); }
   catch (err) {
     if (err instanceof ToolError) return { error: err.message };
+    // The person has gone; the turn stops at its next step (conversation.js).
+    if (ctx.signal && ctx.signal.aborted) return { error: 'The question was given up.' };
     require('../utils/logger').warn('Assistant tool failed', { tool: name, error: err.message });
     return { error: 'That did not work because of a problem on the server. Say so; do not guess the answer.' };
   }
@@ -517,7 +573,8 @@ async function run(ctx, name, args) {
 
 function context(actor) {
   const company = users.getCompany(actor.companyId) || { baseCurrency: 'SGD', timezone: 'Asia/Singapore' };
-  return { actor, company, base: company.baseCurrency || 'SGD', names: new Map(), cases: new Map(), looks: new Map(), proposals: [], conversationId: null };
+  return { actor, company, base: company.baseCurrency || 'SGD', names: new Map(), cases: new Map(), looks: new Map(), lookCount: 0, today: null,
+           proposals: [], conversationId: null, signal: null };
 }
 
-module.exports = { DEFINITIONS, run, context, READ, PROPOSE, _issues, _scope, MAX_PROPOSALS };
+module.exports = { DEFINITIONS, run, context, READ, PROPOSE, _issues, _scope, MAX_PROPOSALS, MAX_PROBLEMS, MAX_LOOKS };
