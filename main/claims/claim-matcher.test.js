@@ -1,4 +1,4 @@
-const { matchClaims, sameAmount, daysApart, textOverlap } = require('./claim-matcher');
+const { matchClaims, scorePair, sameAmount, daysApart, textOverlap } = require('./claim-matcher');
 
 // The design constraint these pin: matching must NOT lead on amount. If a
 // receipt is paired with whichever row equals its total, an amount mismatch is
@@ -69,10 +69,23 @@ describe('claims/claim-matcher', () => {
     expect(r.matches[0].reasons).toContain('a day apart');
   });
 
-  test('a match on one weak signal is flagged for a human', () => {
+  test('a match on the date alone with a different amount is a discrepancy', () => {
     const r = matchClaims([row(1, '2026-02-23', 30.6)], [rcpt('2026-02-23', 99.9)]);
-    expect(r.matches[0].weak).toBe(true);
     expect(r.matches[0].discrepancy).not.toBeNull();
+  });
+
+  test('a negative claimed amount is not "within 1%" of whatever receipt is near it', () => {
+    // As a ratio against a negative figure, every difference came out under 1%.
+    expect(scorePair(row(1, null, -50), rcpt(null, 12.5))).toEqual({ score: 0, reasons: [] });
+  });
+
+  test('a line with no amount, or a blank 0, is neither verified nor a discrepancy', () => {
+    for (const amount of [null, 0]) {
+      const r = matchClaims([row(1, '2026-02-23', amount)], [rcpt('2026-02-23', 36)]);
+      expect(r.summary).toMatchObject({ matched: 1, verified: 0, discrepancies: 0 });
+      // "Claimed null but the receipt says 36" is not a finding.
+      expect(r.matches[0].discrepancy).toBeNull();
+    }
   });
 
   test('an unreadable receipt with no date and no total matches nothing', () => {

@@ -20,6 +20,13 @@ const TEXT_HINT    = 15;
 // the duplicate check.
 const { sameAmount } = require('../intake/dedup');
 
+// An amount says something only when it is a positive figure. A claim line's 0
+// is a formatted blank and null an empty cell: neither is a claim to agree or
+// disagree with, and the reconciliation read "Claimed null but the receipt
+// says 36". A negative one, compared as a ratio, was "within 1%" of every
+// receipt there was.
+const stated = v => typeof v === 'number' && v > 0;
+
 function daysApart(a, b) {
   if (!a || !b) return null;
   const d = Math.abs(new Date(a) - new Date(b));
@@ -42,9 +49,9 @@ function scorePair(row, receipt) {
   if (gap === 0)              { score += DATE_EXACT; reasons.push('same date'); }
   else if (gap !== null && gap <= 1) { score += DATE_NEAR; reasons.push('a day apart'); }
 
-  if (sameAmount(row.amount, receipt.total)) { score += AMOUNT_EXACT; reasons.push('same amount'); }
-  else if (row.amount && receipt.total && Math.abs(row.amount - receipt.total) / row.amount <= 0.01) {
-    score += AMOUNT_NEAR; reasons.push('amount within 1%');
+  if (stated(row.amount) && stated(receipt.total)) {
+    if (sameAmount(row.amount, receipt.total)) { score += AMOUNT_EXACT; reasons.push('same amount'); }
+    else if (Math.abs(row.amount - receipt.total) / row.amount <= 0.01) { score += AMOUNT_NEAR; reasons.push('amount within 1%'); }
   }
 
   if (textOverlap(row.description, receipt.merchant)) { score += TEXT_HINT; reasons.push('merchant named in the description'); }
@@ -74,21 +81,22 @@ function matchClaims(rows = [], receipts = []) {
     if (rowTaken.has(p.ri) || receiptTaken.has(p.ei)) continue;
     rowTaken.add(p.ri); receiptTaken.add(p.ei);
     const row = rows[p.ri], receipt = receipts[p.ei];
-    const amountAgrees = sameAmount(row.amount, receipt.total);
+    // Only two stated amounts can agree or disagree. A pair matched on its date
+    // with no claimed amount is neither verified nor a discrepancy.
+    const comparable = stated(row.amount) && stated(receipt.total);
+    const amountAgrees = comparable && sameAmount(row.amount, receipt.total);
     matches.push({
       row, receipt, score: p.score, reasons: p.reasons,
       amountAgrees,
       // The finding the whole exercise exists for.
-      discrepancy: amountAgrees ? null : {
+      discrepancy: !comparable || amountAgrees ? null : {
         claimed: row.amount,
         onReceipt: receipt.total,
         // Rounded to the cent: 36 - 30.6 is 5.399999999999999 in binary floating
         // point, and a discrepancy shown to fifteen decimal places reads as a bug
         // in the tool rather than a problem with the claim.
-        difference: Math.round(((receipt.total ?? 0) - (row.amount ?? 0)) * 100) / 100,
+        difference: Math.round((receipt.total - row.amount) * 100) / 100,
       },
-      // Matched, but on one signal alone — worth a person's eye.
-      weak: p.score < DATE_EXACT + AMOUNT_EXACT,
     });
   }
 
@@ -102,11 +110,11 @@ function matchClaims(rows = [], receipts = []) {
       total: rows.length > 0 ? rows.length : receipts.length,
       matched: matches.length,
       verified: matches.filter(m => m.amountAgrees).length,
-      discrepancies: matches.filter(m => !m.amountAgrees).length,
+      discrepancies: matches.filter(m => m.discrepancy).length,
       missingReceipts: rows.length - matches.length,
       extraReceipts: receipts.length - matches.length,
     },
   };
 }
 
-module.exports = { matchClaims, scorePair, sameAmount, daysApart, textOverlap, MIN_SCORE };
+module.exports = { matchClaims, scorePair, sameAmount, stated, daysApart, textOverlap, MIN_SCORE };

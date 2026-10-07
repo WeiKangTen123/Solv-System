@@ -55,4 +55,76 @@ describe('claims/claim-record', () => {
     expect(store.getExpense(noFile.id)).toBeNull();
     expect(reports.getReport(c.id)).toBeNull();
   });
+
+  test('a later part saved first stores the file with its hash, and a re-import finds every part', async () => {
+    // Parts are saved in matching order, so part 1 can come first. Only part 0
+    // was hashed: the stored file had no hash, and nothing found it again.
+    const first = new Map();
+    const b = await record.createClaimRecord({ userId: u.id, groupId: 'job-5', row: row(part(1, 'B', 20)), receipt: part(1, 'B', 20), store: storeFile, files: first });
+    const a = await record.createClaimRecord({ userId: u.id, groupId: 'job-5', row: row(part(0, 'A', 10)), receipt: part(0, 'A', 10), store: storeFile, files: first });
+    expect(storeFile).toHaveBeenCalledTimes(1);
+    expect(b.receipt.sha256).toBeTruthy();
+    expect([a.status, b.status]).toEqual(['review-needed', 'review-needed']);
+
+    const again = new Map();
+    const a2 = await record.createClaimRecord({ userId: u.id, groupId: 'job-6', row: row(part(0, 'A', 10)), receipt: part(0, 'A', 10), store: storeFile, files: again });
+    const b2 = await record.createClaimRecord({ userId: u.id, groupId: 'job-6', row: row(part(1, 'B', 20)), receipt: part(1, 'B', 20), store: storeFile, files: again });
+    expect([a2.status, b2.status]).toEqual(['duplicate', 'duplicate']);
+    expect(storeFile).toHaveBeenCalledTimes(1);          // the file is not stored twice
+  });
+
+  test('a duplicate of your own receipt adds nothing to your storage', async () => {
+    const receipt = { ...part(0, 'A', 10), fileKey: null };
+    await record.createClaimRecord({ userId: u.id, groupId: 'job-7', row: row(receipt), receipt, store: storeFile });
+    const before = store.bytesStoredBy(u.id);
+    const copy = await record.createClaimRecord({ userId: u.id, groupId: 'job-8', row: row(receipt), receipt, store: storeFile });
+    expect(copy.status).toBe('duplicate');
+    expect(store.bytesStoredBy(u.id)).toBe(before);
+  });
+
+  test('a currency typed as a symbol is stored as its code, and one that names none gives way to the receipt', async () => {
+    const r1 = await record.createClaimRecord({ userId: u.id, groupId: 'job-9', row: { no: '1', date: '2026-09-01', description: 'Taxi', currency: 'S$', amount: 12 }, receipt: null, store: storeFile });
+    expect(r1.currency).toBe('SGD');
+    const receipt = { ...part(0, 'Grab', 40), currency: 'MYR', fileKey: null };
+    const r2 = await record.createClaimRecord({ userId: u.id, groupId: 'job-9', row: { no: '2', date: receipt.date, description: 'Grab', currency: '$', amount: 40 }, receipt, store: storeFile });
+    expect(r2.currency).toBe('MYR');
+  });
+
+  test("a claimed 0 is a blank, and the receipt's total stands", async () => {
+    const receipt = { ...part(0, 'Hotel', 250), fileKey: null };
+    const r = await record.createClaimRecord({ userId: u.id, groupId: 'job-10', row: { ...row(receipt), amount: 0 }, receipt, store: storeFile });
+    expect(r.total).toBe(250);
+    expect(r.lines[0].amount).toBe(250);
+  });
+
+  test("what the reader said about the whole file is on the record's note", async () => {
+    const receipt = { ...part(0, 'A', 10), fileKey: null, notes: 'Only the first 20 of 35 pages were read; check the rest by hand.' };
+    const r = await record.createClaimRecord({ userId: u.id, groupId: 'job-11', row: row(receipt), receipt, store: storeFile });
+    expect(r.errorMsg).toMatch(/Only the first 20 of 35 pages/);
+  });
+
+  test('undo also removes the receipts the import stored but never made an expense for', async () => {
+    const receiptStore = require('../receipts/receipt-store');
+    const files = receiptStore.forUser(u.id);
+    const left = store.createReceipt({ companyId: u.companyId, userId: u.id, file: 'pending', mime: 'image/jpeg', sizeBytes: 9, sha256: 'abc', source: 'import', groupId: 'job-12' });
+    const stored = store.createReceipt({ companyId: u.companyId, userId: u.id, file: 'pending', mime: 'image/jpeg', sizeBytes: 9, source: 'import', groupId: 'job-12' });
+    const name = await files.save(stored.id, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x01]), 'image/jpeg');
+    store.updateReceipt(stored.id, { file: name });
+    await record.createClaimRecord({ userId: u.id, groupId: 'job-12', row: { no: '1', date: '2026-09-03', description: 'Taxi', currency: 'SGD', amount: 12 }, receipt: null, store: storeFile });
+
+    const out = undo.undoImport(u.id, 'job-12');
+    expect(out).toMatchObject({ found: 1, orphans: 2 });
+    expect(store.getReceipt(left.id)).toBeNull();
+    expect(store.getReceipt(stored.id)).toBeNull();
+    expect(files.exists(name)).toBe(false);
+  });
+
+  test('undo leaves the case the import was started from, even emptied', async () => {
+    const mine = reports.createReport({ companyId: u.companyId, userId: u.id, kind: 'case', title: 'Trip to KL' });
+    await new Promise(r => setTimeout(r, 5));
+    const r = await record.createClaimRecord({ userId: u.id, groupId: 'job-13', row: { no: '1', date: '2026-09-03', description: 'Taxi', currency: 'SGD', amount: 12 }, receipt: null, store: storeFile });
+    reports.addExpense(mine.id, r.id);
+    expect(undo.undoImport(u.id, 'job-13')).toMatchObject({ removed: 1, casesRemoved: 0 });
+    expect(reports.getReport(mine.id)).toBeTruthy();
+  });
 });
