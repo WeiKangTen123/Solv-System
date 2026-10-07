@@ -173,7 +173,7 @@ describe('receipts/read-receipt', () => {
     const e2 = store.createExpense({ companyId: u.companyId, userId: u.id, receiptId: r2.id });
     await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r2.id, expenseId: e2.id, buffer: Buffer.from('b'), mime: 'image/jpeg' });
     expect(store.getExpense(e2.id).duplicateOf).toBe(first.e.id);
-    await read.applyRead(e2.id, { ...grab, total: 25 }, {}, { reread: true }); read.flagIfSuspected(e2.id);
+    await read.applyRead(e2.id, { ...grab, total: 25 }, { reread: true }); read.flagIfSuspected(e2.id);
     const after = store.getExpense(e2.id);
     expect(after.duplicateOf).toBeNull();
     expect(after.errorMsg).toBeNull();
@@ -189,7 +189,7 @@ describe('receipts/read-receipt', () => {
     expect(read.withoutCurrencyNote(after.errorMsg)).toBeNull();
     expect(read.withoutCurrencyNote(`${after.errorMsg} Possible duplicate of x — y. Check before submitting.`)).toBe('Possible duplicate of x — y. Check before submitting.');
     // A re-read that makes the currency out clears the note.
-    await read.applyRead(e.id, { merchant: 'Corner Cafe', date: '2026-09-02', total: 18.4, currency: 'MYR', category: 'Meals', confidence: 'high', lineItems: [] }, {}, { reread: true });
+    await read.applyRead(e.id, { merchant: 'Corner Cafe', date: '2026-09-02', total: 18.4, currency: 'MYR', category: 'Meals', confidence: 'high', lineItems: [] }, { reread: true });
     after = store.getExpense(e.id);
     expect(after.currency).toBe('MYR');
     expect(after.errorMsg).toBeNull();

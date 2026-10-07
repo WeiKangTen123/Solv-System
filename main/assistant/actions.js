@@ -65,8 +65,8 @@ async function _do(a, actor) {
       if (a.kind === 'set_rate') return edit.setRate(p.expenseId, { rate: p.rate, reason: p.reason }, actor, opts);
       return (await edit.refreshRate(p.expenseId, actor, opts)).expense;
     }
-    case 'mark_reviewed': return edit.setStatus(p.expenseId, 'reviewed', actor);
-    case 'file_in_case':  return edit.fileInCase(p.expenseId, p.caseId || null, actor);
+    case 'mark_reviewed': return edit.setStatus(p.expenseId, 'reviewed', actor, { via: 'assistant' });
+    case 'file_in_case':  return edit.fileInCase(p.expenseId, p.caseId || null, actor, { via: 'assistant' });
     default: return fail(400, 'Unknown change');
   }
 }

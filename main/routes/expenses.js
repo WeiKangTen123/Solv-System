@@ -159,7 +159,7 @@ router.post('/:id/reread', requireAuth, asyncHandler(async (req, res) => {
       if (e.status === 'reading') store.updateExpense(e.id, { status: 'review-needed' });
       return res.json({ ok: false, reason: 'unreadable', expense: store.getExpense(e.id) });
     }
-    await applyRead(e.id, r, {}, { reread: true }); flagIfSuspected(e.id);
+    await applyRead(e.id, r, { reread: true }); flagIfSuspected(e.id);
     if (store.getExpense(e.id).status === 'reading') store.updateExpense(e.id, { status: 'review-needed' });
     const after = store.getExpense(e.id);
     changes.record(e, after, req.user, 'reread');

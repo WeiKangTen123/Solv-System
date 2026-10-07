@@ -45,6 +45,18 @@ function sameValue(field, a, b) {
 // has none. A split has no single category (null).
 const categoryOf = e => (e.lines.length === 1 ? e.lines[0].category : e.lines.length > 1 ? null : e.category) || null;
 
+// The change log, and the assistant's cached view of whoever the change
+// touches: without this the assistant answered from a view up to 30 seconds
+// older than the page it was asked on.
+function _record(before, after, actor, via) {
+  changes.record(before, after, actor, via);
+  try {
+    const { forgetSnapshot } = require('../assistant/conversation');
+    forgetSnapshot(after.userId);
+    if (actor && actor.id !== after.userId) forgetSnapshot(actor.id);
+  } catch { /* the assistant is not loaded */ }
+}
+
 // May this person change this receipt's details at all, and if not, why not.
 function detailsBlocked(e, actor) {
   if (!e) return { status: 404, error: 'Expense not found' };
@@ -124,7 +136,7 @@ async function editDetails(expenseId, body, actor, { via = 'app' } = {}) {
   if (after.status === 'reviewed' && after.lines.length && !store.linesReconcile(after.lines, store.toCents(after.total)) && !wf.isLocked(after)) {
     after = store.updateExpense(e.id, { status: 'review-needed' });
   }
-  changes.record(e, after, actor, via);
+  _record(e, after, actor, via);
   return after;
 }
 
@@ -158,7 +170,7 @@ async function editLines(expenseId, lines, actor, { via = 'app' } = {}) {
   } catch (err) { fail(400, err.message); }
   await applyFx(e.id);
   const after = store.getExpense(e.id);
-  changes.record(e, after, actor, via);
+  _record(e, after, actor, via);
   return after;
 }
 
@@ -170,7 +182,7 @@ async function setRate(expenseId, { rate, reason }, actor, { via = 'app' } = {})
   let after;
   try { after = await overrideFx(e.id, { rate, reason, actor }); }
   catch (err) { fail(400, err.message); }
-  changes.record(e, after, actor, via);
+  _record(e, after, actor, via);
   return after;
 }
 
@@ -180,7 +192,7 @@ async function refreshRate(expenseId, actor, { via = 'app' } = {}) {
   _assertDetails(e, actor);
   const out = await applyFx(e.id, { force: true });
   const after = store.getExpense(e.id);
-  changes.record(e, after, actor, via);
+  _record(e, after, actor, via);
   return { ...out, expense: after };
 }
 
@@ -212,7 +224,7 @@ function reviewBlocked(e) {
 }
 
 // Reviewed (the owner saying the details are right) or back to review-needed.
-function setStatus(expenseId, status, actor) {
+function setStatus(expenseId, status, actor, { via = 'app' } = {}) {
   const e = store.getExpense(expenseId);
   _assertAction(e, actor);
   if (!['reviewed', 'review-needed'].includes(status)) fail(400, 'Status can be reviewed or review-needed here');
@@ -224,12 +236,14 @@ function setStatus(expenseId, status, actor) {
   const patch = { status };
   // Marking it reviewed is the person saying the currency on it is right.
   if (status === 'reviewed' && e.errorMsg) patch.errorMsg = withoutCurrencyNote(e.errorMsg);
-  return store.updateExpense(e.id, patch);
+  const after = store.updateExpense(e.id, patch);
+  _record(e, after, actor, via);
+  return after;
 }
 
 // Moving a receipt into a case, out of one, or between two. Both ends have to
 // be open, and the case has to be the owner's own.
-function fileInCase(expenseId, reportId, actor) {
+function fileInCase(expenseId, reportId, actor, { via = 'app' } = {}) {
   const reports = require('../store/reports');
   const e = store.getExpense(expenseId);
   _assertAction(e, actor);
@@ -252,7 +266,9 @@ function fileInCase(expenseId, reportId, actor) {
     leaving();
     reports.addExpense(r.id, e.id);
   } else leaving();
-  return store.getExpense(e.id);
+  const after = store.getExpense(e.id);
+  _record(e, after, actor, via);
+  return after;
 }
 
 // What the person looking at a receipt may do with it, for the page to show.

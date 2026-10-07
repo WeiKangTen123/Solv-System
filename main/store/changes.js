@@ -8,7 +8,9 @@ const FIELDS = {
   merchant: 'Merchant', receiptDate: 'Date', receiptTime: 'Time', invoiceNo: 'Invoice no.', currency: 'Currency',
   total: 'Total', tax: 'Tax', subTotal: 'Subtotal', purpose: 'Purpose', description: 'Description', category: 'Category',
 };
-const LABEL = { ...FIELDS, lines: 'Lines', rate: 'Exchange rate' };
+const LABEL = { ...FIELDS, lines: 'Lines', rate: 'Exchange rate', status: 'Status', case: 'Case' };
+const STATUS_WORDS = { reviewed: 'checked', 'review-needed': 'to check', reading: 'being read', duplicate: 'duplicate', rejected: 'rejected' };
+const _caseNo = id => (id ? (require('./reports').head(id) || {}).number || 'a case' : null);
 
 const { formatAmount } = require('../utils/money');
 const money = n => formatAmount(n, { empty: '' });
@@ -38,6 +40,10 @@ function diff(before, after) {
   if (la !== lb) out.push({ field: 'lines', oldValue: la || null, newValue: lb || null });
   const ra = rateSummary(before.lines), rb = rateSummary(after.lines);
   if (ra !== rb && (ra || rb)) out.push({ field: 'rate', oldValue: ra || null, newValue: rb || null });
+  if ((before.status || null) !== (after.status || null)) {
+    out.push({ field: 'status', oldValue: STATUS_WORDS[before.status] || before.status || null, newValue: STATUS_WORDS[after.status] || after.status || null });
+  }
+  if ((before.reportId || null) !== (after.reportId || null)) out.push({ field: 'case', oldValue: _caseNo(before.reportId), newValue: _caseNo(after.reportId) });
   return out;
 }
 

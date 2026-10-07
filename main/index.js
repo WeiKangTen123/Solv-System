@@ -169,6 +169,10 @@ const server = app.listen(PORT, HOST, () => {
   // Receipts a restart left half-read are read again, or released with a note.
   require('./receipts/recover').recoverStuckReads({ before: BOOT_AT })
     .catch(err => logger.warn('Could not recover interrupted reads', { error: err.message }));
+
+  // Copies of receipts left in the temp folder by a PDF read this process's
+  // predecessor did not finish: an exit skips the read's own clean-up.
+  require('./pdf/workers').sweepStaleTemp();
 });
 
 // pm2 sends SIGINT on a reload and waits kill_timeout before killing. Stop

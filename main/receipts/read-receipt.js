@@ -75,7 +75,7 @@ function buildLines(r, fallbackCategory) {
 // A first read lands only on a row still 'reading': once anybody has edited,
 // checked or claimed it, the reader's late answer would overwrite them with
 // nothing in the change log. A re-read is asked for, and passes reread.
-async function applyRead(expenseId, r, extra = {}, { reread = false } = {}) {
+async function applyRead(expenseId, r, { reread = false } = {}) {
   const exp = store.getExpense(expenseId);
   if (!exp) return null;
   if (!reread && exp.status !== 'reading') {
@@ -106,7 +106,6 @@ async function applyRead(expenseId, r, extra = {}, { reread = false } = {}) {
     // later, so a total that was changed away from the receipt shows.
     aiRead: { merchant: r.merchant ?? null, receiptDate: r.date ?? null, currency: r.currency ?? null, total: r.total ?? null,
               tax: r.tax ?? null, invoiceNo: r.invoiceNumber ?? null, category: canonicalCategory(r.category) ?? null },
-    ...extra,
   };
   const updated = store.updateExpense(expenseId, patch);
   if (!updated) return null;

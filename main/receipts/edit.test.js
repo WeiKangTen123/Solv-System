@@ -127,4 +127,15 @@ describe('receipts/edit', () => {
     expect(edit.sameValue('total', '12.50', 12.5)).toBe(true);
     expect(edit.sameValue('merchant', ' Grab ', 'grab')).toBe(true);
   });
+  // Marking a receipt checked and moving it into a case left no record, the
+  // assistant's included.
+  test('checking a receipt and filing it are in its change log, with who did it and how', () => {
+    const e = seed();
+    edit.setStatus(e.id, 'reviewed', actor(emp), { via: 'assistant' });
+    const r = require('../store/reports').createReport({ companyId: emp.companyId, userId: emp.id, title: 'T' });
+    edit.fileInCase(e.id, r.id, actor(emp));
+    const log = changes.list(e.id);
+    expect(log.find(c => c.field === 'status')).toMatchObject({ oldValue: 'to check', newValue: 'checked', via: 'assistant', label: 'Status' });
+    expect(log.find(c => c.field === 'case')).toMatchObject({ oldValue: null, newValue: r.number, via: 'app', label: 'Case' });
+  });
 });
