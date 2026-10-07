@@ -9,8 +9,10 @@ import ReceiptUpload from '../components/receipts/ReceiptUpload';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { fmtMoney, fmtRate } from '../utils/format';
 import { formatDateTime } from '../utils/formatDate';
+import { fxSourceName } from '../utils/fxSources';
+import { unpricedCount, unpricedText } from '../utils/caseTotals';
 
-// The cover, the expenses under it, the totals, and the one action the
+// The cover, the receipts under it, the totals, and the one action the
 // current person can take on it right now.
 const COVER = [['title', 'Title', 'text'], ['purpose', 'Purpose', 'text'], ['periodFrom', 'From', 'date'], ['periodTo', 'To', 'date'], ['destination', 'Destination', 'text'], ['nights', 'Nights', 'number'], ['advances', 'Advances received', 'number'], ['notes', 'Notes', 'text']];
 // A case is a bundle of receipts that belong together. It has no destination
@@ -18,7 +20,6 @@ const COVER = [['title', 'Title', 'text'], ['purpose', 'Purpose', 'text'], ['per
 // empty row on the printed cover.
 const NOT_ON_A_CASE = new Set(['destination', 'nights']);
 const coverFor = kind => (kind === 'case' ? COVER.filter(([k]) => !NOT_ON_A_CASE.has(k)) : COVER);
-const SOURCE = { frankfurter: 'ECB reference rate', 'open.er-api': 'ExchangeRate-API', manual: 'entered', base: 'base currency' };
 
 // What a receipt's lines are, in one short phrase. Listing every line's
 // category verbatim turned a folio split four ways into a column of single
@@ -98,8 +99,27 @@ export default function ReportDetail() {
     return () => window.removeEventListener('solv:changed', on);
   }, [load]);
 
-  const act = async (label, fn) => { setBusy(label); try { await fn(); await load(); } catch (e) { setMsg({ tone: 'error', text: e.message }); } finally { setBusy(''); } };
+  // An action's old message goes when the next one starts: an error from a
+  // failed attempt used to stay up over the success that followed it.
+  const act = async (label, fn) => { setMsg(null); setBusy(label); try { await fn(); await load(); } catch (e) { setMsg({ tone: 'error', text: e.message }); } finally { setBusy(''); } };
   async function exportAs(format) {
+    // A PDF opens in a tab of its own; a spreadsheet is a download. Opening a
+    // tab for those too left an empty one behind every time, because the
+    // file downloads rather than shows.
+    if (format !== 'pdf') {
+      try {
+        const d = await api.get(`/reports/${id}/export-url?format=${format}`);
+        // A link with `download`, rather than pointing this tab at the file:
+        // that would count as leaving the page.
+        const a = document.createElement('a');
+        a.href = d.url;
+        a.download = '';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } catch (e) { setMsg({ tone: 'error', text: e.message }); }
+      return;
+    }
     // The window has to be opened inside the click, before the await: opened
     // afterwards the user gesture is spent and Safari blocks it outright, with
     // nothing shown to say why. If the browser blocks it anyway, fall back to
@@ -157,7 +177,7 @@ export default function ReportDetail() {
               is the difference between working case-first and filing later. */}
           {editable && isOwner && (
             <div className="card">
-              <div className="card-title">Add receipts to this {r.kind === 'case' ? 'case' : 'report'}</div>
+              <div className="card-title">Add receipts to this case</div>
               <div className="card-subtitle">Drop the photos in, or scan the code and shoot them on your phone. Each one is read for you.</div>
               <ReceiptUpload reportId={id} onUploaded={load} />
             </div>
@@ -201,7 +221,7 @@ export default function ReportDetail() {
           </div>
 
           <div className="card">
-            <div className="card-title">Expenses ({r.expenses.length})</div>
+            <div className="card-title">Receipts ({r.expenses.length})</div>
             {!r.expenses.length ? <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Nothing filed yet.</div> : (<>
               <div style={{ overflowX: 'auto' }}>
                 <table className="data-table check-table">
@@ -211,7 +231,9 @@ export default function ReportDetail() {
                       <td style={{ whiteSpace: 'nowrap' }}>{e.receiptDate || '—'}</td>
                       <td style={{ minWidth: 128 }}><Link to={`/expenses/${e.id}`}>{e.merchant || 'Untitled'}</Link>{e.purpose && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{e.purpose}</div>}</td>
                       <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{fmtMoney(e.total, e.currency)}</td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', color: e.fxPending ? 'var(--warning)' : undefined }}>{e.baseTotal != null ? fmtMoney(e.baseTotal, '') : 'rate pending'}</td>
+                      {/* A receipt with no lines has no amount yet; calling it
+                          "rate pending" sent people looking for a missing rate. */}
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', color: e.baseTotal == null ? 'var(--warning)' : undefined }}>{e.baseTotal != null ? fmtMoney(e.baseTotal, '') : (e.lines || []).length ? 'rate pending' : 'no amount yet'}</td>
                       <td style={{ fontSize: 12, minWidth: 112 }}>{summarise(e.lines)}</td>
                       <td style={{ whiteSpace: 'nowrap' }}><StatusBadge status={e.status} /></td>
                       {canEdit && <td><button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => act('rm', () => api.delete(`/reports/${id}/expenses/${e.id}`))}>Remove</button></td>}
@@ -226,7 +248,7 @@ export default function ReportDetail() {
             </>)}
             {canEdit && unfiled.length > 0 && (
               <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Reviewed expenses not yet in a report</div>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Checked receipts not in a case yet</div>
                 {unfiled.map(e => (
                   <label key={e.id} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 13, padding: '4px 0' }}>
                     <input type="checkbox" checked={picked.includes(e.id)} onChange={ev => setPicked(p => (ev.target.checked ? [...p, e.id] : p.filter(x => x !== e.id)))} />
@@ -240,7 +262,7 @@ export default function ReportDetail() {
                   // Anything the server refused comes back in `skipped`; saying
                   // nothing made a refusal look like a successful filing.
                   if ((r.skipped || []).length) setMsg({ tone: 'warning', text: `${r.skipped.length} not filed: ${r.skipped.map(x => x.why).join(', ')}.` });
-                })}>File {picked.length || ''} into this report</button>
+                })}>File {picked.length || ''} into this case</button>
               </div>
             )}
           </div>
@@ -253,7 +275,12 @@ export default function ReportDetail() {
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0 3px', borderTop: '1px solid var(--border)', marginTop: 6 }}><span>Total</span><span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{fmtMoney(r.totals.totalBase, base)}</span></div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}><span>Advances</span><span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>− {fmtMoney(r.advances, base)}</span></div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, padding: '6px 0 0', color: 'var(--accent)' }}><span>Reimbursement</span><span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{fmtMoney(r.totals.reimbursement, base)}</span></div>
-            {(r.totals.pendingRates > 0 || r.totals.unreviewed > 0) && <div style={{ fontSize: 12, color: 'var(--warning)', marginTop: 8 }}>{r.totals.unreviewed ? `${r.totals.unreviewed} not reviewed. ` : ''}{r.totals.pendingRates ? `${r.totals.pendingRates} without a rate.` : ''}</div>}
+            {(unpricedCount(r.totals) > 0 || r.totals.unreviewed > 0) && (
+              <div style={{ fontSize: 12, color: 'var(--warning)', marginTop: 8 }}>
+                {r.totals.unreviewed ? `${r.totals.unreviewed} not checked yet. ` : ''}
+                {unpricedCount(r.totals) ? `Not in the total: ${unpricedText(r.totals)}.` : ''}
+              </div>
+            )}
           </div>
 
           <div className="card">
@@ -261,7 +288,7 @@ export default function ReportDetail() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {/* Two states, one button each way. Claiming carries the checks
                   submitting used to: every receipt checked, every line priced. */}
-              {mayAct && r.status === 'open' && <button className="btn btn-primary" disabled={!!busy} onClick={() => act('claimed', () => api.post(`/reports/${id}/claimed`, {}))}>{busy === 'claimed' ? 'Marking…' : 'I have claimed this'}</button>}
+              {mayAct && r.status === 'open' && <button className="btn btn-primary" disabled={!!busy} onClick={() => setConfirm('claimed')}>{busy === 'claimed' ? 'Marking…' : 'I have claimed this'}</button>}
               {mayAct && r.status === 'claimed' && !r.xeroInvoiceId && <button className="btn btn-outline" disabled={!!busy} onClick={() => act('reopen', () => api.post(`/reports/${id}/reopen`, {}))}>{busy === 'reopen' ? 'Reopening…' : 'Reopen'}</button>}
               {/* Posting is part of putting the claim through, so it is the
                   claimant's, through the connection an admin set up. */}
@@ -276,7 +303,14 @@ export default function ReportDetail() {
               {r.xeroInvoiceId && <div style={{ fontSize: 12.5, color: 'var(--success)' }}>In Xero as draft bill {r.xeroInvoiceId}{xero?.tenantName ? ` (${xero.tenantName})` : ''}. A case in Xero is final.</div>}
               {r.status === 'open' && mayAct && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Check every receipt, then put the claim through however your company reimburses you and mark it claimed.</div>}
               {r.status === 'claimed' && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Claimed {formatDateTime(r.claimedAt, user?.timezone)}.</div>}
-              {!mayAct && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>This is {r.ownerName || r.ownerEmail || 'someone else'}&rsquo;s case. You can read and export it; changes are theirs to make.</div>}
+              {/* The same rule the check table follows: an admin may correct a
+                  receipt's details, and acting on the claim stays the owner's.
+                  This used to say every change was theirs to make. */}
+              {!mayAct && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+                This is {r.ownerName || r.ownerEmail || 'someone else'}&rsquo;s case. You can read and export it
+                {view.canEditDetails ? <>, and correct a receipt&rsquo;s details in <Link to={`/reports/${id}/check`}>the check table</Link>; every change is logged and they can see it</> : ''}.
+                Filing receipts, claiming and posting to Xero stay theirs.
+              </div>}
             </div>
             {preview && (
               <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10, fontSize: 12 }}>
@@ -296,7 +330,7 @@ export default function ReportDetail() {
           {rates.length > 0 && (
             <div className="card">
               <div className="card-title">Rates used</div>
-              {rates.map(l => <div key={`${l.currency}${l.fxRate}${l.fxRateDate}`} style={{ fontSize: 12, padding: '3px 0' }}>{l.currency} → {base} <strong>{fmtRate(l.fxRate)}</strong> <span style={{ color: 'var(--text-muted)' }}>· {SOURCE[l.fxSource] || l.fxSource} {l.fxRateDate}{l.fxOverrideBy ? ` by ${l.fxOverrideBy}` : ''}</span></div>)}
+              {rates.map(l => <div key={`${l.currency}${l.fxRate}${l.fxRateDate}`} style={{ fontSize: 12, padding: '3px 0' }}>{l.currency} → {base} <strong>{fmtRate(l.fxRate)}</strong> <span style={{ color: 'var(--text-muted)' }}>· {l.fxSource === 'manual' ? 'entered' : fxSourceName(l.fxSource)} {l.fxRateDate}{l.fxOverrideBy ? ` by ${l.fxOverrideBy}` : ''}</span></div>)}
             </div>
           )}
 
@@ -307,9 +341,14 @@ export default function ReportDetail() {
         </div>
       </div>
 
-      {confirm === 'post' && <ConfirmDialog title={`Post ${r.number} to Xero?`} message={`A draft bill payable to ${r.ownerName || 'the claimant'} for ${fmtMoney(r.totals.totalBase, base)} will be created in ${xero?.tenantName || 'Xero'}, with the receipts attached. It is approved in Xero as usual.`} confirmLabel="Post to Xero"
+      {/* The bill is for what is owed, after advances: the total before them
+          was what this asked about, a different figure from the one posted. */}
+      {confirm === 'post' && <ConfirmDialog title={`Post ${r.number} to Xero?`} message={`A draft bill payable to ${r.ownerName || 'the claimant'} for ${fmtMoney(r.totals.reimbursement, base)} will be created in ${xero?.tenantName || 'Xero'}, with the receipts attached. It is approved in Xero as usual.`} confirmLabel="Post to Xero"
                                    onConfirm={() => { setConfirm(null); act('post', () => api.post(`/reports/${id}/post`, {})); }} onCancel={() => setConfirm(null)} />}
-      {confirm === 'delete' && <ConfirmDialog title="Delete this report?" message="The expenses stay in My expenses; only the report goes." confirmLabel="Delete" danger onConfirm={() => api.delete(`/reports/${id}`).then(() => navigate('/reports')).catch(e => { setConfirm(null); setMsg({ tone: 'error', text: e.message }); })} onCancel={() => setConfirm(null)} />}
+      {/* One click used to mark it claimed, which locks every receipt in it. */}
+      {confirm === 'claimed' && <ConfirmDialog title={`Mark ${r.number} claimed?`} message="Do this once the claim has gone through your company. Its receipts are then locked; you can reopen it until it is posted to Xero." confirmLabel="Mark claimed"
+                                   onConfirm={() => { setConfirm(null); act('claimed', () => api.post(`/reports/${id}/claimed`, {})); }} onCancel={() => setConfirm(null)} />}
+      {confirm === 'delete' && <ConfirmDialog title="Delete this case?" message="The receipts in it stay in My receipts; only the case goes." confirmLabel="Delete" danger onConfirm={() => api.delete(`/reports/${id}`).then(() => navigate('/reports')).catch(e => { setConfirm(null); setMsg({ tone: 'error', text: e.message }); })} onCancel={() => setConfirm(null)} />}
     </div>
   );
 }
