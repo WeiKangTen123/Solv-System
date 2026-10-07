@@ -2,7 +2,7 @@ const parser    = require('./receipt-parser');
 const pdfPages  = require('../pdf/pages');
 const pdfRender = require('../pdf/render');
 const store     = require('../store/expenses');
-const { findDuplicate } = require('../intake/dedup');
+const { findDuplicate, possibleDuplicateNote, POSSIBLE_DUPLICATE_RE: DUP_NOTE_RE } = require('../intake/dedup');
 const { canonicalCategory } = require('../intake/categories');
 const logger    = require('../utils/logger');
 const { firstReceipt, readSomething, overlapFraction } = require('./parse-result');
@@ -122,7 +122,6 @@ async function applyRead(expenseId, r, { reread = false } = {}) {
 // for a person, never an automatic 'duplicate'. The note sits beside whatever
 // the read left (the assumed-currency note), and a suspicion an earlier read
 // raised is withdrawn when this read no longer bears it out.
-const DUP_NOTE_RE = /\s*Possible duplicate of .*? — .*?\. Check before submitting\./;
 function flagIfSuspected(expenseId) {
   const exp = store.getExpense(expenseId);
   if (!exp || exp.status === 'duplicate' || !exp.merchant || !exp.receiptDate || !exp.total) return;
@@ -137,7 +136,7 @@ function flagIfSuspected(expenseId) {
   }
   store.updateExpense(expenseId, {
     duplicateOf: dup.match.id,
-    errorMsg: [prior, `Possible duplicate of ${dup.match.invoiceNumber || dup.match.id} — ${dup.reason}. Check before submitting.`].filter(Boolean).join(' '),
+    errorMsg: [prior, possibleDuplicateNote(dup.match, dup.reason, exp.userId)].filter(Boolean).join(' '),
   });
 }
 

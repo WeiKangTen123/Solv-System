@@ -63,8 +63,14 @@ describe('routes/xero', () => {
     axios.get.mockResolvedValue({ data: [{ tenantId: 't1', tenantName: 'Solv Pte Ltd' }] });
     await request(serverFor(app)).post('/api/xero/oauth/complete').set(as(admin)).send({ code: 'abc', state }).expect(200);
     expect(users.getCompanyConfig(admin.companyId).XERO_CONNECTION_TYPE).toBe('oauth');
-    await request(serverFor(app)).delete('/api/xero/oauth/disconnect').set(as(admin)).expect(200);
+    axios.post.mockClear();
+    const off = await request(serverFor(app)).delete('/api/xero/oauth/disconnect').set(as(admin)).expect(200);
+    // Revoked at Xero, not only forgotten here.
+    expect(off.body.revokedAtXero).toBe(true);
+    expect(axios.post.mock.calls[0][0]).toBe('https://identity.xero.com/connect/revocation');
+    expect(String(axios.post.mock.calls[0][1])).toBe('token=rt');
     expect((await request(serverFor(app)).get('/api/xero/tenants').set(as(admin))).body.tenants).toEqual([]);
+    expect(users.getCompanyConfig(admin.companyId).XERO_OAUTH_REFRESH_TOKEN).toBeUndefined();
   });
 
   test('accounts need a connection', async () => {

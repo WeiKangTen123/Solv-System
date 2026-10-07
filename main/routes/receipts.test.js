@@ -116,6 +116,41 @@ describe('routes/receipts', () => {
     expect(poll.body).toMatchObject({ spent: true, usesLeft: 0 });
     await request(serverFor(app)).post(`/api/receipts/capture/${pair.body.token}`).send({ mime: 'image/jpeg', data: jpeg() }).expect(401);
   });
+  // Phone links outlived sign-out and removal, still storing receipts (and
+  // spending reader quota) under the account for up to twenty photos.
+  test('a phone link dies with sign-out, and with the removal of its owner', async () => {
+    app.use('/api/auth', require('./auth'));
+    let pair = await request(serverFor(app)).post('/api/receipts/pair').set(auth()).expect(201);
+    await request(serverFor(app)).post('/api/auth/logout').set(auth()).expect(200);
+    await request(serverFor(app)).post(`/api/receipts/capture/${pair.body.token}`).send({ mime: 'image/jpeg', data: jpeg() }).expect(401);
+
+    const fresh = require('../middleware/auth-middleware').signSession(u, users.tokenVersion(u.id));
+    pair = await request(serverFor(app)).post('/api/receipts/pair').set({ Authorization: `Bearer ${fresh}` }).expect(201);
+    users.removeUser(u.id);
+    await request(serverFor(app)).post(`/api/receipts/capture/${pair.body.token}`).send({ mime: 'image/jpeg', data: jpeg() }).expect(401);
+  });
+
+  // A link checked only when it was made kept opening for five minutes after
+  // its holder was removed.
+  test('an image link stops opening once the person it was made for is removed', async () => {
+    const up = await request(serverFor(app)).post('/api/receipts').set(auth()).send({ mime: 'image/jpeg', data: jpeg() }).expect(201);
+    await routes._drain();
+    const t = (await request(serverFor(app)).get(`/api/receipts/${up.body.receipt.id}/token`).set(auth()).expect(200)).body.token;
+    const before = await request(serverFor(app)).get(`/api/receipts/${up.body.receipt.id}/image?token=${encodeURIComponent(t)}`);
+    expect([200, 404]).toContain(before.status);           // 404 only if the test file was not kept
+    users.removeUser(u.id);
+    await request(serverFor(app)).get(`/api/receipts/${up.body.receipt.id}/image?token=${encodeURIComponent(t)}`).expect(401);
+  });
+
+  test("a colleague's copy of an upload is named as such, with none of its ids", async () => {
+    const bytes = jpeg();
+    await request(serverFor(app)).post('/api/receipts').set(auth()).send({ mime: 'image/jpeg', data: bytes }).expect(201);
+    await routes._drain();
+    const other = await users.createUser({ email: `o${Date.now()}@solv.sg`, password: 'password123', companyId: u.companyId });
+    const ot = require('../middleware/auth-middleware').signSession(other, users.tokenVersion(other.id));
+    const again = await request(serverFor(app)).post('/api/receipts').set({ Authorization: `Bearer ${ot}` }).send({ mime: 'image/jpeg', data: bytes }).expect(409);
+    expect(again.body).toEqual({ error: 'This receipt was already uploaded by a colleague.' });
+  });
 });
 
 // Working case-first: the case exists, and receipts are shot straight into it

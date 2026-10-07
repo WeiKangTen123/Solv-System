@@ -47,7 +47,7 @@ function _loadActionable(req, res) {
 // The expense, and what the person looking at it may do with it.
 function _out(e, req) {
   return { expense: e, locked: isLocked(e), ...edit.permissions(e, req.user),
-           imageToken: e.receipt ? issueImageToken(e.receipt.userId, e.receipt.id) : null };
+           imageToken: e.receipt ? issueImageToken(e.receipt.userId, e.receipt.id, req.user.id) : null };
 }
 // An error thrown with a status is an answer; anything else is a fault.
 function _answer(res, err) {
@@ -175,7 +175,8 @@ router.get('/:id/group', requireAuth, (req, res) => {
   if (!e.receiptId) return res.json({ split: false, index: 1, total: 1, siblings: [] });
   const members = store.expensesForReceipt(e.receiptId).sort((a, b) => (a.page || 0) - (b.page || 0) || String(a.id).localeCompare(String(b.id)));
   const groupId = e.receipt && e.receipt.groupId;
-  const batch = groupId ? store.listExpenses({ groupId }).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))) : null;
+  // The batch is the owner's own: a group id alone is not a permission.
+  const batch = groupId ? store.listExpenses({ groupId, userId: e.userId }).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))) : null;
   const list = batch && batch.length > 1 ? batch : members;
   res.json({
     split: list.length > 1, groupType: batch && batch.length > 1 ? 'batch' : 'split',

@@ -98,6 +98,15 @@ describe('routes/reports', () => {
     await request(serverFor(app)).get(`/api/reports/${r.id}/export-url?format=pdf`).set(as(other)).expect(404);
     await request(serverFor(app)).get(`/api/reports/${r.id}/export-url?format=doc`).set(as(emp)).expect(400);
   }, 60000);
+  // An object as a title reached the database driver, whose message came back
+  // as the error; "2026-13-45" was stored as a date.
+  test('the cover takes text as text and dates that exist', async () => {
+    await create(emp, { title: { a: 1 } }).expect(400);
+    await create(emp, { title: 'Trip', periodFrom: '2026-13-45' }).expect(400);
+    const later = await create(emp, { title: '  Next year  ', periodFrom: '2027-03-01', periodTo: '2027-03-05' }).expect(201);
+    expect(later.body.report).toMatchObject({ title: 'Next year', periodTo: '2027-03-05' });
+  });
+
   test('an advance must be a real amount', async () => {
     const r = (await create(emp).expect(201)).body.report;
     for (const advances of ['1e400', -1, 'abc', 1e9]) {

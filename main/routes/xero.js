@@ -83,14 +83,19 @@ router.post('/oauth/complete', requireAuth, FINANCE, asyncHandler(async (req, re
   catch (err) { logger.error('Xero OAuth completion failed', { error: err.message }); res.status(400).json({ error: err.message }); }
 }));
 
-router.delete('/oauth/disconnect', requireAuth, FINANCE, (req, res) => {
+// Revoked at Xero, then forgotten here. The organisations are removed from
+// the stored list as well as the in-memory one: after a restart the memory was
+// empty, and the stored rows stayed behind, still listed as connected.
+router.delete('/oauth/disconnect', requireAuth, FINANCE, asyncHandler(async (req, res) => {
   const u = me(req);
+  const revoked = await xeroOAuth.revokeRefreshToken(u.companyId);
   const cache = tokenCache.forCompany(u.companyId);
-  for (const t of cache.getAllTenants()) cache.removeTenant(t.tenant_id);
+  const ids = new Set([...cache.getAllTenants().map(t => t.tenant_id), ...tokenCache.getPersistedTenants(u.companyId).map(t => t.tenantId)]);
+  for (const id of ids) cache.removeTenant(id);
   users.saveCompanyConfig(u.companyId, { XERO_OAUTH_REFRESH_TOKEN: '', XERO_CONNECTION_TYPE: '' });
-  logger.info('Xero disconnected', { by: req.user.id });
-  res.json({ ok: true });
-});
+  logger.info('Xero disconnected', { by: req.user.id, revokedAtXero: revoked });
+  res.json({ ok: true, revokedAtXero: revoked });
+}));
 
 router.get('/tenants', requireAuth, FINANCE, (req, res) => {
   const u = me(req);

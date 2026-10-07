@@ -21,6 +21,7 @@ const oauthState = require('./oauth-state');
 const SCOPES = `offline_access ${require('./xero-utils').SCOPES}`;
 const AUTHORIZE_URL = 'https://login.xero.com/identity/connect/authorize';
 const TOKEN_URL      = 'https://identity.xero.com/connect/token';
+const REVOKE_URL     = 'https://identity.xero.com/connect/revocation';
 
 // Each user brings their own Xero "Web app" (own Client ID/Secret), same per-user
 // model as Custom Connection — Xero's 60-calls/minute rate limit is per-app, so
@@ -154,4 +155,24 @@ async function reconnect(companyId) {
   return _listAndCacheTenants(companyId, access_token, expires_at);
 }
 
-module.exports = { buildAuthorizeUrl, exchangeCodeForTokens, refreshAuthCodeToken, completeConnection, reconnect, SCOPES };
+// Disconnecting tells Xero, not only this database: forgetting the refresh
+// token here left it valid at Xero, a standing grant to the organisation for
+// anyone who had copied it. Best effort — a disconnect must work while Xero is
+// unreachable — and true only when Xero accepted it.
+async function revokeRefreshToken(companyId) {
+  const { getCompanyConfig } = require('../store/users');
+  const refreshToken = getCompanyConfig(companyId).XERO_OAUTH_REFRESH_TOKEN;
+  if (!refreshToken) return false;
+  try {
+    const { clientId, clientSecret } = _appCreds(companyId);
+    const creds = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+    await axios.post(REVOKE_URL, new URLSearchParams({ token: refreshToken }),
+      { headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 });
+    return true;
+  } catch (err) {
+    require('../utils/logger').warn('Xero did not confirm the token revocation; it is forgotten here regardless', { companyId, error: err.message });
+    return false;
+  }
+}
+
+module.exports = { buildAuthorizeUrl, exchangeCodeForTokens, refreshAuthCodeToken, revokeRefreshToken, completeConnection, reconnect, SCOPES };

@@ -1,7 +1,7 @@
 const express = require('express');
 const router  = express.Router();
-const jwt     = require('jsonwebtoken');
-const { requireAuth, jwtSecret } = require('../middleware/auth-middleware');
+const link    = require('../utils/signed-link');
+const { requireAuth } = require('../middleware/auth-middleware');
 const { canView, isOwner, canEditDetails } = require('../middleware/roles');
 const asyncHandler = require('../middleware/async-handler');
 const users   = require('../store/users');
@@ -40,10 +40,21 @@ function _fail(res, err) {
 }
 const COVER = ['kind', 'title', 'purpose', 'periodFrom', 'periodTo', 'destination', 'nights', 'advances', 'notes'];
 const MAX_ADVANCE = 10000000;
+// The cover's words, each text and of a sane length. An object for a title
+// reached the database driver, whose own message ("Too few parameter values")
+// came back to the person as the error.
+const TEXT_MAX = { title: 200, purpose: 500, destination: 120, notes: 2000 };
 function _coverPatch(body) {
   const patch = {};
   for (const k of COVER) if (body[k] !== undefined) patch[k] = body[k] === '' ? null : body[k];
-  for (const k of ['periodFrom', 'periodTo']) if (patch[k] && !/^\d{4}-\d{2}-\d{2}$/.test(String(patch[k]))) throw new Error(`${k === 'periodFrom' ? 'From' : 'To'} must be YYYY-MM-DD`);
+  for (const [k, max] of Object.entries(TEXT_MAX)) {
+    if (patch[k] === undefined || patch[k] === null) continue;
+    if (typeof patch[k] !== 'string') throw new Error(`${k[0].toUpperCase()}${k.slice(1)} must be text`);
+    patch[k] = patch[k].trim().slice(0, max) || null;
+  }
+  for (const k of ['periodFrom', 'periodTo']) {
+    if (patch[k] && !require('../intake/document').isoDate(String(patch[k]), { allowFuture: true })) throw new Error(`${k === 'periodFrom' ? 'From' : 'To'} must be a real date, YYYY-MM-DD`);
+  }
   // 'case' was added to the store, the schema and the printed cover and missed
   // here, so every case created through the UI was refused by its own route.
   if (patch.kind && !['trip', 'period', 'case'].includes(patch.kind)) throw new Error('kind must be trip, period or case');
@@ -211,7 +222,7 @@ router.get('/:id/export-url', requireAuth, (req, res) => {
   const r = _load(req, res); if (!r) return;
   const format = String(req.query.format || 'pdf');
   if (!FORMATS[format]) return res.status(400).json({ error: 'format must be pdf, xlsx or csv' });
-  const token = jwt.sign({ purpose: 'report-export', reportId: r.id, format, userId: req.user.id }, jwtSecret(), { expiresIn: '5m' });
+  const token = link.sign('report-export', { reportId: r.id, format, userId: req.user.id });
   res.json({ url: `/api/reports/${r.id}/export?token=${encodeURIComponent(token)}`, expiresIn: '5m' });
 });
 
@@ -222,9 +233,13 @@ function setDownloadName(res, base, ext, inline) {
 }
 
 router.get('/:id/export', asyncHandler(async (req, res) => {
-  let spec;
-  try { spec = jwt.verify(String(req.query.token || ''), jwtSecret()); if (spec.purpose !== 'report-export' || spec.reportId !== req.params.id) throw new Error('scope'); }
-  catch { return res.status(401).type('text/plain').send('This export link has expired. Generate it again.'); }
+  const spec = link.read(req.query.token, 'report-export');
+  const head = spec && spec.reportId === req.params.id ? reports.head(spec.reportId) : null;
+  // Asked again now: a person removed, or an admin demoted, since the link
+  // was made no longer downloads the case.
+  if (!head || !FORMATS[spec.format] || !link.stillAllowed(spec.userId, head.userId, head.companyId)) {
+    return res.status(401).type('text/plain').send('This export link has expired. Generate it again.');
+  }
   const payload = await reportPayload(spec.reportId, { withReceipts: spec.format === 'pdf' });
   if (!payload) return res.status(404).type('text/plain').send('Report not found');
   const name = doc.exportFilename(payload);

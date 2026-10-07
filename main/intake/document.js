@@ -49,7 +49,8 @@ function today() { return localDateStr(new Date()); }
 // Strict: accepts only a real YYYY-MM-DD that is not in the future. A model
 // that answers "2026-13-45", or dates a receipt next year, has misread it, and
 // null is more honest than a guess.
-function isoDate(value) {
+// allowFuture: a trip that has not happened yet has a real date too.
+function isoDate(value, { allowFuture = false } = {}) {
   if (!value || typeof value !== 'string') return null;
   const m = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return null;
@@ -57,7 +58,7 @@ function isoDate(value) {
   if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
   const parsed = new Date(Date.UTC(y, mo - 1, d));
   if (parsed.getUTCFullYear() !== y || parsed.getUTCMonth() !== mo - 1 || parsed.getUTCDate() !== d) return null;
-  if (parsed.getTime() > Date.now() + 86400000) return null;
+  if (!allowFuture && parsed.getTime() > Date.now() + 86400000) return null;
   return value.trim();
 }
 

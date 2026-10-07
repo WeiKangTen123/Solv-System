@@ -1,4 +1,4 @@
-const { hashBuffer, findDuplicate } = require('../intake/dedup');
+const { hashBuffer, findDuplicate, duplicateRef, possibleDuplicateNote } = require('../intake/dedup');
 const { canonicalCategory } = require('../intake/categories');
 const users  = require('../store/users');
 const store  = require('../store/expenses');
@@ -83,9 +83,8 @@ async function createClaimRecord({ userId, groupId, row, receipt, match, categor
     }
   }
 
-  const ref = dup ? (dup.match.invoiceNumber || dup.match.id) : null;
-  const note = dup && !dup.certain ? `Possible duplicate of ${ref} — ${dup.reason}. Check before submitting.`
-    : dup ? `Duplicate of ${ref} — ${dup.reason}`
+  const note = dup && !dup.certain ? possibleDuplicateNote(dup.match, dup.reason, userId)
+    : dup ? `Duplicate of ${duplicateRef(dup.match, userId)} — ${dup.reason}`
     : match && match.discrepancy ? `Claimed ${match.discrepancy.claimed} but the receipt says ${match.discrepancy.onReceipt}`
     : (!receipt && row.no ? 'No receipt found for this claim line' : null);
   // `notes` is what the reader had to say about the file as a whole ("only the

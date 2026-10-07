@@ -4,7 +4,9 @@ const sharp = require('sharp');
 const { forModel, MAX_SIDE } = require('./image-prep');
 
 describe('receipts/image-prep', () => {
-  test('a large photo comes back smaller, at most MAX_SIDE on its long side, keeping its orientation tag', async () => {
+  // The orientation is applied to the pixels and the metadata dropped: kept,
+  // it carried the GPS position the photo was taken at to Google.
+  test('a large photo comes back smaller, at most MAX_SIDE on its long side, upright, with no metadata', async () => {
     const noise = Buffer.alloc(4000 * 3000 * 3);
     for (let i = 0; i < noise.length; i++) noise[i] = (i * 2654435761) >>> 24;
     const big = await sharp(noise, { raw: { width: 4000, height: 3000, channels: 3 } }).jpeg({ quality: 95 }).withMetadata({ orientation: 6 }).toBuffer();
@@ -13,7 +15,9 @@ describe('receipts/image-prep', () => {
     expect(out.buffer.length).toBeLessThan(big.length);
     const meta = await sharp(out.buffer).metadata();
     expect(Math.max(meta.width, meta.height)).toBeLessThanOrEqual(MAX_SIDE);
-    expect(meta.orientation).toBe(6);
+    expect(meta.height).toBeGreaterThan(meta.width);          // 4000x3000 tagged "rotate 90" is portrait
+    expect(meta.orientation).toBeUndefined();
+    expect(meta.exif).toBeUndefined();
   });
 
   test('a large transparent PNG is shrunk onto white, not onto JPEG\'s black', async () => {

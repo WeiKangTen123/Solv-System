@@ -1,11 +1,11 @@
 const express      = require('express');
 const router       = express.Router();
-const jwt          = require('jsonwebtoken');
+const link         = require('../utils/signed-link');
 const QRCode       = require('qrcode');
 const { newId }    = require('../utils/ids');
 const { decodeBase64 } = require('../utils/base64');
 const { hashBuffer }   = require('../intake/dedup');
-const { requireAuth, jwtSecret } = require('../middleware/auth-middleware');
+const { requireAuth } = require('../middleware/auth-middleware');
 const asyncHandler = require('../middleware/async-handler');
 const { canView } = require('../middleware/roles');
 const express_ = require('express');
@@ -26,14 +26,11 @@ const logger       = require('../utils/logger');
 // paired phone. It is stored first, an expense row is created, and the read
 // runs off the response path. Nothing here reaches Xero.
 
-const IMAGE_TOKEN_TTL = '5m';
-function issueImageToken(userId, receiptId) {
-  return jwt.sign({ userId, receiptId, purpose: 'receipt' }, jwtSecret(), { expiresIn: IMAGE_TOKEN_TTL });
-}
-function verifyImageToken(token, receiptId) {
-  const payload = jwt.verify(token, jwtSecret());
-  if (payload.purpose !== 'receipt' || payload.receiptId !== receiptId) throw new Error('Token scope mismatch');
-  return payload;
+// A link to one receipt's file (utils/signed-link.js): the owner, whose
+// folder the file is in, and `by`, the person it was made for, who must
+// still be allowed to see it when the link is opened.
+function issueImageToken(ownerId, receiptId, viewerId = ownerId) {
+  return link.sign('receipt', { userId: ownerId, receiptId, by: viewerId });
 }
 
 // Reads still running, so a test can wait for them.
@@ -92,10 +89,13 @@ function storeReceipt(user, { mime: declaredMime, data, filename, source, report
   if (existing) {
     const owned = store.expensesForReceipt(existing.id)[0] || null;
     logger.info('Receipt already uploaded', { userId: user.id, receiptId: existing.id });
-    return { status: 409, body: {
-      error: owned && owned.userId !== user.id ? 'This receipt was already uploaded by a colleague.' : `You have already uploaded this receipt${owned && owned.merchant ? ` (${owned.merchant})` : ''}.`,
-      duplicateOf: owned ? owned.id : null, receiptId: existing.id,
-    } };
+    // A colleague's copy is named as such and nothing more: its ids were
+    // handed back here, which said which of a colleague's receipts it was.
+    const theirs = owned ? owned.userId !== user.id : existing.userId !== user.id;
+    return { status: 409, body: theirs
+      ? { error: 'This receipt was already uploaded by a colleague.' }
+      : { error: `You have already uploaded this receipt${owned && owned.merchant ? ` (${owned.merchant})` : ''}.`, duplicateOf: owned ? owned.id : null, receiptId: existing.id },
+    };
   }
 
   const receiptId = newId();
@@ -207,7 +207,14 @@ router.get('/capture/:token/status', (req, res) => {
 });
 // The token is checked BEFORE the body is read: an unknown link must not get
 // to make the server parse 25 MB.
-const captureGate = (req, res, next) => (pairing.verify(req.params.token) ? next() : res.status(401).json(EXPIRED));
+const captureGate = (req, res, next) => {
+  const state = pairing.verify(req.params.token);
+  // The person the link belongs to must still be able to sign in: a removed
+  // account's link used to keep storing receipts under it.
+  const owner = state ? users.findSession(state.userId) : null;
+  if (!owner || owner.removed) { if (state) pairing.revoke(req.params.token); return res.status(401).json(EXPIRED); }
+  next();
+};
 router.post('/capture/:token', captureGate, bigJson, (req, res) => {
   const state = pairing.verify(req.params.token);
   if (!state) return res.status(401).json(EXPIRED);
@@ -232,15 +239,17 @@ router.post('/capture/:token', captureGate, bigJson, (req, res) => {
 router.get('/:id/token', requireAuth, (req, res) => {
   const r = store.getReceipt(req.params.id);
   if (!r || !canView(req.user, r.userId, r.companyId)) return res.status(404).json({ error: 'Receipt not found' });
-  res.json({ token: issueImageToken(r.userId, r.id) });
+  res.json({ token: issueImageToken(r.userId, r.id, req.user.id) });
 });
 
 router.get('/:id/image', asyncHandler(async (req, res) => {
-  let payload;
-  try { payload = verifyImageToken(req.query.token, req.params.id); }
-  catch { return res.status(401).json({ error: 'Invalid or expired image token' }); }
+  const payload = link.read(req.query.token, 'receipt');
+  if (!payload || payload.receiptId !== req.params.id) return res.status(401).json({ error: 'Invalid or expired image token' });
   const r = store.getReceipt(req.params.id);
   if (!r) return res.status(404).json({ error: 'Receipt not found' });
+  // Asked again now, not only when the link was made: a person removed, or an
+  // admin demoted, since then no longer opens it.
+  if (!link.stillAllowed(payload.by || payload.userId, r.userId, r.companyId)) return res.status(401).json({ error: 'Invalid or expired image token' });
   const files = receiptStore.forUser(payload.userId);
   const filePath = files.getPath(r.file);
   if (!filePath) return res.status(404).json({ error: 'Receipt file is missing' });

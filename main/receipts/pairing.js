@@ -108,6 +108,14 @@ function status(token) {
 // The desktop revokes when the dialog closes, so a QR code that was on screen
 // stops working the moment the user is done with it.
 function revoke(token) { return _pairings.delete(token); }
+// Every phone link a person has. Signing out, a new password and removal end
+// their sessions; their phone links used to outlive all three, still storing
+// receipts (and spending the company's reader quota) for up to twenty photos.
+function revokeForUser(userId) {
+  let n = 0;
+  for (const [token, entry] of _pairings) if (entry.userId === userId) { _pairings.delete(token); n++; }
+  return n;
+}
 
 // Only the owner may revoke or inspect — a token is not a capability to manage
 // other people's pairings.
@@ -119,4 +127,4 @@ function ownedBy(token, userId) {
 function activeCount() { _sweepExpired(); return _pairings.size; }
 function _reset() { _pairings.clear(); }
 
-module.exports = { create, verify, status, consume, revoke, ownedBy, activeCount, TTL_MS, MAX_USES, _reset };
+module.exports = { create, verify, status, consume, revoke, revokeForUser, ownedBy, activeCount, TTL_MS, MAX_USES, _reset };

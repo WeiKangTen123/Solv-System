@@ -18,8 +18,11 @@ async function forModel(buffer, mime) {
   try {
     // JPEG has no transparency: a PNG's clear background came out black, with
     // the receipt's black print on it. It is laid on white paper first.
-    const out = await s(buffer).resize({ width: MAX_SIDE, height: MAX_SIDE, fit: 'inside', withoutEnlargement: true })
-      .flatten({ background: '#fff' }).withMetadata().jpeg({ quality: 85 }).toBuffer();
+    // The phone's orientation is applied to the pixels and the metadata is
+    // left behind: withMetadata() kept it, and with it the GPS position of
+    // wherever the photo was taken, sent to Google with the receipt.
+    const out = await s(buffer).rotate().resize({ width: MAX_SIDE, height: MAX_SIDE, fit: 'inside', withoutEnlargement: true })
+      .flatten({ background: '#fff' }).jpeg({ quality: 85 }).toBuffer();
     return out.length < buffer.length ? { buffer: out, mime: 'image/jpeg' } : { buffer, mime };
   } catch {
     return { buffer, mime };

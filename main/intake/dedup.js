@@ -84,4 +84,20 @@ function findDuplicate({ store, profile = null, hash, contactName, vendorName, n
   return hit ? { match: hit, reason: 'the same vendor, date and amount', certain: false } : null;
 }
 
-module.exports = { hashBuffer, findDuplicate, sameAmount, vendorMatches };
+// How a suspected duplicate is named on somebody's own receipt. Another
+// person's is "a colleague's receipt" and nothing more: its document number or
+// id, written on yours, told you what a colleague spent, where and when.
+function duplicateRef(match, ownerId) {
+  if (match && match.userId && ownerId && match.userId !== ownerId) return "a colleague's receipt";
+  return (match && (match.invoiceNumber || match.id)) || 'another receipt';
+}
+
+// The note a suspected duplicate leaves, and the pattern that finds it again
+// so a later read can withdraw it. The pattern still knows the wording before
+// "submitting" went out of the app's vocabulary, so old notes are withdrawn too.
+const POSSIBLE_DUPLICATE_RE = /\s*Possible duplicate of .*? — .*?\. Check (?:before submitting|it before claiming)\./;
+function possibleDuplicateNote(match, reason, ownerId) {
+  return `Possible duplicate of ${duplicateRef(match, ownerId)} — ${reason}. Check it before claiming.`;
+}
+
+module.exports = { hashBuffer, findDuplicate, sameAmount, vendorMatches, duplicateRef, possibleDuplicateNote, POSSIBLE_DUPLICATE_RE };
