@@ -49,12 +49,9 @@ function checkCase(user, reportId) {
   if (!reportId) return null;
   const r = require('../store/reports').getReport(reportId);
   if (!r || r.companyId !== user.companyId) return { error: 'Case not found', status: 404 };
-  // No admin bypass here, unlike every other report route. Filing an EXISTING
-  // expense into someone's report is a reasonable thing for an admin to do, and
-  // POST /api/reports/:id/expenses lets them, checking that the expense belongs
-  // to the report's owner. Uploading a NEW one creates it under the uploader's
-  // name, so an admin doing it put their own receipt inside the claimant's
-  // reimbursement, invisible to the person who submits it.
+  // The owner's own case only, as for every filing route: an upload creates
+  // the receipt under the uploader's name, so an admin uploading into someone's
+  // case put their own receipt inside that person's claim.
   if (r.userId !== user.id) return { error: 'That case belongs to someone else', status: 403 };
   if (!require('../reports/workflow').isEditable(r)) return { error: `A ${r.status} case cannot take more receipts`, status: 409 };
   return null;
@@ -235,7 +232,7 @@ router.post('/capture/:token', captureGate, bigJson, (req, res) => {
 // Company-wide used to be enough here, which meant any colleague holding a
 // receipt id could mint a token and read the file. The duplicate-upload reply
 // hands out exactly that id ("already uploaded by a colleague"), so it was
-// reachable. Same rule as every other read: yourself, your reports, or finance.
+// reachable. Same rule as every other read: your own, or an admin's.
 router.get('/:id/token', requireAuth, (req, res) => {
   const r = store.getReceipt(req.params.id);
   if (!r || !canView(req.user, r.userId, r.companyId)) return res.status(404).json({ error: 'Receipt not found' });

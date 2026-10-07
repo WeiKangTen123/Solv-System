@@ -224,4 +224,4 @@ function exportFilename(payload) {
 }
 
 module.exports = {
-  fmtRate, buildModel, expenseReportDoc, expenseReportCsv, workbookModel, exportFilename, _money: money, _fmtDate: fmtDate, _latin1: latin1 };
+  fmtRate, buildModel, expenseReportDoc, expenseReportCsv, workbookModel, exportFilename, _fmtDate: fmtDate, _latin1: latin1 };

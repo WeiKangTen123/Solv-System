@@ -45,7 +45,7 @@ test('daily copies are kept for KEEP_DAYS, and never fewer than KEEP_MIN', async
   for (const f of old) expect(kept).not.toContain(f);
 
   // A cron that stopped weeks ago still leaves the newest few.
-  const { dir: dir2, db: db2 } = tempDb();
+  const { dir: dir2 } = tempDb();
   const stale = path.join(dir2, 'backups');
   fs.mkdirSync(stale);
   for (const d of [30, 31, 32, 33, 34]) fs.writeFileSync(path.join(stale, `app-${iso(d * DAY)}.db`), '');

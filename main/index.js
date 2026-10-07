@@ -61,8 +61,14 @@ app.set('trust proxy', 1);
 // link's token. Receipt-image links, export links and Xero's sign-in code all
 // travel in the query string, and every one of them used to be written to
 // combined.log for anyone who could read it to replay.
+app.use((req, res, next) => {
+  req.id = require('crypto').randomUUID();
+  res.setHeader('X-Request-Id', req.id);
+  next();
+});
+morgan.token('id', req => req.id);
 morgan.token('safe-url', req => String(req.originalUrl || req.url || '').split('?')[0].replace(/\/capture\/[^/]+/, '/capture/[token]'));
-app.use(morgan(':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent"',
+app.use(morgan(':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent" :id',
   { stream: { write: msg => logger.info(msg.trim()) } }));
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, keyGenerator: rateLimitKey, standardHeaders: true, legacyHeaders: false,
                     message: { error: 'Too many requests — slow down' } }));
@@ -140,8 +146,8 @@ app.use((err, req, res, next) => {
       : err.expose && err.message ? err.message : 'Bad request';
     return res.status(status).json({ error: msg, ...(err.expose && err.extra ? err.extra : {}) });
   }
-  logger.error('Unhandled error', { method: req.method, path: String(req.originalUrl || '').split('?')[0], error: err.message, stack: err.stack });
-  res.status(500).json({ error: 'Internal server error' });
+  logger.error('Unhandled error', { requestId: req.id, method: req.method, path: String(req.originalUrl || '').split('?')[0], error: err.message, stack: err.stack });
+  res.status(500).json({ error: 'Internal server error', requestId: req.id });
 });
 
 const HOST = process.env.HOST || (PROD ? '127.0.0.1' : '0.0.0.0');

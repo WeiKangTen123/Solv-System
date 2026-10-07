@@ -36,7 +36,12 @@ const KINDS = new Set(['trip', 'period', 'case']);
 
 const STATE = { status: 'status', claimedAt: 'claimed_at', xeroInvoiceId: 'xero_invoice_id', xeroError: 'xero_error' };
 
-function createReport({ id = newId(), companyId, userId, kind = 'trip', title = null, purpose = null, periodFrom = null, periodTo = null, destination = null, nights = null, advances = 0, notes = null }) {
+// The number, the case and its first event together: a failure part-way used
+// to spend a case number on a case that did not exist.
+function createReport(args) {
+  return db.transaction(_createReport)(args);
+}
+function _createReport({ id = newId(), companyId, userId, kind = 'trip', title = null, purpose = null, periodFrom = null, periodTo = null, destination = null, nights = null, advances = 0, notes = null }) {
   const number = nextNumber(companyId);
   db.prepare(`INSERT INTO expense_reports (id, company_id, user_id, number, kind, title, purpose, period_from, period_to, destination, nights, status, advances_cents, notes, created_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)`)

@@ -20,6 +20,10 @@ function isOnline(lastSeenAt) { return !!lastSeenAt && Date.now() - new Date(las
 // The shortest password anyone may set from now on. Existing passwords keep
 // working until they are changed.
 const MIN_PASSWORD = 8;
+// bcrypt's work factor. Cheap under jest only, where hashing ~470 test
+// passwords at 10 was about a minute of every run; a hash of either cost
+// verifies the same way.
+const BCRYPT_COST = process.env.NODE_ENV === 'test' ? 4 : 10;
 
 function sanitize(u) {
   if (!u) return null;
@@ -45,7 +49,11 @@ function _companyRow(row) {
 
 function getCompany(id) { return _companyRow(db.prepare('SELECT * FROM companies WHERE id = ?').get(id)); }
 
+// The company and its credentials row together.
 function createCompany(patch = {}) {
+  return db.transaction(_createCompany)(patch);
+}
+function _createCompany(patch = {}) {
   const id = `c${Date.now()}${crypto.randomBytes(3).toString('hex')}`;
   db.prepare(`INSERT INTO companies (id, name, base_currency, fx_policy, timezone, report_columns, created_at)
               VALUES (?, ?, ?, ?, ?, ?, ?)`)
@@ -140,7 +148,7 @@ async function createUser({ email, password, name = null, role = null, companyId
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, 'That is not an email address');
   passwordProblem(password);
   if (role && !ROLES.includes(role)) fail(400, `Unknown role "${role}"`);
-  const hash = await bcrypt.hash(password, 10);
+  const hash = await bcrypt.hash(password, BCRYPT_COST);
   const create = db.transaction(() => {
     const existing = _rawByEmail(email);
     if (existing && existing.disabled_at) fail(400, 'That email belongs to a removed account. Restore it in Users & Monitoring instead.');
@@ -164,7 +172,7 @@ async function createUser({ email, password, name = null, role = null, companyId
 // The same work whether or not the account exists. Answering an unknown email
 // at once and a known one after a bcrypt comparison told anyone timing the
 // login which emails had accounts: 0.1 ms against 75.
-const _DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
+const _DUMMY_HASH = bcrypt.hashSync('not-a-real-password', BCRYPT_COST);
 async function validatePassword(email, password) {
   const raw = _rawByEmail(email);
   const ok = await bcrypt.compare(String(password || ''), raw ? raw.password : _DUMMY_HASH);
@@ -197,7 +205,7 @@ function passwordProblem(password) {
 
 async function setPassword(id, password) {
   passwordProblem(password);
-  db.prepare('UPDATE users SET password = ?, token_version = token_version + 1 WHERE id = ?').run(await bcrypt.hash(password, 10), id);
+  db.prepare('UPDATE users SET password = ?, token_version = token_version + 1 WHERE id = ?').run(await bcrypt.hash(password, BCRYPT_COST), id);
 }
 
 // ── Sessions ─────────────────────────────────────────────────────────────────
@@ -270,7 +278,6 @@ function restoreUser(id) {
 function countAdmins(companyId) {
   return db.prepare("SELECT COUNT(*) AS n FROM users WHERE company_id = ? AND role = 'admin' AND disabled_at IS NULL").get(companyId).n;
 }
-function readUsers() { return db.prepare('SELECT * FROM users ORDER BY created_at').all().map(sanitize); }
 // The company self-registration joins: the first one made.
 function firstCompanyId() {
   const r = db.prepare('SELECT company_id FROM users ORDER BY created_at LIMIT 1').get();
@@ -346,17 +353,16 @@ function removeGeminiKey(companyId, keyId) {
 function getUserDefaults(userId) {
   const u = userId ? findById(userId) : null;
   const c = u ? getCompany(u.companyId) : null;
-  return { currency: (c && c.baseCurrency) || 'SGD', timezone: (c && c.timezone) || DEFAULT_TIMEZONE, accountCode: { claim: null } };
+  return { currency: (c && c.baseCurrency) || 'SGD', timezone: (c && c.timezone) || DEFAULT_TIMEZONE };
 }
 
-function ensureUserDirectories() { /* nothing per user to provision yet; kept for index.js symmetry */ }
 
 module.exports = { findSession,
   ROLES, DEFAULT_TIMEZONE, DEFAULT_REPORT_COLUMNS, MIN_PASSWORD,
   hasUsers, findById, findByEmail, createUser, validatePassword, updateUser, setPassword, getAllUsers, getUserMetrics,
-  removeUser, restoreUser, countAdmins, firstCompanyId, tokenVersion, endSessions, readUsers,
+  removeUser, restoreUser, countAdmins, firstCompanyId, tokenVersion, endSessions,
   touchLastSeen, isOnline, sanitize,
   getCompany, createCompany, updateCompany, getCompanyConfig, saveCompanyConfig, ENCRYPTED_COLUMNS,
   getUserGeminiKeys, addUserGeminiKey, removeUserGeminiKey,
-  getGeminiKeys, getGeminiKeysForUser, recordKeyUse, addGeminiKey, removeGeminiKey, getUserDefaults, ensureUserDirectories,
+  getGeminiKeys, getGeminiKeysForUser, recordKeyUse, addGeminiKey, removeGeminiKey, getUserDefaults,
 };

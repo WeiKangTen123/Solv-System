@@ -15,7 +15,7 @@ const EDITABLE = new Set(['open']);
 
 // Errors carry the HTTP status a route answers with: who may act is a 403,
 // a state that does not allow it a 409, anything about the content a 400.
-function fail(status, message) { const err = new Error(message); err.status = status; throw err; }
+const { fail } = require('../utils/http-error');
 
 function _get(id) { const r = reports.getReport(id); if (!r) fail(404, 'Case not found'); return r; }
 function isEditable(report) { return !!report && EDITABLE.has(report.status); }

@@ -40,7 +40,6 @@ function sniffMime(buffer) {
   if (buffer.subarray(0, 1024).includes('%PDF-')) return 'application/pdf';
   return null;
 }
-function contentMatches(buffer, mime) { return sniffMime(buffer) === String(mime || '').toLowerCase(); }
 
 // How much one person may keep. A receipt is at most 15 MB, so this is room
 // for a few hundred of the largest, and stops one account filling the disk.
@@ -118,4 +117,4 @@ function forUser(userId) {
   return store;
 }
 
-module.exports = { forUser, extensionFor, isAcceptedMime, acceptedMimes, sniffMime, contentMatches, MAX_BYTES, QUOTA_BYTES, MIME_EXT };
+module.exports = { forUser, extensionFor, isAcceptedMime, acceptedMimes, sniffMime, MAX_BYTES, QUOTA_BYTES, MIME_EXT };

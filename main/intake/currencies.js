@@ -47,6 +47,5 @@ const CURRENCIES = [
 ];
 
 const CURRENCY_CODES = CURRENCIES.map(c => c.code);
-const ZERO_DECIMAL = CURRENCIES.filter(c => c.zeroDecimal).map(c => c.code);
 
-module.exports = { CURRENCIES, CURRENCY_CODES, ZERO_DECIMAL };
+module.exports = { CURRENCIES, CURRENCY_CODES };

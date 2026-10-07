@@ -12,7 +12,8 @@ const asyncHandler = require('../middleware/async-handler');
 // The company's Xero connection: Custom Connection (client id + secret) or
 // the OAuth web-app flow, exactly as in the Xero automation but owned by the
 // company rather than by each user. Finance and admin manage it.
-const FINANCE = requireRole('admin');   // the name stays: it is the accounting seat, and an admin holds it
+// The Xero connection is configuration, so it is an admin's.
+const FINANCE = requireRole('admin');
 const me = req => users.findById(req.user.id);
 
 function _frontendSettingsUrl() {

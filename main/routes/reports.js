@@ -19,7 +19,7 @@ const logger  = require('../utils/logger');
 // deleting, posting to Xero — the owner alone.
 function _load(req, res) {
   const r = reports.getReport(req.params.id);
-  if (!r || !canView(req.user, r.userId, r.companyId)) { res.status(404).json({ error: 'Report not found' }); return null; }
+  if (!r || !canView(req.user, r.userId, r.companyId)) { res.status(404).json({ error: 'Case not found' }); return null; }
   return r;
 }
 const OWNER_ONLY = 'Only the person whose case this is can change it.';
@@ -32,11 +32,12 @@ function _view(r, req) {
            canEditDetails: !r.xeroInvoiceId && canEditDetails(req.user, r.userId, r.companyId),
            xero: { connected: !!tenant, tenantName: tenant ? tenant.tenantName : null } };
 }
-// A workflow error about WHO may act is a 403; anything else is a 400.
+// A workflow refusal carries its status (utils/http-error): who may act is a
+// 403, a state that does not allow it a 409, the content a 400. Anything
+// without one is a fault, and goes to the error handler to be logged.
 function _fail(res, err) {
-  if (err.status) return res.status(err.status).json({ error: err.message });
-  const who = /\bonly the claimant\b/i.test(err.message);
-  res.status(who ? 403 : 400).json({ error: err.message });
+  if (!err.status) throw err;
+  res.status(err.status).json({ error: err.message });
 }
 const COVER = ['kind', 'title', 'purpose', 'periodFrom', 'periodTo', 'destination', 'nights', 'advances', 'notes'];
 const MAX_ADVANCE = 10000000;
@@ -93,7 +94,7 @@ router.get('/:id', requireAuth, (req, res) => { const r = _load(req, res); if (r
 router.patch('/:id', requireAuth, (req, res) => {
   const r = _load(req, res); if (!r) return;
   if (!_owns(req, r)) return res.status(403).json({ error: OWNER_ONLY });
-  if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} report cannot be edited` });
+  if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} case cannot be edited` });
   try { res.json(_view(reports.updateReport(r.id, _coverPatch(req.body || {})), req)); }
   catch (err) { res.status(400).json({ error: err.message }); }
 });
@@ -105,7 +106,7 @@ router.patch('/:id', requireAuth, (req, res) => {
 router.delete('/:id', requireAuth, (req, res) => {
   const r = _load(req, res); if (!r) return;
   if (!_owns(req, r)) return res.status(403).json({ error: OWNER_ONLY });
-  if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} report cannot be deleted` });
+  if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} case cannot be deleted` });
   if (req.query.ifEmpty === '1' && r.expenses.length) return res.status(409).json({ error: 'This case has receipts in it, so it was kept.', kept: true });
   reports.deleteReport(r.id);
   logger.info('Report deleted', { id: r.id, number: r.number, by: req.user.id });
@@ -117,13 +118,13 @@ router.delete('/:id', requireAuth, (req, res) => {
 router.post('/:id/expenses', requireAuth, (req, res) => {
   const r = _load(req, res); if (!r) return;
   if (!_owns(req, r)) return res.status(403).json({ error: OWNER_ONLY });
-  if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} report cannot take more expenses` });
+  if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} case cannot take more receipts` });
   const ids = Array.isArray((req.body || {}).expenseIds) ? req.body.expenseIds : [];
   const skipped = [];
   for (const id of ids) {
     const e = store.getExpense(id);
     if (!e || e.userId !== r.userId) { skipped.push({ id, why: 'not found' }); continue; }
-    if (e.reportId && e.reportId !== r.id) { skipped.push({ id, why: 'already in another report' }); continue; }
+    if (e.reportId && e.reportId !== r.id) { skipped.push({ id, why: 'already in another case' }); continue; }
     if (e.status !== 'reviewed') { skipped.push({ id, why: 'not marked reviewed yet' }); continue; }
     // Claimed on its own already: in a case it would be claimed a second time.
     if (e.claimedAt) { skipped.push({ id, why: 'already claimed on its own' }); continue; }
@@ -135,8 +136,8 @@ router.post('/:id/expenses', requireAuth, (req, res) => {
 router.delete('/:id/expenses/:expenseId', requireAuth, (req, res) => {
   const r = _load(req, res); if (!r) return;
   if (!_owns(req, r)) return res.status(403).json({ error: OWNER_ONLY });
-  if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} report cannot be changed` });
-  if (!reports.removeExpense(r.id, req.params.expenseId)) return res.status(404).json({ error: 'That expense is not in this report' });
+  if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} case cannot be changed` });
+  if (!reports.removeExpense(r.id, req.params.expenseId)) return res.status(404).json({ error: 'That receipt is not in this case' });
   res.json(_view(reports.getReport(r.id), req));
 });
 

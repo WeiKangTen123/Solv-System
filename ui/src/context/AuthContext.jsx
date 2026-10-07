@@ -57,8 +57,8 @@ export function AuthProvider({ children }) {
   // wait for the server, and the sign-out button went to /login meanwhile:
   // still signed in, /login sent it on to Home, which mounted and fired its
   // loads with a token the server was just revoking, then bounced to /login.
-  // The server is still told, so it ends the session everywhere and stops
-  // this account's mailbox watcher. Best-effort: a failed request must never
+  // The server is still told, so it ends the session everywhere and drops
+  // this account's phone links. Best-effort: a failed request must never
   // trap the user in a session they asked to leave.
   async function logout() {
     const token = localStorage.getItem('token');

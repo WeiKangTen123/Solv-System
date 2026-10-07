@@ -70,4 +70,10 @@ describe('store/expenses', () => {
     expect(view.findByReceiptHash('h1')).toMatchObject({ vendorName: 'Grab', totalAmount: 18.4 });
     expect(view.getAll()[0]).toMatchObject({ vendorName: 'Grab', invoiceDate: '2026-09-01', totalAmount: 18.4, status: 'review-needed' });
   });
+  // Math.round(1.005 * 100) is 100; "12,50" was NaN, stored as NULL in one
+  // column and refused in another.
+  test('cents are never NaN, and a half cent rounds away from zero', () => {
+    expect([1.005, -1.005, 19.99, 0, '7.5'].map(store.toCents)).toEqual([101, -101, 1999, 0, 750]);
+    expect(['12,50', 'abc', Infinity, null, ''].map(store.toCents)).toEqual([null, null, null, null, null]);
+  });
 });

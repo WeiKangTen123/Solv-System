@@ -11,7 +11,7 @@ const logger  = require('../utils/logger');
 
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-function fail(status, message) { const err = new Error(message); err.status = status; throw err; }
+const { fail } = require('../utils/http-error');
 const _stale = what => fail(409, `The receipt changed after this was proposed: ${what}. Ask the assistant again.`);
 
 // A receipt's exchange rate as a rate card sees it, stored on the card when

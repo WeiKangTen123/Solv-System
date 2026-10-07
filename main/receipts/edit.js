@@ -30,7 +30,7 @@ const MAX_TEXT = { merchant: 120, invoiceNo: 60, purpose: 300, description: 300,
 // Above this a number is a typing slip or an attack, not a receipt.
 const MAX_AMOUNT = 1e10;
 
-function fail(status, message) { const err = new Error(message); err.status = status; throw err; }
+const { fail } = require('../utils/http-error');
 
 const MONEY_FIELDS = ['total', 'tax', 'subTotal'];
 // Whether two values of one field say the same thing: amounts as numbers,

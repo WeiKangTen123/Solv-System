@@ -31,8 +31,8 @@
 //     and ruled out
 //   - one server per test and an awaitable background read (see receipts) are
 //     correct and were kept, but they reduce rather than remove the local rate
-//   - running serially (maxWorkers: 1) did not help either — it was tried for
-//     a week and only made every run 3.5x slower, so it was removed
+//   - running serially (--runInBand, which npm test now uses for other
+//     reasons) does not cure it either
 //
 // So: a red route test on a Mac that is green on Linux and green on re-run is
 // this, and the fix is not in the repository.

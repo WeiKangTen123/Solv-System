@@ -94,7 +94,7 @@ async function applyFx(expenseId, { force = false } = {}) {
   return { pending, applied, blocked, note };
 }
 
-// The claimant or finance types a rate. It is written to every line with the
+// The claimant or an admin types a rate. It is written to every line with the
 // person and the reason, and survives a plain refresh.
 // How far a rate somebody types may sit from the day's published rate. Card
 // statements land within a couple of percent of the mid-market rate; a typed

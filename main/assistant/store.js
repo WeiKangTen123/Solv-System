@@ -30,12 +30,13 @@ function _touch(id) { db.prepare('UPDATE assistant_conversations SET updated_at 
 
 // ── Messages ─────────────────────────────────────────────────────────────────
 
-function addMessage(conversationId, role, content) {
+// The message and the conversation's last-touched time together.
+const addMessage = db.transaction((conversationId, role, content) => {
   const info = db.prepare('INSERT INTO assistant_messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
     .run(conversationId, role, String(content), now());
   _touch(conversationId);
   return Number(info.lastInsertRowid);
-}
+});
 // The last `limit` messages, oldest first.
 function messages(conversationId, limit = 200) {
   return db.prepare('SELECT * FROM (SELECT * FROM assistant_messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id')

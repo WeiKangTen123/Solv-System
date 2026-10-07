@@ -1,7 +1,8 @@
 const crypto = require('crypto');
 
-// AES-256-GCM for at-rest encryption of per-user secrets (Xero client secret,
-// IMAP password, Gemini API key) stored in user_credentials. Encrypted values are
+// AES-256-GCM for secrets at rest: the Xero client secrets and refresh token,
+// the Open Exchange Rates App ID (company_credentials) and the reader keys
+// (company_gemini_keys, user_gemini_keys). Encrypted values are
 // prefixed so decrypt() can tell an encrypted value apart from a legacy plaintext
 // one still sitting in the DB from before this was added — those are returned
 // as-is on read and get encrypted automatically the next time they're saved.

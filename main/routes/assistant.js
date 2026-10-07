@@ -13,7 +13,7 @@ const logger  = require('../utils/logger');
 // else's. Questions are limited per person per hour, and one is answered at
 // a time.
 
-const PER_HOUR = Number(process.env.ASSISTANT_PER_HOUR) || 60;
+const PER_HOUR = Math.min(Math.max(Math.round(Number(process.env.ASSISTANT_PER_HOUR)) || 60, 1), 1000);
 const HOUR = 60 * 60 * 1000;
 // A comment line on a streamed answer this often, so a long turn is never
 // taken for a dead connection by nginx, which gives up after 180 s of silence.

@@ -3,7 +3,17 @@ const { newId } = require('../utils/ids');
 
 // Every write to receipts, expenses and expense_lines goes through here. Money
 // is cents in SQLite and dollars at this boundary, as in the Xero app's store.
-const toCents   = v => (v === null || v === undefined || v === '' ? null : Math.round(Number(v) * 100));
+// Never NaN: a value that is not a finite number is null, not a NaN that
+// SQLite stores as NULL in one column and refuses in another. Rounded on the
+// decimal value, so 1.005 is 101 cents and not 100 (1.005 * 100 is
+// 100.49999999999999).
+const toCents   = v => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  const c = Number((Math.abs(n) * 100).toFixed(6));
+  return Math.sign(n) * Math.round(c);      // halves away from zero, for credits as for charges
+};
 const toDollars = c => (c === null || c === undefined ? null : Math.round(c) / 100);
 const now = () => new Date().toISOString();
 
@@ -169,7 +179,12 @@ function _hydrateMany(rows) {
   return rows.map(r => _expense(r, lines.get(r.id) || [], r.receipt_id ? receipts.get(r.receipt_id) || null : null));
 }
 
-function createExpense({ id = newId(), companyId, userId, lines = [], box = null, ...fields }) {
+// The expense and its lines together, or neither: a line that failed to
+// insert used to leave an expense with no lines behind.
+function createExpense(args) {
+  return db.transaction(_createExpense)(args);
+}
+function _createExpense({ id = newId(), companyId, userId, lines = [], box = null, ...fields }) {
   const cols = ['id', 'company_id', 'user_id', 'created_at', 'box'];
   const vals = [id, companyId, userId, now(), box ? JSON.stringify(box) : null];
   for (const [k, col] of Object.entries(EXPENSE_COLS)) { if (fields[k] === undefined) continue; cols.push(col); vals.push(fields[k]); }

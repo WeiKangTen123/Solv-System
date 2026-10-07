@@ -66,6 +66,8 @@ function summary(me, { now = new Date(), timezone = 'UTC', base = 'SGD' } = {}) 
   const w = _where(scope);
   const months = _monthKeys(now, timezone);
   const from = `${months[0]}-01`;
+  const [ly, lm] = months[months.length - 1].split('-').map(Number);
+  const until = new Date(Date.UTC(ly, lm, 1)).toISOString().slice(0, 10);   // the 1st of next month
 
   // One pass over the window's lines, added up here. It used to be five
   // queries, each scanning every line again.
@@ -78,7 +80,7 @@ function summary(me, { now = new Date(), timezone = 'UTC', base = 'SGD' } = {}) 
                 WHEN (r.status = 'open' OR r.id IS NULL) AND e.claimed_at IS NULL THEN 'open' ELSE '' END AS state
     FROM expenses e JOIN expense_lines l ON l.expense_id = e.id
     LEFT JOIN expense_reports r ON r.id = e.report_id
-    WHERE ${w.sql} AND ${LIVE} AND ${DATED} >= ?`).all(...w.args, from);
+    WHERE ${w.sql} AND ${LIVE} AND ${DATED} >= ? AND ${DATED} < ?`).all(...w.args, from, until);
   const tally = () => new Map();
   const bump = (map, key, cents, id) => {
     const t = map.get(key) || { cents: 0, n: 0, ids: new Set() };

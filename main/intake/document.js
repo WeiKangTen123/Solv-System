@@ -44,7 +44,6 @@ function money(value) {
 function localDateStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
-function today() { return localDateStr(new Date()); }
 
 // Strict: accepts only a real YYYY-MM-DD that is not in the future. A model
 // that answers "2026-13-45", or dates a receipt next year, has misread it, and
@@ -84,16 +83,6 @@ function parseDate(raw) {
   } catch {
     return null;
   }
-}
-
-// Null, not a throw, for input it cannot read: a model that answers
-// "14/09/2026" must not take the whole bill down with a RangeError.
-function addDays(dateStr, days) {
-  const iso = isoDate(String(dateStr || '')) || parseDate(dateStr);
-  if (!iso) return null;
-  const d = new Date(`${iso}T00:00:00`);
-  d.setDate(d.getDate() + days);
-  return localDateStr(d);
 }
 
 // ── Currency ────────────────────────────────────────────────────────────────
@@ -147,23 +136,6 @@ function parseTaxPercent(raw) {
   return m ? parseFloat(m[1]) : null;
 }
 
-// subTotal + taxAmount must equal total before a figure reaches Xero, which
-// looks the org's real tax rate up from those two. Stated values win; missing
-// ones are derived from whichever are known.
-function ensureSubtotalTax(doc) {
-  const total = Number(doc.total ?? doc.totalAmount) || 0;
-  let sub = doc.subTotal  != null ? Number(doc.subTotal)  : null;
-  let tax = doc.taxAmount != null ? Number(doc.taxAmount) : null;
-  if (sub == null && tax == null) { sub = total; tax = 0; }
-  else if (sub == null)          { sub = total - tax; }
-  else if (tax == null)          { tax = total - sub; }
-  if (!(sub > 0)) sub = total;
-  if (!(tax >= 0)) tax = 0;
-  doc.subTotal  = parseFloat(sub.toFixed(2));
-  doc.taxAmount = parseFloat((tax || 0).toFixed(2));
-  return doc;
-}
-
 // ── The Document ────────────────────────────────────────────────────────────
 
 const str = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
@@ -199,38 +171,9 @@ function normaliseLineItem(li) {
   };
 }
 
-// Accepts any of the vocabularies the extractors have used and returns one
-// shape. Unknown keys are dropped; nothing is invented.
-function normaliseDocument(raw = {}) {
-  const contactName = str(raw.contact?.name ?? raw.contactName ?? raw.vendorName ?? raw.merchant, 255);
-  const lineItems = (Array.isArray(raw.lineItems) ? raw.lineItems : []).map(normaliseLineItem).filter(Boolean);
-
-  return ensureSubtotalTax({
-    contact: {
-      name:    contactName,
-      email:   str(raw.contact?.email   ?? raw.contactEmail   ?? raw.vendorEmail,   255),
-      address: str(raw.contact?.address ?? raw.contactAddress ?? raw.vendorAddress, 500),
-      phone:   str(raw.contact?.phone   ?? raw.contactPhone   ?? raw.vendorPhone,   50),
-    },
-    number:           str(raw.number ?? raw.invoiceNumber, 100),
-    date:             isoDate(raw.date ?? raw.invoiceDate) ?? parseDate(raw.date ?? raw.invoiceDate),
-    dueDate:          isoDate(raw.dueDate) ?? parseDate(raw.dueDate),
-    currency:         currencyCode(raw.currency),
-    lineItems,
-    subTotal:         money(raw.subTotal),
-    taxAmount:        money(raw.taxAmount ?? raw.tax),
-    total:            money(raw.total ?? raw.totalAmount),
-    paymentReference: str(raw.paymentReference, 500),
-    description:      str(raw.description, 500),
-    brandingThemeName: str(raw.brandingThemeName, 100),
-    lineAmountTypes:  raw.lineAmountTypes === 'Inclusive' ? 'Inclusive' : 'Exclusive',
-    confidence:       str(raw.confidence, 20),
-  });
-}
-
 module.exports = {
   CURRENCY_CODES,
-  num, money, isoDate, parseDate, addDays, today, localDateStr,
-  currencyCode, detectCurrency, parseTaxPercent, ensureSubtotalTax,
-  normaliseLineItem, normaliseDocument,
+  num, money, isoDate, parseDate,
+  currencyCode, detectCurrency, parseTaxPercent,
+  normaliseLineItem,
 };

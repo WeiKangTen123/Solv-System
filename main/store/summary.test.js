@@ -192,4 +192,12 @@ describe('dashboard summary', () => {
     const res = await request(serverFor(app)).get('/api/dashboard/summary').set({ Authorization: `Bearer ${token}` }).expect(200);
     expect(res.body.base).toBe('USD');
   });
+  // A receipt misread as next year counted in the totals and in no month.
+  test('a receipt dated after this month is in no total', () => {
+    spend(ela, { merchant: 'Misread year', amount: 500, base: 500, date: `${new Date().getUTCFullYear() + 1}-01-15` });
+    spend(ela, { merchant: 'Lunch', amount: 20, base: 20, date: day(0) });
+    const s = summary(me(ela));
+    expect(s.total).toBe(20);
+    expect(s.months.reduce((t, m) => t + m.base, 0)).toBe(20);
+  });
 });

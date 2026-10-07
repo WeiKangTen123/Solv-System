@@ -195,8 +195,12 @@ router.post('/:id/merge', requireAuth, (req, res) => {
   // case used to vanish from it, changing a total that had been put through.
   if (siblings.some(x => x.userId !== e.userId || isLocked(x))) return res.status(409).json({ error: 'Part of this receipt is in a claimed case. Reopen that case first.' });
   if (siblings.some(x => (x.reportId || null) !== (e.reportId || null))) return res.status(409).json({ error: 'The parts of this receipt are in different cases. Move them into one case first.' });
-  for (const s of siblings) store.deleteExpense(s.id);
-  res.json(_out(store.updateExpense(e.id, { box: null, page: null }), req));
+  // The parts go and the whole stays, together.
+  const merged = require('../db').transaction(() => {
+    for (const s of siblings) store.deleteExpense(s.id);
+    return store.updateExpense(e.id, { box: null, page: null });
+  })();
+  res.json(_out(merged, req));
 });
 
 router.delete('/:id', requireAuth, (req, res) => {
