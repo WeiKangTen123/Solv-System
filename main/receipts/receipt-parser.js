@@ -1,5 +1,6 @@
 const logger = require('../utils/logger');
 const { imagePart } = require('./image-prep');
+const { firstReceipt, readSomething } = require('./parse-result');
 const { callGemini } = require('../llm/gemini-client');
 const { parseLlmJson } = require('../llm/llm-json');
 
@@ -216,6 +217,7 @@ function normalise(parsed) {
     taxOut = fromLines;
   }
 
+  const pages = _pages(parsed.pages);
   return {
     merchant:    typeof parsed.merchant === 'string' && parsed.merchant.trim() ? parsed.merchant.trim().slice(0, 120) : null,
     invoiceNumber: typeof parsed.invoiceNumber === 'string' && parsed.invoiceNumber.trim() ? parsed.invoiceNumber.trim().slice(0, 60) : null,
@@ -230,7 +232,19 @@ function normalise(parsed) {
     lineItems,
     confidence:  parsed.confidence === 'high' ? 'high' : 'low',
     box:         _box(parsed.box_2d),
+    // Only the pages of a scan are asked which pages they are on
+    // (parseReceiptPages); nothing else carries the field.
+    ...(pages ? { pages } : {}),
   };
+}
+
+// The page numbers a receipt is printed on, 1-based. Anything malformed
+// becomes null, which stops that document from being split out.
+function _pages(value) {
+  if (!Array.isArray(value) || !value.length) return null;
+  const n = value.map(v => Number(v));
+  if (n.some(p => !Number.isInteger(p) || p < 1)) return null;
+  return [...new Set(n)].sort((a, b) => a - b);
 }
 
 // Normalises a whole response. Accepts both shapes: { receipts: [...] } and a
@@ -242,7 +256,13 @@ function normaliseMany(parsed) {
              : parsed && typeof parsed === 'object' ? [parsed]
              : [];
   const receipts = list.map(normalise).filter(Boolean);
-  if (!receipts.length) return null;
+  if (!receipts.length) {
+    // "No receipt here", said as an empty list, is an answer: a blank page or a
+    // photo of the desk. It used to be taken for a bad shape and asked again,
+    // a second call to hear it twice. A list of unusable entries is still bad.
+    const saidNone = !list.length && (Array.isArray(parsed) || Array.isArray(parsed?.receipts));
+    return saidNone ? { receipts: [], split: false, reason: 'no receipt' } : null;
+  }
   return { receipts, ...splittable(receipts) };
 }
 
@@ -306,10 +326,13 @@ function splittable(receipts) {
 // the receipt. See routes/receipts.js.
 async function parseReceiptImage(userId, buffer, mime, { maxAttempts = 2 } = {}) {
   if (!Buffer.isBuffer(buffer) || !buffer.length) return null;
-
+  return _readImage(userId, await imagePart(buffer, mime), maxAttempts);
+}
+// The same read, of an image already prepared for the model.
+function _readImage(userId, part, maxAttempts = 2) {
   return _readWith(userId, [
     { type: 'text', text: 'Read this receipt and return the JSON described.' },
-    await imagePart(buffer, mime),
+    part,
   ], maxAttempts);
 }
 
@@ -325,30 +348,71 @@ async function parseReceiptText(userId, text, { maxAttempts = 2 } = {}) {
     maxAttempts);
 }
 
-// Several page images that are ONE document: a hotel folio, a multi-page
-// invoice. Read together, so the total on the last page and the lines on the
-// first belong to one receipt. Never split, whatever the model returns.
+// The pages of a scanned PDF. Usually ONE document: a hotel folio, a
+// multi-page invoice. Read together, so the total on the last page and the
+// lines on the first belong to one receipt.
+//
+// Sometimes not: a scan of three taxi receipts, one to a page, used to come
+// back as the first ride with the other two dropped without a word. Pages that
+// are plainly separate documents now come back as one entry each, with the
+// pages it is printed on, and are kept apart only on the evidence
+// separateDocuments() asks for. Anything doubtful stays one document, and
+// every entry the model gave is still in the answer for the caller to count.
 //
 // ONE page is different: it is read like a photo, and a scanned page can hold
 // several receipts laid side by side. Whether that split is safe is
-// splittable()'s call, exactly as for a photo. This used to keep the first
-// receipt on the page and drop the rest without a word.
+// splittable()'s call, exactly as for a photo.
 async function parseReceiptPages(userId, pages, { maxAttempts = 2 } = {}) {
   const list = (pages || []).filter(p => p && Buffer.isBuffer(p.buffer) && p.buffer.length);
   if (!list.length) return null;
   if (list.length === 1) return parseReceiptImage(userId, list[0].buffer, list[0].mime, { maxAttempts });
   const content = [{ type: 'text', text:
-    `These ${list.length} images are the PAGES of ONE document (a hotel folio, an invoice or a statement), in order. ` +
-    `Read them together as a single receipt and return { "receipts": [ one entry ] }: one merchant, one invoiceNumber, ` +
+    `These ${list.length} images are the PAGES of a scanned PDF, in order. Usually they are ONE document (a hotel folio, an invoice or a statement): ` +
+    `then read them together as a single receipt and return { "receipts": [ one entry ] }: one merchant, one invoiceNumber, ` +
     `one total (the final amount charged, usually on the last page), one currency, EVERY line item from EVERY page, and no box_2d. ` +
-    `Never return one entry per page.` }];
+    `Never return one entry per page of one document. ` +
+    `Only when the pages are plainly SEPARATE documents, with a different merchant or a different receipt or invoice number, return one entry per document. ` +
+    `Give every entry "pages": the page numbers it is printed on, e.g. [1] or [2, 3].` }];
   for (let i = 0; i < list.length; i++) {
     content.push({ type: 'text', text: `Page ${i + 1} of ${list.length}:` });
     content.push(await imagePart(list[i].buffer, list[i].mime));
   }
   const result = await _readWith(userId, content, maxAttempts, { maxTokens: PAGES_MAX_TOKENS });
-  if (!result) return null;
-  return { receipts: [result.receipts[0]], split: false, reason: 'pages of one document' };
+  // Nothing read, nothing there, or the reader out of reach: said as it is.
+  if (!result || !result.receipts.length) return result;
+  // A box on one page of several places nothing.
+  const receipts = result.receipts.map(r => ({ ...r, box: null }));
+  if (receipts.length === 1) return { receipts, split: false, reason: 'pages of one document' };
+  return { receipts, ...separateDocuments(receipts, list.length) };
+}
+
+// Are these entries from the pages of one scan separate documents? Only when
+// each names pages that exist, no page is claimed twice, each has a merchant
+// or a total, and every two differ in merchant or in receipt number — the
+// same evidence sameDocument() (pdf/pages.js) takes for typed pages. Splitting
+// one folio into two would invent a receipt; anything doubtful is one
+// document. Exported and tested directly.
+function separateDocuments(receipts, pageCount) {
+  if (!Array.isArray(receipts) || receipts.length < 2) return { split: false, reason: 'single' };
+  const pages = receipts.map(r => r.pages);
+  if (pages.some(p => !p || p.some(n => n > pageCount))) return { split: false, reason: 'an entry does not say which pages it is on' };
+  const all = pages.flat();
+  if (new Set(all).size !== all.length) return { split: false, reason: 'two entries claim the same page' };
+  if (receipts.some(r => !r.merchant && r.total === null)) return { split: false, reason: 'an entry has neither a merchant nor a total' };
+  // "Grab" and "Grab Singapore" are one merchant; "Grab" and "Gojek" are two.
+  // A number is another number unless it is the same one.
+  const key = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const otherMerchant = (a, b) => !!(key(a) && key(b) && !key(a).includes(key(b)) && !key(b).includes(key(a)));
+  const otherNumber = (a, b) => !!(key(a) && key(b) && key(a) !== key(b));
+  for (let i = 0; i < receipts.length; i++) {
+    for (let j = i + 1; j < receipts.length; j++) {
+      const [a, b] = [receipts[i], receipts[j]];
+      if (!otherMerchant(a.merchant, b.merchant) && !otherNumber(a.invoiceNumber, b.invoiceNumber)) {
+        return { split: false, reason: 'two entries may be one document' };
+      }
+    }
+  }
+  return { split: true, reason: null };
 }
 
 // Output budgets. Every line item is sixty-odd tokens of JSON and a folio for
@@ -364,13 +428,20 @@ const CEILING_TOKENS   = 32000;
 // shape earns a second try, then the receipt is left for the user. A reply
 // cut off mid-JSON gets its second try with twice the room, since the same
 // budget would be cut off in the same place.
+//
+// A read whose last attempt found every key and model cooling down or out of
+// quota is not "could not read this receipt": the reader never saw it. It
+// comes back as an empty read marked unavailable, so the receipt can say so
+// and the person knows to press Re-read later rather than type it all.
 async function _readWith(userId, userContent, maxAttempts, { maxTokens = READ_MAX_TOKENS } = {}) {
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user',   content: userContent },
   ];
   let budget = maxTokens;
+  let unavailable = false;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    unavailable = false;
     try {
       const content = await callGemini(userId, messages, { temperature: 0, maxTokens: budget });
       const result  = normaliseMany(parseLlmJson(content));
@@ -378,6 +449,7 @@ async function _readWith(userId, userContent, maxAttempts, { maxTokens = READ_MA
       logger.warn('Receipt parse returned an unusable shape', { userId, attempt });
     } catch (err) {
       if (err.truncated) budget = Math.min(budget * 2, CEILING_TOKENS);
+      unavailable = _outOfReach(err);
       logger.warn('Receipt parse attempt failed', { userId, attempt, error: err.message, ...(err.truncated ? { nextMaxTokens: budget } : {}) });
       // Asking again cannot help when the request itself was refused, no key
       // is set, or every key and model is out of quota (the client has
@@ -385,11 +457,17 @@ async function _readWith(userId, userContent, maxAttempts, { maxTokens = READ_MA
       if (!err.truncated && _hopeless(err)) break;
     }
   }
-  return null;
+  return unavailable ? { receipts: [], split: false, reason: 'the reader could not reach the AI service', unavailable: true } : null;
 }
 function _hopeless(err) {
   const status = err && err.response && err.response.status;
   return [400, 401, 403, 404, 429].includes(status) || /No Gemini API key/.test(String(err && err.message));
+}
+// What the client throws once every key and model has answered 429 (out of
+// quota) or 503 (busy), or all of them are cooling down from having done so.
+function _outOfReach(err) {
+  const status = err && err.response && err.response.status;
+  return status === 429 || status === 503;
 }
 
 
@@ -410,30 +488,32 @@ function _batchPrompt(count) {
   return `You are reading ${count} SEPARATE receipts. They are unrelated to each other.
 
 Return ONLY a JSON array with exactly ${count} entries, one per image, in the order given:
-[{"index": 1, "merchant": ..., "date": ..., "time": ..., "category": ..., "currency": ..., "total": ..., "tax": ..., "subTotal": ..., "description": ..., "lineItems": [...], "confidence": ...}]
+[{"index": 1, "count": 1, "merchant": ..., "date": ..., "time": ..., "category": ..., "currency": ..., "total": ..., "tax": ..., "subTotal": ..., "description": ..., "lineItems": [...], "confidence": ...}]
 
 "index" is the image's position, starting at 1. Every image must appear exactly once.
+"count" is how many separate receipts you can see in that image, usually 1. When it is more than 1, still give that image one entry.
 Apply the field rules and corporate description formatting from the system prompt to each receipt independently — never carry a figure from one receipt to another.`;
 }
 
-// Reads a batch. Returns an array the same length as `images`, with null where a
-// receipt could not be read, or null overall if the reply cannot be trusted.
-async function _readBatch(userId, images) {
-  const content = [{ type: 'text', text: _batchPrompt(images.length) }];
-  for (let i = 0; i < images.length; i++) {
+// Reads a batch of images already prepared for the model (imagePart). Returns
+// an array the same length, with null where a receipt could not be read, or
+// null overall if the reply cannot be trusted.
+async function _readBatch(userId, parts) {
+  const content = [{ type: 'text', text: _batchPrompt(parts.length) }];
+  for (let i = 0; i < parts.length; i++) {
     content.push({ type: 'text', text: `Receipt ${i + 1}:` });
-    content.push(await imagePart(images[i].buffer, images[i].mime));
+    content.push(parts[i]);
   }
 
   const raw = await callGemini(userId, [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content },
-  ], { temperature: 0, maxTokens: Math.max(READ_MAX_TOKENS, 1500 * images.length) });
+  ], { temperature: 0, maxTokens: Math.max(READ_MAX_TOKENS, 1500 * parts.length) });
 
   const parsed = parseLlmJson(raw);
   const list = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.receipts) ? parsed.receipts : null);
   // A reply that does not account for every image cannot be attributed safely.
-  if (!list || list.length !== images.length) return null;
+  if (!list || list.length !== parts.length) return null;
   // Nor can one whose indexes are not each image exactly once. [1,2,2,4,5]
   // has the right count, and put the third receipt's figures on the second.
   // Every index given, each once and in range, or none at all (by position).
@@ -441,39 +521,48 @@ async function _readBatch(userId, images) {
   const given = idx.filter(n => Number.isInteger(n));
   if (given.length) {
     if (given.length !== list.length) return null;
-    if (new Set(given).size !== list.length || given.some(n => n < 1 || n > images.length)) return null;
+    if (new Set(given).size !== list.length || given.some(n => n < 1 || n > parts.length)) return null;
   }
 
-  const out = new Array(images.length).fill(null);
-  list.forEach((item, k) => { out[given.length ? idx[k] - 1 : k] = normalise(item); });
+  // An image the model says holds more than one receipt is left for a read of
+  // its own, which can split it as a photo is split. One entry an image kept
+  // one of the two and dropped the other.
+  const out = new Array(parts.length).fill(null);
+  list.forEach((item, k) => { out[given.length ? idx[k] - 1 : k] = Number(item && item.count) > 1 ? null : normalise(item); });
   return out.some(x => x) ? out : null;
 }
 
 // Reads many receipts, batching where it can and falling back per-image where it
 // cannot. `onProgress(doneCount)` fires as results land so a job can report it.
-async function parseReceiptBatch(userId, images, { batchSize = BATCH_SIZE, onProgress } = {}) {
+//
+// Each answer is one receipt, or null. With { split: true } each is instead a
+// whole read as parseReceiptImage gives it ({ receipts, split, reason }, or
+// null), so a page holding two receipts can be split like a photo and a
+// reader out of reach can say so.
+async function parseReceiptBatch(userId, images, { batchSize = BATCH_SIZE, onProgress, split = false } = {}) {
   const results = new Array(images.length).fill(null);
+  const answer = parsed => (split ? parsed : firstReceipt(parsed));
   let done = 0;
 
   for (let start = 0; start < images.length; start += batchSize) {
     const slice = images.slice(start, start + batchSize);
+    // Each image is shrunk and encoded once, for the batch and for any read of
+    // its own after it. The fallback used to do all of that again per image.
+    const parts = [];
+    for (const img of slice) parts.push(Buffer.isBuffer(img.buffer) && img.buffer.length ? await imagePart(img.buffer, img.mime) : null);
+    const alone = i => (parts[i] ? _readImage(userId, parts[i]) : null);
 
     let batch = null;
-    if (slice.length > 1) {
-      try { batch = await _readBatch(userId, slice); }
+    if (slice.length > 1 && parts.every(Boolean)) {
+      try { batch = await _readBatch(userId, parts); }
       catch (err) { logger.warn('Receipt batch failed, falling back to one at a time', { userId, size: slice.length, error: err.message }); }
     }
 
     if (batch) {
-      batch.forEach((r, i) => { results[start + i] = r; });
       // A slot the batch could not read is read on its own: one bad photo in a
       // batch of five used to be reported unreadable without a second look.
       for (let i = 0; i < slice.length; i++) {
-        const got = results[start + i];
-        // An answer with neither a merchant nor a total read nothing.
-        if (got && (got.merchant || (got.total !== null && got.total !== undefined))) continue;
-        const single = await parseReceiptImage(userId, slice[i].buffer, slice[i].mime);
-        results[start + i] = single && single.receipts ? single.receipts[0] : null;
+        results[start + i] = answer(readSomething(batch[i]) ? { receipts: [batch[i]], split: false, reason: 'single' } : await alone(i));
       }
       done += slice.length;
       onProgress && onProgress(done);
@@ -482,8 +571,7 @@ async function parseReceiptBatch(userId, images, { batchSize = BATCH_SIZE, onPro
 
     // Either a single image, or a batch whose reply could not be trusted.
     for (let i = 0; i < slice.length; i++) {
-      const single = await parseReceiptImage(userId, slice[i].buffer, slice[i].mime);
-      results[start + i] = single && single.receipts ? single.receipts[0] : null;
+      results[start + i] = answer(await alone(i));
       done++;
       onProgress && onProgress(done);
     }
@@ -492,4 +580,4 @@ async function parseReceiptBatch(userId, images, { batchSize = BATCH_SIZE, onPro
   return results;
 }
 
-module.exports = { parseReceiptImage, parseReceiptText, parseReceiptPages, parseReceiptBatch, _readBatch, BATCH_SIZE, READ_MAX_TOKENS, PAGES_MAX_TOKENS, normalise, normaliseMany, splittable, SYSTEM_PROMPT, _num, _isoDate, _time, _currency, _box, _overlapFraction, _withoutTransfer };
+module.exports = { parseReceiptImage, parseReceiptText, parseReceiptPages, parseReceiptBatch, _readBatch, BATCH_SIZE, READ_MAX_TOKENS, PAGES_MAX_TOKENS, normalise, normaliseMany, splittable, separateDocuments, SYSTEM_PROMPT, _num, _isoDate, _time, _currency, _box, _overlapFraction, _withoutTransfer };

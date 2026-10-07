@@ -5,6 +5,7 @@ const store     = require('../store/expenses');
 const { findDuplicate } = require('../intake/dedup');
 const { canonicalCategory } = require('../intake/categories');
 const logger    = require('../utils/logger');
+const { firstReceipt, readSomething } = require('./parse-result');
 
 // The one place that decides HOW a stored file is read and what the read does
 // to the expense rows. Callers (the upload route, the phone route, the batch
@@ -152,22 +153,27 @@ function flagIfSuspected(expenseId) {
 // other three were lost without a word.
 //
 // Returns { parts: [{ r, page, box }], numPages, parsed, notes }. A part's r is
-// null when that page or region could not be read; it still becomes a row, so
-// nothing in the file is dropped silently.
+// null when a typed page could not be read; it still becomes a row. A scanned
+// page with no receipt on it makes no row, and a note names it. Nothing in the
+// file is dropped silently.
 
-// A page that came back from the vision reader with nothing a receipt has is
-// a cover sheet, a blank or a signature page, not a receipt.
-const _looksLikeReceipt = r => !!r && (r.total !== null && r.total !== undefined || !!r.merchant);
+// A photo splits by region, the pages of a scan by the pages each receipt is on.
 const _fromParsed = parsed => {
-  if (!parsed || !parsed.receipts || !parsed.receipts.length) return [];
-  if (!parsed.split) return [{ r: parsed.receipts[0], page: null, box: null }];
-  return parsed.receipts.map(r => ({ r, page: null, box: r.box || null }));
+  const first = firstReceipt(parsed);
+  if (!first) return [];
+  if (!parsed.split) return [{ r: first, page: null, box: null }];
+  return parsed.receipts.map(r => ({ r, page: r.pages ? r.pages[0] : null, box: r.box || null }));
 };
+
+// Every AI key cooling down or out of quota: the reader never saw the file.
+const UNAVAILABLE_NOTE = 'The reader could not reach the AI service just now. Press Re-read in a few minutes, or type the fields from the receipt.';
 
 async function readParts(userId, buffer, mime) {
   const notes = [];
+  const note = text => { if (!notes.includes(text)) notes.push(text); };
+  const heard = parsed => { if (parsed && parsed.unavailable) note(UNAVAILABLE_NOTE); return parsed; };
   if (mime !== 'application/pdf') {
-    const parsed = await parser.parseReceiptImage(userId, buffer, mime);
+    const parsed = heard(await parser.parseReceiptImage(userId, buffer, mime));
     return { parts: _fromParsed(parsed), numPages: null, parsed, notes };
   }
 
@@ -190,18 +196,20 @@ async function readParts(userId, buffer, mime) {
     if (!rendered || !rendered.pages.length) return unreadable();
     capNote(rendered.pages.length, 'read');
     if (rendered.pages.length <= MAX_PAGES_ONE_DOC) {
-      // Several pages are one document. A single page is read like a photo
-      // and may hold several receipts scanned side by side; whether that
-      // split is safe is the parser's call, exactly as for a photo.
-      const parsed = await parser.parseReceiptPages(userId, rendered.pages.map(p => ({ buffer: p.buffer, mime: 'image/jpeg' })));
+      // Several pages are usually one document, and come back as one entry.
+      // Pages that are plainly separate documents (another merchant, another
+      // receipt number) come back as one part each, on its own pages, as
+      // typed pages do. A single page is read like a photo and may hold
+      // several receipts scanned side by side; whether either split is safe
+      // is the parser's call.
+      const parsed = heard(await parser.parseReceiptPages(userId, rendered.pages.map(p => ({ buffer: p.buffer, mime: 'image/jpeg' }))));
+      if (rendered.pages.length > 1 && parsed && !parsed.split && parsed.receipts.length > 1) {
+        notes.push(`The reader saw ${parsed.receipts.length} receipts in these pages but could not tell them apart safely, so they are kept as one. Check the pages and add any other receipt by hand.`);
+      }
       return { parts: _fromParsed(parsed), numPages, parsed, notes };
     }
-    // A thick scan: one receipt per page, read five pages to a call (the
-    // batch reader checks each answer comes back against its own page, and
-    // reads a page alone when it cannot tell). One call per page used to make
-    // a twenty-page scan twenty calls.
-    const reads = await parser.parseReceiptBatch(userId, rendered.pages.map(p => ({ buffer: p.buffer, mime: 'image/jpeg' })));
-    const parts = rendered.pages.map((p, i) => ({ r: reads[i] || null, page: p.page, box: null }));
+    // A thick scan: a stack of separate receipts.
+    const parts = await _readScans(userId, rendered.pages, note);
     return { parts, numPages, parsed: null, notes };
   }
 
@@ -209,34 +217,58 @@ async function readParts(userId, buffer, mime) {
   const decision = pdfPages.splittablePages(extracted);
   let parts, parsed = null;
   if (!decision.split) {
-    parsed = await parser.parseReceiptText(userId, extracted.pages.join('\n\n'));
-    parts = parsed && parsed.receipts && parsed.receipts.length ? [{ r: parsed.receipts[0], page: null, box: null }] : [];
+    parsed = heard(await parser.parseReceiptText(userId, extracted.pages.join('\n\n')));
+    const r = firstReceipt(parsed);
+    parts = r ? [{ r, page: null, box: null }] : [];
   } else {
     parts = [];
     for (const page of decision.pageNumbers) {
-      const one = await parser.parseReceiptText(userId, extracted.pages[page - 1]);
-      parts.push({ r: one && one.receipts ? one.receipts[0] : null, page, box: null });
+      const one = heard(await parser.parseReceiptText(userId, extracted.pages[page - 1]));
+      parts.push({ r: firstReceipt(one), page, box: null });
     }
   }
 
   // Pages with no text in a PDF that has some: scans among typed pages, such
   // as a typed cover sheet with the receipts scanned behind it. They used to
   // be skipped, since the text was read and the images never were. Each is
-  // drawn and read; one that holds a receipt becomes a part of its own.
+  // drawn and read; one that holds a receipt becomes a part of its own. Only
+  // the first ten used to be drawn, one call each, with nothing said of the
+  // rest; now every one the renderer will draw is read, and any it will not is
+  // named in a note.
   const blank = extracted.pages.map((t, i) => (pdfPages.pageHasText(t) ? null : i + 1)).filter(Boolean);
   if (blank.length && extracted.textPageCount) {
-    const rendered = await pdfRender.renderPdfPages(buffer, { pages: blank.slice(0, 10) }).catch(() => null);
-    for (const p of (rendered && rendered.pages) || []) {
-      if (!blank.includes(p.page)) continue;
-      const one = await parser.parseReceiptImage(userId, p.buffer, 'image/jpeg');
-      const r = one && one.receipts ? one.receipts[0] : null;
-      if (_looksLikeReceipt(r)) parts.push({ r, page: p.page, box: null });
-    }
+    const rendered = await pdfRender.renderPdfPages(buffer, { pages: blank }).catch(() => null);
+    const scans = ((rendered && rendered.pages) || []).filter(p => blank.includes(p.page));
+    if (scans.length < blank.length) note(`Only ${scans.length} of the ${blank.length} scanned pages were read; check the rest by hand.`);
+    parts.push(...await _readScans(userId, scans, note));
     // A single text part covering the whole file now sits beside page parts:
     // pin it to the first typed page so each row knows its place.
     if (parts.length > 1 && parts[0].page === null) parts[0].page = extracted.pages.findIndex(pdfPages.pageHasText) + 1;
   }
   return { parts, numPages, parsed, notes };
+}
+
+// Scanned pages that are separate receipts: a thick scan, or the scans behind
+// a typed cover sheet. Read five pages to a call (the batch reader checks each
+// answer comes back against its own page, and reads a page alone when it
+// cannot tell); one call per page made a twenty-page scan twenty calls. A page
+// holding two receipts is read again on its own and split like a photo. A page
+// with no receipt on it (a blank, a signature page) makes no row, where it
+// used to make an empty one, and the note names it.
+async function _readScans(userId, pages, note) {
+  if (!pages.length) return [];
+  const reads = await parser.parseReceiptBatch(userId, pages.map(p => ({ buffer: p.buffer, mime: 'image/jpeg' })), { split: true });
+  const parts = [], empty = [];
+  pages.forEach((p, i) => {
+    if (reads[i] && reads[i].unavailable) note(UNAVAILABLE_NOTE);
+    // Nothing a receipt has: a cover sheet, a blank or a signature page.
+    const found = _fromParsed(reads[i]).filter(part => readSomething(part.r));
+    if (!found.length) empty.push(p.page);
+    for (const part of found) parts.push({ ...part, page: p.page });
+  });
+  if (empty.length === 1) note(`No receipt was read on page ${empty[0]}; check it by hand.`);
+  else if (empty.length) note(`No receipt was read on pages ${empty.join(', ')}; check them by hand.`);
+  return parts;
 }
 
 // Another receipt found in the same file. It goes where the first one went:
@@ -320,8 +352,7 @@ async function readOne(userId, buffer, mime, { page = null, box = null } = {}) {
   if (extracted.failed) return null;
   if (extracted.hasText) {
     const text = page ? extracted.pages[page - 1] : extracted.pages.join('\n\n');
-    const out = await parser.parseReceiptText(userId, text);
-    return out ? out.receipts[0] : null;
+    return firstReceipt(await parser.parseReceiptText(userId, text));
   }
   const rendered = await pdfRender.renderPdfPages(buffer, page ? { pages: [page] } : { maxPages: MAX_PAGES_ONE_DOC });
   if (!rendered || !rendered.pages.length) return null;
