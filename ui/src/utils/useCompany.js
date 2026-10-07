@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 
 // The company's settings, categories and currencies, fetched once a minute at
@@ -18,13 +17,3 @@ export function getCompany({ fresh = false } = {}) {
 }
 // After the company's settings change, the next read goes to the server.
 export function forgetCompany() { cache = null; at = 0; }
-
-export function useCompany() {
-  const [company, setCompany] = useState(cache);
-  useEffect(() => {
-    let alive = true;
-    getCompany().then(d => { if (alive) setCompany(d); }).catch(() => {});
-    return () => { alive = false; };
-  }, []);
-  return company;
-}
