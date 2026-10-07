@@ -32,10 +32,11 @@ Rules:
 - "high" only when the description plainly names the kind of expense.`;
 }
 
-// Keeps only suggestions naming a real category for a real line.
+// Keeps only suggestions naming a real category for a real line. Each carries
+// the key of the line it is for, which is what the caller looks it up by.
 function normaliseSuggestions(raw, lines, categories) {
   const allowed = new Map(categories.map(c => [c.replace(/\s+/g, ' ').trim().toUpperCase(), c]));
-  const wanted = new Set(lines.map(l => String(l.rowNo)));
+  const wanted = new Map(lines.map(l => [String(l.rowNo), l]));
   const list = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.suggestions) ? raw.suggestions : []);
 
   const out = [];
@@ -47,17 +48,23 @@ function normaliseSuggestions(raw, lines, categories) {
     const key = String(item.category || '').replace(/\s+/g, ' ').trim().toUpperCase();
     const category = allowed.get(key);
     if (!category) continue;                              // invented or reworded — dropped
-    out.push({ rowNo, category, confidence: item.confidence === 'high' ? 'high' : 'low' });
+    out.push({ rowNo, key: wanted.get(rowNo).key, category, confidence: item.confidence === 'high' ? 'high' : 'low' });
   }
   return out;
 }
 
 // Only lines with no category of their own are sent — the claimant's answer is
 // never overwritten, and asking about lines already answered wastes a call.
+//
+// The model is given each line by its place in this list, not by the number
+// the claimant wrote: two forms in one import both have a row "1", and the
+// answer for one landed on the other ("Taxi to airport" became Meals). The
+// line's own key (its form and row, set by the import) goes back with it.
 function linesNeedingCategory(matches) {
   return matches
-    .filter(m => !m.row.category)
-    .map(m => ({ rowNo: String(m.row.no), description: m.row.description, merchant: m.receipt && m.receipt.merchant }));
+    .map((m, i) => ({ m, key: m.row.key ?? String(i) }))
+    .filter(({ m }) => !m.row.category)
+    .map(({ m, key }, k) => ({ rowNo: String(k + 1), key, description: m.row.description, merchant: m.receipt && m.receipt.merchant }));
 }
 
 async function suggestCategories(userId, matches, categories, deps = {}) {

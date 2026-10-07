@@ -50,6 +50,8 @@ async function makeForm(rows) {
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
 const settle = async job => { for (let i = 0; i < 200 && !['done','failed','cancelled'].includes(job.stage); i++) await new Promise(r => setTimeout(r, 5)); return job; };
+// Hands out these reads in order, however many receipts the job asks for at a time.
+const inOrder = list => { let next = 0; return jest.fn(async (userId, images) => images.map(() => (next < list.length ? list[next++] : null))); };
 
 function deps({ reads = {}, onCreate } = {}) {
   return {
@@ -76,10 +78,10 @@ describe('claims/claim-import', () => {
     const seen = [];
     const d = {
       ...deps({ onCreate: r => seen.push(r.no) }),
-      parseReceipts: jest.fn(async () => ([
+      parseReceipts: inOrder([
         { merchant: 'Grab', date: '2026-02-23', total: 15.8, currency: 'SGD' },
         { merchant: 'CDG',  date: '2026-02-26', total: 56.7, currency: 'SGD' },
-      ])),
+      ]),
     };
     const job = claimImport.startImport({ userId: 'u1', archives: [{ name: 'c.zip', buffer: zip }], forms: [{ name: 'f.xlsx', buffer: form }] }, d);
     await settle(job);
@@ -118,7 +120,7 @@ describe('claims/claim-import', () => {
     const form = await makeForm([{ no: 1, date: '2026-02-23', description: 'Grab', amount: 15.8 }]);
     const d = { ...deps(),
       // one unreadable, one fine — the batch reader returns null in place.
-      parseReceipts: jest.fn(async () => ([null, { merchant: 'Grab', date: '2026-02-23', total: 15.8 }])) };
+      parseReceipts: inOrder([null, { merchant: 'Grab', date: '2026-02-23', total: 15.8 }]) };
     const job = claimImport.startImport({ userId: 'u1', archives: [{ name: 'c.zip', buffer: zip }], forms: [{ name: 'f.xlsx', buffer: form }] }, d);
     await settle(job);
 
@@ -191,11 +193,11 @@ describe('claims/claim-import — receipts without a claim form', () => {
       storeReceipt: jest.fn(async () => 'stored.jpg'),
       createRecord: jest.fn(async ({ row, receipt }) => { seen.push({ amount: row.amount, merchant: receipt && receipt.merchant }); return { id: 'r' + seen.length }; }),
       suggest: jest.fn(async () => []),
-      parseReceipts: jest.fn(async () => ([
+      parseReceipts: inOrder([
         { merchant: 'Grab',  date: '2026-02-23', total: 15.8, currency: 'SGD' },
         { merchant: 'Gojek', date: '2026-03-10', total: 25,   currency: 'SGD' },
         { merchant: 'CDG',   date: '2026-04-17', total: 21.8, currency: 'SGD' },
-      ])),
+      ]),
     };
     const job = claimImport.startImport({ userId: 'u1', archives: [{ name: 'c.zip', buffer: zip }], forms: [] }, d);
     await settle(job);
@@ -334,7 +336,7 @@ describe('claims/claim-import — everything that arrives together becomes a cas
 
   test('a zip of three receipts lands in one case, named after the file', async () => {
     const d = { waitMs: 0, storeReceipt: jest.fn(async () => 'stored.jpg'), suggest: jest.fn(async () => []),
-                createRecord: realRecords(), parseReceipts: jest.fn(async () => reads) };
+                createRecord: realRecords(), parseReceipts: inOrder(reads) };
     const job = ci.startImport({ userId: u.id, archives: [{ name: 'September receipts.zip', buffer: zipOfThree() }], forms: [], label: 'September receipts.zip' }, d);
     await settle(job);
 
@@ -353,7 +355,7 @@ describe('claims/claim-import — everything that arrives together becomes a cas
   test('a duplicate stays out of the case, because it could never be marked reviewed', async () => {
     const d = { waitMs: 0, storeReceipt: jest.fn(async () => 'stored.jpg'), suggest: jest.fn(async () => []),
                 createRecord: realRecords(row => (row.description === 'Gojek' ? { status: 'duplicate' } : {})),
-                parseReceipts: jest.fn(async () => reads) };
+                parseReceipts: inOrder(reads) };
     const job = ci.startImport({ userId: u.id, archives: [{ name: 'c.zip', buffer: zipOfThree() }], forms: [], label: 'c.zip' }, d);
     await settle(job);
 
@@ -412,5 +414,128 @@ describe('claims/claim-import — everything that arrives together becomes a cas
     await settle(job);
     expect(job.stage).toBe('cancelled');
     expect(d.createRecord).not.toHaveBeenCalled();
+  });
+});
+
+// ── A stop or a failure keeps nothing ───────────────────────────────────────
+describe('claims/claim-import — a stop or a failure part-way keeps nothing', () => {
+  beforeEach(() => claimImport._reset());
+  const zipOf = n => makeZip(Array.from({ length: n }, (_, i) => ({ name: `c/${i}.png`, data: JPEG })));
+  const readsOf = n => inOrder(Array.from({ length: n }, (_, i) => ({ merchant: `M${i}`, date: '2026-01-01', total: i + 1 })));
+
+  test('a cancel during saving stops there and takes back what was saved', async () => {
+    // Stop was only looked at before saving began: a cancel during it saved
+    // the whole claim, and the panel said nothing had been kept.
+    const d = { ...deps(), parseReceipts: readsOf(4), clearPartial: jest.fn(() => ({ removed: 2 })) };
+    d.createRecord = jest.fn(async () => {
+      if (d.createRecord.mock.calls.length === 2) claimImport.cancel('job-c', 'u1');
+      return { id: `r${d.createRecord.mock.calls.length}` };
+    });
+    const job = claimImport.startImport({ userId: 'u1', archives: [{ name: 'c.zip', buffer: zipOf(4) }], forms: [], id: 'job-c' }, d);
+    await settle(job);
+    expect(job.stage).toBe('cancelled');
+    expect(d.createRecord).toHaveBeenCalledTimes(2);
+    // Once before saving (what a run before a restart left), once after the cancel.
+    expect(d.clearPartial).toHaveBeenCalledTimes(2);
+    expect(d.clearPartial).toHaveBeenLastCalledWith('u1', 'job-c');
+    expect(job.result).toBeNull();
+  });
+
+  test('a failure part-way through saving takes back what was saved, and says so', async () => {
+    const d = { ...deps(), parseReceipts: readsOf(3), clearPartial: jest.fn(() => ({ removed: 1 })) };
+    d.createRecord = jest.fn(async () => {
+      if (d.createRecord.mock.calls.length === 2) throw new Error('database is locked');
+      return { id: 'r1' };
+    });
+    const job = claimImport.startImport({ userId: 'u1', archives: [{ name: 'c.zip', buffer: zipOf(3) }], forms: [], id: 'job-f' }, d);
+    await settle(job);
+    expect(job.stage).toBe('failed');
+    expect(job.error).toMatch(/nothing from this import was kept: database is locked/);
+    expect(d.clearPartial).toHaveBeenCalledTimes(2);
+    expect(d.clearPartial).toHaveBeenLastCalledWith('u1', 'job-f');
+  });
+
+  test('cancelling an import that has already ended leaves it as it ended', async () => {
+    // A failed import came back as 'cancelling', and the panel polled it for ever.
+    const d = { ...deps(), createRecord: jest.fn(async () => { throw new Error('boom'); }) };
+    const failed = claimImport.startImport({ userId: 'u1', archives: [{ name: 'c.zip', buffer: zipOf(1) }], forms: [] }, d);
+    await settle(failed);
+    expect(claimImport.cancel(failed.id, 'u1').stage).toBe('failed');
+    expect(failed.stage).toBe('failed');
+  });
+
+  test('an import cancelled before a restart only takes back what it saved when it runs again', async () => {
+    const d = { ...deps(), clearPartial: jest.fn(() => ({ removed: 3 })) };
+    const job = claimImport.startImport({ userId: 'u1', archives: [{ name: 'c.zip', buffer: zipOf(2) }], forms: [], id: 'job-r', cancelled: true }, d);
+    await settle(job);
+    expect(job.stage).toBe('cancelled');
+    expect(d.parseReceipts).not.toHaveBeenCalled();
+    expect(d.clearPartial).toHaveBeenCalledWith('u1', 'job-r');
+  });
+});
+
+// ── Several archives and several forms in one import ────────────────────────
+describe('claims/claim-import — several archives and forms in one import', () => {
+  beforeEach(() => claimImport._reset());
+
+  test('the receipt limit is for the whole import, not for each archive', async () => {
+    const sixty = makeZip(Array.from({ length: 60 }, (_, i) => ({ name: `c/${i}.png`, data: JPEG })));
+    const d = deps();
+    const job = claimImport.startImport({ userId: 'u1', archives: [{ name: 'a.zip', buffer: sixty }, { name: 'b.zip', buffer: sixty }], forms: [] }, d);
+    await settle(job);
+    expect(job.stage).toBe('failed');
+    expect(job.error).toMatch(/more than one claim should hold/);
+    expect(d.parseReceipts).not.toHaveBeenCalled();
+  });
+
+  test('two archives with the same name do not share one stored file', async () => {
+    const zip = makeZip([{ name: 'a.jpg', data: JPEG }]);
+    const d = deps();
+    d.parseReceipts = jest.fn(async (u, images) => images.map(() => ({ parts: [{ r: { merchant: 'X', date: '2026-01-01', total: 1 }, page: null, box: null }], notes: [] })));
+    const keys = [];
+    d.createRecord = jest.fn(async ({ receipt }) => { keys.push(receipt.fileKey); return { id: `r${keys.length}` }; });
+    const job = claimImport.startImport({ userId: 'u1', archives: [{ name: 'receipts.zip', buffer: zip }, { name: 'receipts.zip', buffer: zip }], forms: [] }, d);
+    await settle(job);
+    expect(keys).toHaveLength(2);
+    expect(new Set(keys).size).toBe(2);
+  });
+
+  test("what the reader says about a whole file goes on its first part's record", async () => {
+    const zip = makeZip([{ name: 'long.pdf', data: Buffer.from('%PDF-1.4 long') }]);
+    const d = deps();
+    const note = 'Only the first 20 of 35 pages were read; check the rest by hand.';
+    d.parseReceipts = jest.fn(async (u, images) => images.map(() => ({
+      parts: [{ r: { merchant: 'A', date: '2026-09-01', total: 10 }, page: 1, box: null }, { r: { merchant: 'B', date: '2026-09-02', total: 20 }, page: 2, box: null }],
+      notes: [note],
+    })));
+    const seen = [];
+    d.createRecord = jest.fn(async ({ receipt }) => { seen.push([receipt.part, receipt.notes]); return { id: `r${seen.length}` }; });
+    const job = claimImport.startImport({ userId: 'u1', archives: [{ name: 'c.zip', buffer: zip }], forms: [] }, d);
+    await settle(job);
+    expect(seen.sort()).toEqual([[0, note], [1, null]]);
+  });
+
+  test("two forms both numbered from 1 do not take each other's suggested category", async () => {
+    // Both had a row "1", so the answer for one landed on both: "Taxi to
+    // airport" came out as Meals.
+    const formA = await makeForm([{ no: 1, date: '2026-02-23', description: 'Lunch with client', amount: 30 }]);
+    const formB = await makeForm([{ no: 1, date: '2026-02-24', description: 'Taxi to airport', amount: 25 }]);
+    const zip = makeZip([{ name: 'c/a.png', data: JPEG }, { name: 'c/b.png', data: JPEG }]);
+    const { suggestCategories } = require('./claim-categories');
+    // The model answers for the first line it was asked about, and no other.
+    const callGemini = jest.fn(async () => JSON.stringify([{ rowNo: '1', category: 'LOCAL TRAVEL COST (SGD)', confidence: 'high' }]));
+    const categoryOf = {};
+    const d = { ...deps(),
+      parseReceipts: inOrder([{ merchant: 'Cafe', date: '2026-02-23', total: 30 }, { merchant: 'Grab', date: '2026-02-24', total: 25 }]),
+      suggest: (uid, matches, categories) => suggestCategories(uid, matches, categories, { callGemini }),
+      createRecord: jest.fn(async ({ row, category }) => { categoryOf[row.description] = category; return { id: row.description }; }),
+    };
+    const job = claimImport.startImport({ userId: 'u1', archives: [{ name: 'c.zip', buffer: zip }],
+      forms: [{ name: 'a.xlsx', buffer: formA }, { name: 'b.xlsx', buffer: formB }] }, d);
+    await settle(job);
+    expect(job.stage).toBe('done');
+    expect(Object.keys(categoryOf).sort()).toEqual(['Lunch with client', 'Taxi to airport']);
+    expect(Object.values(categoryOf).filter(Boolean)).toEqual(['LOCAL TRAVEL COST (SGD)']);
+    expect(job.result.categoriesSuggested).toBe(1);
   });
 });
