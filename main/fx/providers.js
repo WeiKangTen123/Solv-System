@@ -42,6 +42,33 @@ async function frankfurter(from, to, date = null) {
   return direct;
 }
 
+// A pair's business-day history from `start` to `end`, in one request:
+// [{ date, rate }] oldest first, or null when the ECB does not publish the
+// currency (TWD, VND). Thin rates are asked the other way round and inverted,
+// as for a single day. Weekends and holidays are simply absent.
+const SERIES_TIMEOUT = 15000;
+async function _seriesOne(from, to, start, end) {
+  const url = `https://api.frankfurter.dev/v1/${start}..${end}?base=${encodeURIComponent(from)}&symbols=${encodeURIComponent(to)}`;
+  try {
+    const { data } = await axios.get(url, { timeout: SERIES_TIMEOUT });
+    const out = Object.entries((data && data.rates) || {})
+      .map(([date, r]) => ({ date, rate: Number(r && r[to]) }))
+      .filter(r => /^\d{4}-\d{2}-\d{2}$/.test(r.date) && r.rate > 0);
+    return out.length ? out.sort((a, b) => a.date.localeCompare(b.date)) : null;
+  } catch (err) {
+    logger.info('frankfurter had no history', { from, to, start, end, error: err.message });
+    return null;
+  }
+}
+
+async function frankfurterSeries(from, to, start, end) {
+  const direct = await _seriesOne(from, to, start, end);
+  if (direct && direct.every(r => r.rate >= THIN_RATE)) return direct;
+  const back = await _seriesOne(to, from, start, end);
+  if (back) return back.map(r => ({ date: r.date, rate: 1 / r.rate }));
+  return direct;
+}
+
 // ── ExchangeRate-API's open endpoint ──────────────────────────────────────
 // 160+ currencies, one daily rate, no history.
 async function _erapiOne(from, to) {
@@ -133,4 +160,5 @@ function crossRate(table, from, to) {
   return t / f;
 }
 
-module.exports = { frankfurter, erapi, frankfurterAll, erapiAll, oxrAll, crossRate, TIMEOUT, THIN_RATE };
+module.exports = {
+  frankfurterSeries, frankfurter, erapi, frankfurterAll, erapiAll, oxrAll, crossRate, TIMEOUT, THIN_RATE };

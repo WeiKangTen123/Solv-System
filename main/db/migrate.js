@@ -196,6 +196,26 @@ function run() {
   _step(6, 'end every session issued before revocable sign-in', () => {
     db.prepare('UPDATE users SET token_version = token_version + 1').run();
   });
+
+  // 7. The exchange-rate board starts with ten currencies (intake/currencies.js
+  // DEFAULT_BOARD) instead of only those receipts had used. A company made
+  // before that gets them once, up to the ten an admin may choose, beside any
+  // it already chose; one an admin takes off later stays off, because this
+  // step does not run again.
+  _step(7, 'put the default currencies on every exchange-rate board', () => {
+    const { DEFAULT_BOARD, BOARD_MAX } = require('../intake/currencies');
+    const at = new Date().toISOString();
+    for (const c of db.prepare('SELECT id, base_currency FROM companies').all()) {
+      const have = db.prepare('SELECT currency FROM fx_watch WHERE company_id = ? AND currency != ?').all(c.id, c.base_currency).map(r => r.currency);
+      let room = BOARD_MAX - have.length;
+      for (const code of DEFAULT_BOARD) {
+        if (room <= 0) break;
+        if (code === c.base_currency || have.includes(code)) continue;
+        db.prepare("INSERT OR IGNORE INTO fx_watch (company_id, currency, added_by, added_at) VALUES (?, ?, 'default', ?)").run(c.id, code, at);
+        room--;
+      }
+    }
+  });
 }
 
 // Rebuilds one table to the shape schema.sql now gives it, carrying every row

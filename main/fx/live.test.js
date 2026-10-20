@@ -3,7 +3,7 @@
 // exactly what is under test.
 jest.mock('./providers', () => {
   const actual = jest.requireActual('./providers');
-  return { ...actual, frankfurter: jest.fn(), erapi: jest.fn(), frankfurterAll: jest.fn(), erapiAll: jest.fn(), oxrAll: jest.fn() };
+  return { ...actual, frankfurter: jest.fn(), erapi: jest.fn(), frankfurterAll: jest.fn(), erapiAll: jest.fn(), oxrAll: jest.fn(), frankfurterSeries: jest.fn() };
 });
 
 describe('fx/live', () => {
@@ -18,8 +18,12 @@ describe('fx/live', () => {
     require('../db/migrate').run();
     db = require('../db'); providers = require('./providers'); rates = require('./rates'); live = require('./live');
     store = require('../store/expenses'); users = require('../store/users'); apply = require('./apply'); zone = require('../utils/zone-date');
-    for (const f of ['frankfurter', 'erapi', 'frankfurterAll', 'erapiAll', 'oxrAll']) providers[f].mockReset();
+    for (const f of ['frankfurter', 'erapi', 'frankfurterAll', 'erapiAll', 'oxrAll', 'frankfurterSeries']) providers[f].mockReset();
+    providers.frankfurterSeries.mockResolvedValue(null);
     u = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
+    // A new company starts with the ten default currencies on its board; these
+    // tests start from an empty one, and the defaults have tests of their own.
+    db.prepare('DELETE FROM fx_watch').run();
     today = zone.localDate('Asia/Singapore');
     yesterday = zone.addDays(today, -1);
     providers.frankfurterAll.mockResolvedValue(ecb({ INR: 75, MYR: 3.2 }));
@@ -205,5 +209,65 @@ describe('fx/live', () => {
     await live.repriceRate(u.companyId, 'INR', today);
     expect(store.getExpense(a.id).baseTotal).toBe(12.5);
     expect(store.getExpense(b.id).baseTotal).toBe(13.1);
+  });
+  // A new company's board used to be empty until the first foreign receipt.
+  test('a new company starts with the ten default currencies, never its own', () => {
+    const { DEFAULT_BOARD } = require('../intake/currencies');
+    const sgd = users.createCompany();
+    expect(live.chosen(sgd.id)).toEqual([...DEFAULT_BOARD].sort());
+    const myr = users.createCompany({ baseCurrency: 'MYR' });
+    expect(live.chosen(myr.id)).toEqual(DEFAULT_BOARD.filter(c => c !== 'MYR').sort());
+  });
+
+  test('an admin chooses at most ten; receipts keep their own currencies on the board regardless', () => {
+    expense('VND', 500000);
+    const ten = ['MYR', 'IDR', 'THB', 'CNY', 'JPY', 'HKD', 'INR', 'PHP', 'EUR', 'USD'];
+    expect(live.choose(u.companyId, ten.map(c => c.toLowerCase()), 'a@solv.sg')).toEqual(ten);
+    expect(() => live.watch(u.companyId, 'GBP')).toThrow(/already shows 10/);
+    live.watch(u.companyId, 'USD');                                       // already chosen: fine
+    expect(() => live.choose(u.companyId, [...ten, 'GBP'])).toThrow(/at most 10/);
+    expect(() => live.choose(u.companyId, ['SGD'])).toThrow(/own currency/);
+    expect(() => live.choose(u.companyId, ['rupees'])).toThrow(/Not a currency code/);
+    expect(() => live.choose(u.companyId, 'USD')).toThrow(/list/);
+    expect(live.choose(u.companyId, ['USD', 'GBP'])).toEqual(['GBP']);    // only GBP is new
+    expect(live.chosen(u.companyId)).toEqual(['GBP', 'USD']);
+    const board = live.board(u.companyId);
+    expect(board.max).toBe(10);
+    expect(board.rows.map(r => [r.currency, r.pinned, r.region])).toEqual([['VND', false, 'asia'], ['GBP', true, 'west'], ['USD', true, 'west']]);
+    expect(board.rows[0].name).toBe('Vietnamese dong');
+  });
+
+  test('a currency outside the list is named and grouped as other', () => {
+    live.watch(u.companyId, 'CZK');
+    const [row] = live.board(u.companyId).rows;
+    expect(row).toMatchObject({ currency: 'CZK', region: 'other', name: expect.stringMatching(/koruna/i) });
+  });
+
+  // The popup's chart needs the currency's recent history from the first day.
+  test('a currency added to the board gets three months of history in one request, filed only where nothing is', async () => {
+    const before = zone.addDays(today, -3);
+    rates.setManualRate({ from: 'JPY', to: 'SGD', date: before, rate: 0.009, by: 'a@solv.sg' });
+    providers.frankfurterSeries.mockResolvedValue([
+      { date: zone.addDays(today, -4), rate: 0.0081 }, { date: before, rate: 0.0082 }, { date: zone.addDays(today, -2), rate: 0.0083 },
+    ]);
+    providers.frankfurter.mockResolvedValue({ rate: 0.0084, providerDate: yesterday, source: 'frankfurter' });
+    live.watch(u.companyId, 'JPY');
+    await live.backfill(u.companyId, 'JPY');
+    expect(providers.frankfurterSeries).toHaveBeenCalledWith('JPY', 'SGD', zone.addDays(today, -live.HISTORY_DAYS), yesterday);
+    const hist = rates.history('JPY', 'SGD');
+    expect(hist.find(e => e.date === zone.addDays(today, -4))).toMatchObject({ rate: 0.0081, source: 'frankfurter' });
+    expect(hist.find(e => e.date === before)).toMatchObject({ rate: 0.009, source: 'manual', overrides: null });   // the admin's day is left alone
+    expect(hist.find(e => e.date === yesterday)).toMatchObject({ rate: 0.0084, closedAt: expect.any(String) });    // and yesterday is its last close
+    await live.backfill(u.companyId, 'JPY');
+    expect(providers.frankfurterSeries).toHaveBeenCalledTimes(1);         // tried once a day at most
+  });
+
+  test('the tick fills in each watched currency\'s history once', async () => {
+    live.choose(u.companyId, ['EUR', 'USD']);
+    live._historyTried.clear();
+    const noon = new Date(`${today}T04:00:00Z`);
+    await live.tick(noon);
+    await live.tick(noon);
+    expect(providers.frankfurterSeries.mock.calls.map(c => c[0]).sort()).toEqual(['EUR', 'USD']);
   });
 });

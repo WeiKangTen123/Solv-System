@@ -73,12 +73,22 @@ router.get('/log/:currency', requireAuth, (req, res) => {
 // rate, and with yesterday's as its last close so it shows a move today.
 router.post('/watch', requireAuth, requireRole('admin'), asyncHandler(async (req, res) => {
   const companyId = companyOf(req);
-  let ccy;
-  try { ccy = live.watch(companyId, (req.body || {}).currency, req.user.email); }
-  catch (err) { return res.status(400).json({ error: err.message }); }
+  const ccy = live.watch(companyId, (req.body || {}).currency, req.user.email);
   await live.refresh(companyId);
   await live.backfill(companyId, ccy).catch(() => null);
   res.status(201).json(live.board(companyId));
+}));
+
+// The chosen currencies, all at once (at most ten). The ones newly added are
+// fetched and given their history before the board comes back.
+router.put('/watch', requireAuth, requireRole('admin'), asyncHandler(async (req, res) => {
+  const companyId = companyOf(req);
+  const added = live.choose(companyId, (req.body || {}).currencies, req.user.email);
+  if (added.length) {
+    await live.refresh(companyId);
+    for (const c of added) await live.backfill(companyId, c).catch(() => null);
+  }
+  res.json(live.board(companyId));
 }));
 
 router.delete('/watch/:currency', requireAuth, requireRole('admin'), (req, res) => {

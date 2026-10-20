@@ -3,7 +3,8 @@ const providers = require('./providers');
 const rates     = require('./rates');
 const users     = require('../store/users');
 const logger    = require('../utils/logger');
-const { CURRENCIES } = require('../intake/currencies');
+const { BOARD_MAX, regionOf, currencyName } = require('../intake/currencies');
+const { fail } = require('../utils/http-error');
 
 // The live board, and the daily close that turns it into a log.
 //
@@ -36,8 +37,13 @@ const TICK_MS   = 60 * 1000;
 const MANUAL_GAP_MS = 60 * 1000;
 
 const { SOURCE_NAME: SOURCE_LABEL } = require('./sources');
-const NAMES = new Map(CURRENCIES.map(c => [c.code, c.name]));
 const CODE = /^[A-Z]{3}$/;
+// The history a currency gets when it joins the board, for its chart: the
+// last three months, in one request. Asked again no more than once a day when
+// the provider had nothing (a currency the ECB does not publish).
+const HISTORY_DAYS = 92;
+const HISTORY_RETRY_MS = 24 * 60 * 60 * 1000;
+const _historyTried = new Map();   // `${currency}|${base}` -> ms
 
 // ── Company time ────────────────────────────────────────────────────────────
 // The day closes where the company is, not in UTC: Singapore's 23:55 is
@@ -46,8 +52,9 @@ const CODE = /^[A-Z]{3}$/;
 const { localDate, localMinutes, addDays } = require('../utils/zone-date');
 
 // ── What is watched ─────────────────────────────────────────────────────────
-// Every currency a receipt in the company has used, and any an admin asked to
-// watch ahead of one. Busiest first.
+// Every currency a receipt in the company has used, and the ones an admin
+// chose for the board (at most BOARD_MAX; a new company starts with the
+// DEFAULT_BOARD ten, intake/currencies.js). Busiest first.
 function watched(companyId) {
   const company = users.getCompany(companyId);
   if (!company) return [];
@@ -66,14 +73,42 @@ function watched(companyId) {
   return [...out.values()].sort((a, b) => b.receipts - a.receipts || a.currency.localeCompare(b.currency));
 }
 
+// The currencies an admin chose, the company's own left out.
+function chosen(companyId) {
+  const base = users.getCompany(companyId).baseCurrency;
+  return db.prepare('SELECT currency FROM fx_watch WHERE company_id = ? AND currency != ? ORDER BY currency').all(companyId, base).map(r => r.currency);
+}
+
 function watch(companyId, currency, by = null) {
   const company = users.getCompany(companyId);
   const ccy = String(currency || '').trim().toUpperCase();
-  if (!CODE.test(ccy)) throw new Error('Currency must be a 3-letter code like INR or MYR');
-  if (ccy === company.baseCurrency) throw new Error(`${ccy} is the company's own currency`);
+  if (!CODE.test(ccy)) fail(400, 'Currency must be a 3-letter code like INR or MYR');
+  if (ccy === company.baseCurrency) fail(400, `${ccy} is the company's own currency`);
+  const now = chosen(companyId);
+  if (!now.includes(ccy) && now.length >= BOARD_MAX) fail(409, `The board already shows ${BOARD_MAX} chosen currencies. Take one off first.`);
   db.prepare('INSERT OR IGNORE INTO fx_watch (company_id, currency, added_by, added_at) VALUES (?, ?, ?, ?)')
     .run(companyId, ccy, by, new Date().toISOString());
   return ccy;
+}
+
+// The whole chosen list at once, from the "Choose currencies" window. Returns
+// the codes newly added, which the caller fetches history for. A currency
+// receipts use stays on the board whether chosen or not.
+function choose(companyId, list, by = null) {
+  const company = users.getCompany(companyId);
+  if (!Array.isArray(list)) fail(400, 'Send the list of currencies to show');
+  const codes = [...new Set(list.map(c => String(c || '').trim().toUpperCase()))];
+  const bad = codes.filter(c => !CODE.test(c));
+  if (bad.length) fail(400, `Not a currency code: ${bad.slice(0, 3).join(', ')}`);
+  if (codes.includes(company.baseCurrency)) fail(400, `${company.baseCurrency} is the company's own currency`);
+  if (codes.length > BOARD_MAX) fail(400, `Choose at most ${BOARD_MAX} currencies`);
+  const before = chosen(companyId);
+  const at = new Date().toISOString();
+  db.transaction(() => {
+    for (const c of before) if (!codes.includes(c)) db.prepare('DELETE FROM fx_watch WHERE company_id = ? AND currency = ?').run(companyId, c);
+    for (const c of codes) db.prepare('INSERT OR IGNORE INTO fx_watch (company_id, currency, added_by, added_at) VALUES (?, ?, ?, ?)').run(companyId, c, by, at);
+  })();
+  return codes.filter(c => !before.includes(c));
 }
 
 // Only what an admin pinned can be unpinned. A currency receipts use stays on
@@ -197,17 +232,29 @@ async function close(companyId, date, { now = new Date() } = {}) {
   return out;
 }
 
-// A currency that joins the board mid-day has nothing to compare against until
-// tonight's close. Yesterday's rate from the providers' history stands in as
-// its last close, so the board shows a move from the first day. One request,
-// and nothing when a close or any earlier rate is already there.
+// A currency that joins the board has no history and nothing to compare
+// against until tonight's close. Its last three months come from the ECB in
+// one request (filed only on days that have nothing, rates.storeHistory), so
+// its chart is there from the first day; and yesterday's rate stands in as
+// its last close, so the board shows a move. Nothing is asked when the pair
+// already has its history and a close.
 async function backfill(companyId, currency, { now = new Date() } = {}) {
   const company = users.getCompany(companyId);
   if (!company) return null;
   const tz = company.timezone, base = company.baseCurrency;
   const day = localDate(tz, now);
-  if (rates.lastClose(currency, base, day)) return null;
   const yesterday = addDays(day, -1);
+  const since = addDays(day, -HISTORY_DAYS);
+  const key = `${currency}|${base}`;
+  if (rates.daysStored(currency, base, since) < HISTORY_DAYS / 3 && !(Date.now() - (_historyTried.get(key) || 0) < HISTORY_RETRY_MS)) {
+    _historyTried.set(key, Date.now());
+    const series = await providers.frankfurterSeries(currency, base, since, yesterday);
+    if (series) {
+      const added = rates.storeHistory(currency, base, series, 'frankfurter');
+      if (added) logger.info('Exchange-rate history filled in', { companyId, currency, days: added });
+    }
+  }
+  if (rates.hasClose(currency, base, day)) return null;
   const found = await rates.getRate({ from: currency, to: base, date: yesterday, today: day });
   if (found && !found.blocked && found.source !== 'manual' && !found.closedAt) {
     return rates.markClosed({ from: currency, to: base, date: yesterday, source: found.source });
@@ -284,6 +331,13 @@ async function tick(now = new Date()) {
         }
         if (localMinutes(tz, now) >= CLOSE_AT_MIN && !closedOn(id, day)) { done.push(await close(id, day, { now })); continue; }
         if (Date.now() - (_lastRefresh.get(id) || 0) >= EVERY_MIN * 60 * 1000) await refresh(id);
+        // Each currency's history, once per process: the board's first
+        // currencies (and any a receipt brought) get their chart without
+        // anybody adding them by hand. backfill keeps it to one try a day.
+        const base = users.getCompany(id).baseCurrency;
+        for (const w of watched(id)) {
+          if (!_historyTried.has(`${w.currency}|${base}`)) await backfill(id, w.currency, { now }).catch(err => logger.info('History not filled in', { currency: w.currency, error: err.message }));
+        }
       } catch (err) {
         logger.warn('Live exchange-rate tick failed', { companyId: id, error: err.message });
       }
@@ -321,7 +375,7 @@ function board(companyId, { now = new Date() } = {}) {
     if (live && (!updatedAt || live.fetchedAt > updatedAt)) updatedAt = live.fetchedAt;
     const m = manualBy.get(w.currency);
     return {
-      currency: w.currency, name: NAMES.get(w.currency) || null, receipts: w.receipts, pinned: !!w.pinned,
+      currency: w.currency, name: currencyName(w.currency), region: regionOf(w.currency), receipts: w.receipts, pinned: !!w.pinned,
       live: live ? { rate: live.rate, source: live.source, sourceLabel: SOURCE_LABEL[live.source] || live.source,
                      providerDate: live.providerDate, providerTime: live.providerTime, fetchedAt: live.fetchedAt, divergence: live.divergence } : null,
       // Small rates read badly — 0.0132952 — so the other direction rides
@@ -334,7 +388,7 @@ function board(companyId, { now = new Date() } = {}) {
   });
   return {
     base, timezone: tz, today: day, closesAt: CLOSE_AT, closedToday: closedOn(companyId, day),
-    source: sourceInfo(companyId), updatedAt, rows,
+    source: sourceInfo(companyId), updatedAt, rows, max: BOARD_MAX,
   };
 }
 
@@ -361,10 +415,10 @@ function log(companyId, currency, { limit = 60, now = new Date() } = {}) {
     if (i === -1) entries.unshift(liveEntry);
     else if (entries[i].kind !== 'manual') entries[i] = liveEntry;   // an admin's rate for today still shows as theirs
   }
-  return { currency, name: NAMES.get(currency) || null, base, today: day, closesAt: CLOSE_AT, entries };
+  return { currency, name: currencyName(currency), region: regionOf(currency), base, today: day, closesAt: CLOSE_AT, entries };
 }
 
 module.exports = {
-  watched, watch, unwatch, refresh, close, backfill, repriceDay, repriceRate, tick, start, stop, board, log, sourceInfo, setOxrKey, closedOn,
-  localDate, localMinutes, addDays, EVERY_MIN, CLOSE_AT, SOURCE_LABEL, _lastRefresh,
+  watched, chosen, watch, choose, unwatch, refresh, close, backfill, repriceDay, repriceRate, tick, start, stop, board, log, sourceInfo, setOxrKey, closedOn,
+  localDate, localMinutes, addDays, EVERY_MIN, CLOSE_AT, SOURCE_LABEL, HISTORY_DAYS, _lastRefresh, _historyTried,
 };

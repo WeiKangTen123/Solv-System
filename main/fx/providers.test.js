@@ -105,4 +105,18 @@ describe('fx/providers — whole tables for the live board', () => {
     expect(crossRate(t, 'VND', 'SGD')).toBeNull();
     expect(crossRate(null, 'INR', 'SGD')).toBeNull();
   });
+  // One request for a pair's three months, oldest first; a thin rate asked the
+  // other way round, as for a single day.
+  test('frankfurterSeries reads a pair\'s history in one request, inverting a thin rate', async () => {
+    const { frankfurterSeries } = require('./providers');
+    axios.get.mockResolvedValueOnce({ data: { base: 'EUR', rates: { '2026-10-02': { SGD: 1.49 }, '2026-10-01': { SGD: 1.48 } } } });
+    expect(await frankfurterSeries('EUR', 'SGD', '2026-10-01', '2026-10-02')).toEqual([{ date: '2026-10-01', rate: 1.48 }, { date: '2026-10-02', rate: 1.49 }]);
+    expect(axios.get.mock.calls[0][0]).toBe('https://api.frankfurter.dev/v1/2026-10-01..2026-10-02?base=EUR&symbols=SGD');
+    axios.get.mockResolvedValueOnce({ data: { rates: { '2026-10-01': { SGD: 0.0081 } } } })
+             .mockResolvedValueOnce({ data: { rates: { '2026-10-01': { JPY: 123.45 } } } });
+    const [jpy] = await frankfurterSeries('JPY', 'SGD', '2026-10-01', '2026-10-01');
+    expect(jpy.rate).toBeCloseTo(1 / 123.45, 12);
+    axios.get.mockRejectedValue(Object.assign(new Error('not found'), { response: { status: 404 } }));
+    expect(await frankfurterSeries('TWD', 'SGD', '2026-10-01', '2026-10-02')).toBeNull();
+  });
 });

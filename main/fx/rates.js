@@ -236,6 +236,36 @@ function history(from, to, { limit = 60 } = {}) {
   return out;
 }
 
+// A provider's published history for a pair, filed on the days that have
+// nothing filed yet: exactly what a lookup for each of those days would have
+// stored, so no receipt prices differently because of it. Never beside an
+// existing row for the day — a close, an admin's rate or another provider's
+// lookup keeps the day to itself. Returns how many days were added.
+function storeHistory(from, to, rows, source = 'frankfurter') {
+  const ins = db.prepare(`INSERT INTO fx_rates (base, quote, rate_date, rate, source, fetched_at, provider_date)
+                          SELECT ?, ?, ?, ?, ?, ?, ?
+                          WHERE NOT EXISTS (SELECT 1 FROM fx_rates WHERE base = ? AND quote = ? AND rate_date = ?)`);
+  const at = new Date().toISOString();
+  let added = 0;
+  db.transaction(() => {
+    for (const r of rows) {
+      if (!(r.rate > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(String(r.date))) continue;
+      added += ins.run(from, to, r.date, r.rate, source, at, r.date, from, to, r.date).changes;
+    }
+  })();
+  return added;
+}
+
+// How many days since `since` have a rate filed for the pair.
+function daysStored(from, to, since) {
+  return db.prepare('SELECT COUNT(DISTINCT rate_date) AS n FROM fx_rates WHERE base = ? AND quote = ? AND rate_date >= ?').get(from, to, since).n;
+}
+
+// Whether any close was taken for the pair before `before`.
+function hasClose(from, to, before) {
+  return !!db.prepare('SELECT 1 FROM fx_rates WHERE base = ? AND quote = ? AND closed_at IS NOT NULL AND rate_date < ? LIMIT 1').get(from, to, before);
+}
+
 function setManualRate({ from, to, date, rate, by }) {
   if (!(Number(rate) > 0)) throw new Error('A rate must be a number above zero');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) throw new Error('Date must be YYYY-MM-DD');
@@ -256,6 +286,6 @@ function listRates({ to, from, since } = {}) {
 }
 
 module.exports = {
-  getRate, setManualRate, deleteManualRate, listRates, liveRate, recordClose, markClosed, lastClose, history,
+  getRate, setManualRate, deleteManualRate, listRates, liveRate, recordClose, markClosed, lastClose, history, storeHistory, daysStored, hasClose,
   TODAY_TTL_MS, LIVE_FRESH_MS, PRIORITY, DIVERGENCE_FLAG, MAX_MOVE, MOVE_CEILING, MOVE_WINDOW_DAYS, allowedMove,
 };

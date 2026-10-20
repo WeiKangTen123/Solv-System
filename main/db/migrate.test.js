@@ -129,4 +129,22 @@ describe('db/migrate', () => {
     const group = db.prepare('EXPLAIN QUERY PLAN SELECT id FROM receipts WHERE group_id = ?').all('x').map(r => r.detail).join(' ');
     expect(group).toMatch(/USING (COVERING )?INDEX idx_receipts_group/);
   });
+  // Step 7 gives a company made before the default board its ten currencies,
+  // beside any it chose, never past ten and never its own; it runs once, so a
+  // currency an admin takes off later stays off.
+  test('an existing company gets the default board once, up to ten, never its own currency', () => {
+    const { DEFAULT_BOARD } = require('../intake/currencies');
+    db.prepare("INSERT INTO companies (id, name, base_currency, created_at) VALUES ('c1', 'Solv', 'SGD', '2026-01-01'), ('c2', 'Kedai', 'MYR', '2026-01-01')").run();
+    db.prepare("INSERT INTO fx_watch (company_id, currency, added_by, added_at) VALUES ('c2', 'GBP', 'a@x', '2026-01-01'), ('c2', 'AUD', 'a@x', '2026-01-01')").run();
+    db.pragma('user_version = 6');
+    require('./migrate').run();
+    const chosen = id => db.prepare('SELECT currency FROM fx_watch WHERE company_id = ? ORDER BY currency').all(id).map(r => r.currency);
+    expect(chosen('c1')).toEqual([...DEFAULT_BOARD].sort());
+    expect(chosen('c2')).toHaveLength(10);
+    expect(chosen('c2')).toEqual(expect.arrayContaining(['GBP', 'AUD']));
+    expect(chosen('c2')).not.toContain('MYR');
+    db.prepare("DELETE FROM fx_watch WHERE company_id = 'c1' AND currency = 'PHP'").run();
+    require('./migrate').run();
+    expect(chosen('c1')).not.toContain('PHP');
+  });
 });

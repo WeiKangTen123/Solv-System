@@ -5,7 +5,7 @@ const { serverFor } = require('../scripts/test-server');
 
 jest.mock('../fx/providers', () => {
   const actual = jest.requireActual('../fx/providers');
-  return { ...actual, frankfurter: jest.fn(), erapi: jest.fn(), frankfurterAll: jest.fn(), erapiAll: jest.fn(), oxrAll: jest.fn() };
+  return { ...actual, frankfurter: jest.fn(), erapi: jest.fn(), frankfurterAll: jest.fn(), erapiAll: jest.fn(), oxrAll: jest.fn(), frankfurterSeries: jest.fn() };
 });
 
 describe('routes/fx', () => {
@@ -14,11 +14,14 @@ describe('routes/fx', () => {
     jest.resetModules(); require('../db/migrate').run();
     users = require('../store/users'); providers = require('../fx/providers');
     providers.frankfurter.mockReset(); providers.erapi.mockReset();
+    providers.frankfurterSeries.mockReset(); providers.frankfurterSeries.mockResolvedValue(null);
     admin = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
     emp = await users.createUser({ email: 'e@solv.sg', password: 'password123', companyId: admin.companyId });
+    // These start from an empty board; the ten a new company is given are tested on their own.
+    require('../db').prepare('DELETE FROM fx_watch').run();
     const secret = require('../middleware/auth-middleware').jwtSecret();
     tokens = Object.fromEntries([admin, emp].map(u => [u.email, jwt.sign({ id: u.id, email: u.email, role: u.role }, secret)]));
-    app = express(); app.use(express.json()); app.use('/api/fx', require('./fx'));
+    app = express(); app.use(express.json()); app.use('/api/fx', require('./fx')); app.use(require('../middleware/error-handler'));
   });
   const as = u => ({ Authorization: `Bearer ${tokens[u.email]}` });
 
@@ -73,5 +76,19 @@ describe('routes/fx', () => {
     await request(serverFor(app)).delete('/api/fx/watch/INR').set(as(emp)).expect(403);
     await request(serverFor(app)).delete('/api/fx/watch/INR').set(as(admin)).expect(200);
     await request(serverFor(app)).delete('/api/fx/watch/INR').set(as(admin)).expect(404);
+  });
+  test('the chosen currencies are saved all at once, by an admin, ten at most', async () => {
+    providers.frankfurterAll.mockResolvedValue({ source: 'frankfurter', base: 'SGD', providerDate: '2026-10-20', providerTime: null, rates: { EUR: 0.67, USD: 0.77 } });
+    providers.erapiAll.mockResolvedValue(null);
+    await request(serverFor(app)).put('/api/fx/watch').set(as(emp)).send({ currencies: ['EUR'] }).expect(403);
+    await request(serverFor(app)).put('/api/fx/watch').set(as(admin)).send({ currencies: ['A', 'B'] }).expect(400);
+    await request(serverFor(app)).put('/api/fx/watch').set(as(admin)).send({ currencies: ['MYR', 'IDR', 'THB', 'CNY', 'JPY', 'HKD', 'INR', 'PHP', 'EUR', 'USD', 'GBP'] }).expect(400);
+    const out = await request(serverFor(app)).put('/api/fx/watch').set(as(admin)).send({ currencies: ['eur', 'USD'] }).expect(200);
+    expect(out.body.rows.map(r => [r.currency, r.pinned, r.region])).toEqual([['EUR', true, 'west'], ['USD', true, 'west']]);
+    expect(providers.frankfurterSeries.mock.calls.map(c => c[0]).sort()).toEqual(['EUR', 'USD']);
+    // An eleventh, one at a time, is refused with a reason.
+    await request(serverFor(app)).put('/api/fx/watch').set(as(admin)).send({ currencies: ['MYR', 'IDR', 'THB', 'CNY', 'JPY', 'HKD', 'INR', 'PHP', 'EUR', 'USD'] }).expect(200);
+    const over = await request(serverFor(app)).post('/api/fx/watch').set(as(admin)).send({ currency: 'GBP' }).expect(409);
+    expect(over.body.error).toMatch(/already shows 10/);
   });
 });

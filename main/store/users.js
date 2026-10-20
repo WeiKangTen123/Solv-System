@@ -61,6 +61,13 @@ function _createCompany(patch = {}) {
          patch.fxPolicy || DEFAULT_COMPANY.fxPolicy, patch.timezone || DEFAULT_COMPANY.timezone,
          JSON.stringify(patch.reportColumns || DEFAULT_REPORT_COLUMNS), new Date().toISOString());
   db.prepare('INSERT OR IGNORE INTO company_credentials (company_id) VALUES (?)').run(id);
+  // The exchange-rate board starts with the ten currencies a Singapore
+  // company's staff spend most in (intake/currencies.js), not empty until the
+  // first foreign receipt. An admin changes the list in Settings.
+  const { DEFAULT_BOARD } = require('../intake/currencies');
+  const seed = db.prepare("INSERT OR IGNORE INTO fx_watch (company_id, currency, added_by, added_at) VALUES (?, ?, 'default', ?)");
+  const base = patch.baseCurrency || DEFAULT_COMPANY.baseCurrency;
+  for (const c of DEFAULT_BOARD) if (c !== base) seed.run(id, c, new Date().toISOString());
   return getCompany(id);
 }
 
