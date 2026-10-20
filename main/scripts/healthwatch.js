@@ -7,6 +7,10 @@
 // It runs on the same VM, so it cannot report the VM itself being down: an
 // external uptime checker on DEPLOY_HEALTH covers that (docs/RUNBOOK.md).
 //
+// It also says, once a day, when the newest daily backup is more than 36 hours
+// old. The daily backup's cron line was removed by another app's deploy and
+// none was taken for three weeks; only a deploy's preflight noticed.
+//
 //   node main/scripts/healthwatch.js
 const fs = require('fs');
 const path = require('path');
@@ -16,6 +20,17 @@ const PORT = process.env.PORT || 4000;
 const URL_ = `http://127.0.0.1:${PORT}/dashboard/health`;
 const STATE = path.join(process.env.LOGS_DIR || path.join(__dirname, '../../logs'), 'healthwatch.json');
 const ALERT_AFTER = 2;
+const BACKUP_LATE_MS = 36 * 60 * 60 * 1000;
+
+// The newest daily copy ({ file, ageMs }), or null when there is none at all.
+function newestDaily(now = Date.now()) {
+  const dir = require('../utils/paths').backupsDir();   // after dotenv, so DATA_DIR applies
+  let files = [];
+  try { files = fs.readdirSync(dir).filter(f => /^app-.*\.db$/.test(f)).sort(); } catch { return null; }
+  if (!files.length) return null;
+  const file = files[files.length - 1];
+  return { file, ageMs: now - fs.statSync(path.join(dir, file)).mtimeMs };
+}
 
 function readState() { try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch { return { misses: 0, alerted: false }; } }
 function writeState(s) { fs.mkdirSync(path.dirname(STATE), { recursive: true }); fs.writeFileSync(STATE, JSON.stringify(s)); }
@@ -30,14 +45,26 @@ async function check() {
   }
 }
 
+// Once a UTC day at most, so a late backup is one message, not 288.
+async function checkBackup(state, notifyError, now = new Date()) {
+  const day = now.toISOString().slice(0, 10);
+  const newest = newestDaily(now.getTime());
+  if (newest && newest.ageMs <= BACKUP_LATE_MS) return state.backupAlertedOn ? { ...state, backupAlertedOn: null } : state;
+  if (state.backupAlertedOn === day) return state;
+  const what = newest ? `the newest is ${newest.file}, ${Math.round(newest.ageMs / 3600000)} hours old` : 'there is none';
+  console.log(`${now.toISOString()} daily backup late: ${what}`);
+  await notifyError({ context: 'The daily backup is late', error: `${what}. Check \`crontab -l\` on the box for main/scripts/backup-daily.js.` });
+  return { ...state, backupAlertedOn: day };
+}
+
 async function main() {
   const { notifyError } = require('../utils/notify');
-  const state = readState();
+  const state = await checkBackup(readState(), notifyError);
   const problem = await check();
   const at = new Date().toISOString();
   if (!problem) {
     if (state.alerted) await notifyError({ context: 'Health check answers again', error: `healthy at ${at} after ${state.misses} missed check(s)` });
-    writeState({ misses: 0, alerted: false, lastOk: at });
+    writeState({ ...state, misses: 0, alerted: false, lastOk: at });
     return;
   }
   const misses = (state.misses || 0) + 1;
@@ -52,4 +79,4 @@ async function main() {
 
 if (require.main === module) main().catch(err => { console.error('healthwatch failed:', err.message); process.exitCode = 1; });
 
-module.exports = { check, main, ALERT_AFTER };
+module.exports = { check, main, checkBackup, newestDaily, ALERT_AFTER, BACKUP_LATE_MS };

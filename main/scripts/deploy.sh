@@ -332,14 +332,26 @@ fi
 # ── 7. Daily backup cron (idempotent), log rotation, a name for this deploy ──
 # node by absolute path: cron's PATH need not include node. Resolved in its own
 # remote call and pasted in as a literal (see the note on dollar signs above).
-# Only this app's line is replaced: the filter used to drop any crontab line
+# Only this app's lines are replaced: the filter used to drop any crontab line
 # mentioning main/db/backup.js, including the Xero app's on the same box.
+#
+# The daily backup runs main/scripts/backup-daily.js, not main/db/backup.js:
+# the Xero app's own deploy still drops every line that mentions
+# main/db/backup.js, and took Solv's daily backup with it from 29 Sep to
+# 20 Oct without a word. The lines are read back afterwards, so a deploy says
+# whether they are really there.
 NODE_BIN=$(remote 'command -v node' | tr -d '[:space:]')
 [ -n "$NODE_BIN" ] || NODE_BIN=node
 # The health watch (main/scripts/healthwatch.js) runs every five minutes and
-# posts to Slack after two misses in a row.
-remote "(crontab -l 2>/dev/null | grep -v 'cd $APP && .*main/db/backup.js' | grep -v 'cd $APP && .*main/scripts/healthwatch.js' ; printf '0 19 * * * cd %s && %s main/db/backup.js >> logs/backup.log 2>&1\n*/5 * * * * cd %s && %s main/scripts/healthwatch.js >> logs/healthwatch.log 2>&1\n' $APP $NODE_BIN $APP $NODE_BIN) | crontab -" >/dev/null 2>&1 \
-  && info "daily backup and five-minute health watch installed in cron ($NODE_BIN)" || ylw "  ! could not install the cron lines"
+# posts to Slack after two misses in a row, or when the daily backup is late.
+remote "(crontab -l 2>/dev/null | grep -v 'cd $APP && .*main/db/backup.js' | grep -v 'cd $APP && .*main/scripts/backup-daily.js' | grep -v 'cd $APP && .*main/scripts/healthwatch.js' ; printf '0 19 * * * cd %s && %s main/scripts/backup-daily.js >> logs/backup.log 2>&1\n*/5 * * * * cd %s && %s main/scripts/healthwatch.js >> logs/healthwatch.log 2>&1\n' $APP $NODE_BIN $APP $NODE_BIN) | crontab -" >/dev/null 2>&1 \
+  || ylw "  ! could not install the cron lines"
+CRON=$(remote 'crontab -l 2>/dev/null' || true)
+if echo "$CRON" | grep -qF "cd $APP && $NODE_BIN main/scripts/backup-daily.js" && echo "$CRON" | grep -qF "cd $APP && $NODE_BIN main/scripts/healthwatch.js"; then
+  info "cron: daily backup (03:00 Singapore) and five-minute health watch in place ($NODE_BIN)"
+else
+  ylw "  ! the cron lines are not in place — check \`crontab -l\` on the box"
+fi
 # pm2's own log files grow without limit otherwise; the module rotates them.
 remote 'pm2 jlist | grep -q pm2-logrotate || (pm2 install pm2-logrotate > /dev/null 2>&1 && pm2 set pm2-logrotate:max_size 10M > /dev/null && pm2 set pm2-logrotate:retain 14 > /dev/null)' >/dev/null 2>&1 \
   || ylw "  ! could not set up pm2 log rotation"

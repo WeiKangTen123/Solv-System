@@ -162,12 +162,19 @@ pruned separately so one kind never pushes another out:
 
 | File | Made by | Kept |
 |---|---|---|
-| `app-<time>.db` | the daily cron, 19:00 UTC (03:00 Singapore) | every one from the last 14 days, and never fewer than 3 |
+| `app-<time>.db` | the daily cron, 19:00 UTC (03:00 Singapore): `main/scripts/backup-daily.js` | every one from the last 14 days, and never fewer than 3 |
 | `predeploy-<time>.db` | `deploy.sh`, before every restart | the newest 5 |
 | `pull-<time>.db` | `npm run backup:pull` | the newest 2 |
 
 - **Daily:** output in `logs/backup.log`. Preflight warns when the newest
-  daily copy is more than two days old.
+  daily copy is more than two days old, and the health watch posts to Slack
+  when it is more than 36 hours old.
+- **The crontab is shared with the Xero app on the same box.** That app's own
+  deploy drops every crontab line mentioning `main/db/backup.js`, which is why
+  Solv's daily line runs `main/scripts/backup-daily.js` instead. It removed
+  Solv's daily backup once, from 29 Sep to 20 Oct 2026. A deploy reads the
+  lines back and says whether they are in place; `crontab -l` on the box shows
+  them.
 - **Before every deploy:** the deploy refuses to restart if the backup fails.
 - **Off the box:** `npm run backup:pull` has the box make a fresh backup and
   pack it with `main/data/users` (the receipt files) and `.env` into an archive
@@ -231,7 +238,8 @@ before that deploy rather than hoping.
   pm2-logrotate (installed by the deploy) keeps those files to 10 MB × 14.
 - **The health watch:** a cron line runs `main/scripts/healthwatch.js` every
   five minutes on the box. Two misses in a row post to Slack, and so does the
-  recovery; `logs/healthwatch.log` has each miss.
+  recovery; `logs/healthwatch.log` has each miss. Once a day it also posts if
+  the newest daily backup is more than 36 hours old.
 - It runs on the same VM, so it cannot report the VM itself being down. Point
   a free external uptime checker at `DEPLOY_HEALTH` for that.
 

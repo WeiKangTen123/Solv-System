@@ -112,18 +112,22 @@ async function run({ db: source, destDir, kind = 'app' } = {}) {
   return dest;
 }
 
-if (require.main === module) {
+// As a command: `node main/db/backup.js [--kind app|predeploy|pull]`, and the
+// daily cron's main/scripts/backup-daily.js.
+function cli(argv = process.argv) {
   // Here, not at the top: a test that loads this module must not read a
   // developer's own main/.env. DATA_DIR in it decides where backups go.
   require('dotenv').config({ path: path.join(__dirname, '../.env') });
-  const i = process.argv.indexOf('--kind');
-  const kind = i > 0 ? process.argv[i + 1] : 'app';
+  const i = argv.indexOf('--kind');
+  const kind = i >= 0 ? argv[i + 1] : 'app';
   const timer = setTimeout(() => { console.error(`Backup failed: still running after ${TIMEOUT_MS / 60000} minutes`); process.exit(1); }, TIMEOUT_MS);
   timer.unref();
-  run({ kind }).catch(err => {
+  return run({ kind }).catch(err => {
     console.error('Backup failed:', err.message);
     process.exitCode = 1;
   });
 }
 
-module.exports = { run, KINDS, KEEP_DAYS, KEEP_MIN, KEEP_PREDEPLOY, KEEP_PULL, _prune };
+if (require.main === module) cli();
+
+module.exports = { run, cli, KINDS, KEEP_DAYS, KEEP_MIN, KEEP_PREDEPLOY, KEEP_PULL, _prune };
