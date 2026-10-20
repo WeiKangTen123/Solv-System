@@ -23,6 +23,7 @@
 #   DEPLOY_SSH=weika@203.0.113.9        any server you can ssh to
 #   DEPLOY_INSTANCE=xero-automation     a Google Cloud VM, reached with gcloud
 #   DEPLOY_ZONE=us-central1-a
+#   DEPLOY_PROJECT=my-project-id        its project, if not gcloud's active one
 #
 # Beyond the SHA rule, a deploy: waits for CI to be green, takes a lock so two
 # deploys cannot interleave, moves the server to exactly the commit being
@@ -74,7 +75,10 @@ if [ -n "${DEPLOY_SSH:-}" ]; then
 elif [ -n "${DEPLOY_INSTANCE:-}" ]; then
   MODE=gcloud
   command -v gcloud >/dev/null 2>&1 || die "DEPLOY_INSTANCE is set but gcloud is not installed."
-  remote() { gcloud compute ssh "$DEPLOY_INSTANCE" --zone="$ZONE" --command="sudo -u $RUNAS -H bash -lc \"cd $APP && $1\"" 2>/dev/null; }
+  # The VM's project, when given, is named on every call: gcloud otherwise
+  # looks in whichever project is active, and one switched for other work
+  # made every deploy answer "cannot reach".
+  remote() { gcloud compute ssh "$DEPLOY_INSTANCE" ${DEPLOY_PROJECT:+--project="$DEPLOY_PROJECT"} --zone="$ZONE" --command="sudo -u $RUNAS -H bash -lc \"cd $APP && $1\"" 2>/dev/null; }
   TARGET="$DEPLOY_INSTANCE ($ZONE):$APP"
 else
   red "✗ No deploy target configured."

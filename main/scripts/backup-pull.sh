@@ -31,8 +31,8 @@ if [ -n "${DEPLOY_SSH:-}" ]; then
   on_box()   { ssh -o BatchMode=yes "$DEPLOY_SSH" "bash -lc 'cd $APP && $1'"; }
   from_box() { ssh -o BatchMode=yes "$DEPLOY_SSH" "cd $APP && $1"; }
 elif [ -n "${DEPLOY_INSTANCE:-}" ]; then
-  on_box()   { gcloud compute ssh "$DEPLOY_INSTANCE" --zone="$ZONE" --command="sudo -u $RUNAS -H bash -lc 'cd $APP && $1'" 2>/dev/null; }
-  from_box() { gcloud compute ssh "$DEPLOY_INSTANCE" --zone="$ZONE" --command="sudo -u $RUNAS -H bash -c 'cd $APP && $1'" 2>/dev/null; }
+  on_box()   { gcloud compute ssh "$DEPLOY_INSTANCE" ${DEPLOY_PROJECT:+--project="$DEPLOY_PROJECT"} --zone="$ZONE" --command="sudo -u $RUNAS -H bash -lc 'cd $APP && $1'" 2>/dev/null; }
+  from_box() { gcloud compute ssh "$DEPLOY_INSTANCE" ${DEPLOY_PROJECT:+--project="$DEPLOY_PROJECT"} --zone="$ZONE" --command="sudo -u $RUNAS -H bash -c 'cd $APP && $1'" 2>/dev/null; }
 else
   echo "✗ No deploy target configured — see main/.deploy.env.example" >&2
   exit 1
