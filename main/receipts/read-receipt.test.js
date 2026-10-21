@@ -338,6 +338,40 @@ describe('receipts/read-receipt', () => {
     expect(after.merchant).toBeNull();
     expect(after.errorMsg).toMatch(/could not reach the AI service.*Re-read/);
   });
+
+  // The queue (read-queue.js) asks to be told rather than have the receipt
+  // released, so it can try again itself in a few minutes.
+  test('asked to put it off, a read that reached nobody touches nothing and says so', async () => {
+    const { r, e } = seed();
+    parser.parseReceiptImage.mockResolvedValue({ receipts: [], split: false, reason: 'the reader could not reach the AI service', unavailable: true });
+    const out = await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('x'), mime: 'image/jpeg' }, { deferIfUnavailable: true });
+    expect(out).toEqual({ unavailable: true });
+    expect(store.getExpense(e.id)).toMatchObject({ status: 'reading', errorMsg: null });
+    expect(store.getReceipt(r.id).parsedAt).toBeNull();
+    expect(read.UNAVAILABLE_NOTE).toMatch(/could not reach the AI service/);
+  });
+
+  test('...but a read that got part of a thick scan lands as it is, with the note, and is not put off', async () => {
+    const { r, e } = seed('application/pdf');
+    pdfPages.extractPages.mockResolvedValue({ pages: Array(12).fill(''), numPages: 12, hasText: false, textPageCount: 0 });
+    render.renderPdfPages.mockResolvedValue({ numPages: 12, pages: Array.from({ length: 12 }, (_, i) => ({ page: i + 1, buffer: Buffer.from(`p${i}`) })) });
+    parser.parseReceiptBatch.mockResolvedValue(Array.from({ length: 12 }, (_, i) => (i === 0
+      ? { receipts: [{ merchant: 'Grab', total: 9, currency: 'SGD', category: 'Air & Transport', confidence: 'high', lineItems: [] }], split: false }
+      : { receipts: [], split: false, unavailable: true })));
+    const out = await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('%PDF'), mime: 'application/pdf' }, { deferIfUnavailable: true });
+    expect(out.expenseIds).toEqual([e.id]);
+    expect(store.getExpense(e.id)).toMatchObject({ status: 'review-needed', merchant: 'Grab', errorMsg: expect.stringMatching(/could not reach the AI service/) });
+  });
+
+  test('where and what the reader saw land on the expense and beside it in aiRead', async () => {
+    const { r, e } = seed();
+    parser.parseReceiptImage.mockResolvedValue({ split: false, receipts: [{ merchant: 'Taj', date: '2026-09-04', total: 9000, currency: 'INR', category: 'Lodging', confidence: 'high', lineItems: [],
+      city: 'Mumbai', country: 'IN', docType: 'hotel' }] });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('x'), mime: 'image/jpeg' });
+    const after = store.getExpense(e.id);
+    expect(after).toMatchObject({ city: 'Mumbai', country: 'IN', docType: 'hotel' });
+    expect(after.aiRead).toMatchObject({ city: 'Mumbai', country: 'IN', docType: 'hotel' });
+  });
 });
 
 describe('receipts/read-receipt — reading one part of a file again', () => {
