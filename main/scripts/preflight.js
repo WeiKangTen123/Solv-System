@@ -13,7 +13,7 @@
 //
 // It reads; it does not migrate, write or repair. Exits 1 if anything failed,
 // 0 if only warnings. Warnings are things that work but should not be true of
-// a server: the fallback encryption key, self-registration left open.
+// a server: the fallback encryption key, a leftover setting nothing reads.
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.join(__dirname, '../..');
@@ -175,12 +175,12 @@ check('reader key', () => {
   warn('reader key', 'no Gemini_API_KEY — each company must add its own in Settings or no receipt can be read');
 });
 
-// Self-registration is an admin's switch in Company settings now. The old
+// Signing up is always open: anyone may create an account, as a user. The old
 // environment variable is no longer read, so a box still carrying it is told
 // so rather than left believing it does something.
-check('self-registration', () => {
-  if (process.env.ALLOW_REGISTRATION !== undefined) return warn('self-registration', 'ALLOW_REGISTRATION is set but no longer read — registration is switched in Company settings; remove it from main/.env');
-  return ok('self-registration', 'controlled in Company settings (off unless an admin opens it)');
+check('sign-up', () => {
+  if (process.env.ALLOW_REGISTRATION !== undefined) return warn('sign-up', 'ALLOW_REGISTRATION is set but no longer read — sign-up is always open; remove it from main/.env');
+  return ok('sign-up', 'open: anyone can create an account, as a user');
 });
 
 check('Xero redirect URI', () => {

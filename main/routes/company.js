@@ -72,14 +72,7 @@ router.patch('/', requireAuth, requireRole('admin'), (req, res) => {
       if (!columns.length) return res.status(400).json({ error: 'Choose at least one report column' });
       patch.reportColumns = columns.slice(0, 20);
     }
-    // Whether people may create their own account. Off unless an admin says.
-    // A boolean only: "true" as text used to save as off and answer 200.
-    if (b.allowRegistration !== undefined) {
-      if (typeof b.allowRegistration !== 'boolean') return res.status(400).json({ error: 'allowRegistration must be true or false' });
-      patch.allowRegistration = b.allowRegistration;
-    }
     const company = users.updateCompany(req.user.companyId, patch);
-    if (patch.allowRegistration !== undefined) require('../utils/logger').info('Self-registration changed', { by: req.user.id, open: patch.allowRegistration });
     res.json({ company });
   } catch (err) { res.status(400).json({ error: err.message }); }
 });

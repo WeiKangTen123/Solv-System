@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS companies (
   report_columns TEXT NOT NULL DEFAULT '[]',   -- JSON array of category names, in report column order
   logo           TEXT,
   next_report_no INTEGER NOT NULL DEFAULT 1,
-  allow_registration INTEGER NOT NULL DEFAULT 0,   -- may people create their own account (Company settings)
+  allow_registration INTEGER NOT NULL DEFAULT 0,   -- no longer read: signing up is always open
   created_at     TEXT NOT NULL
 );
 

@@ -43,7 +43,6 @@ function _companyRow(row) {
   return {
     id: row.id, name: row.name, baseCurrency: row.base_currency, fxPolicy: row.fx_policy, timezone: row.timezone,
     reportColumns: cols, logo: row.logo || null, nextReportNo: row.next_report_no, createdAt: row.created_at,
-    allowRegistration: !!row.allow_registration,
   };
 }
 
@@ -78,7 +77,6 @@ function updateCompany(id, patch) {
     if (patch[k] === undefined) continue;
     sets.push(`${col} = ?`); args.push(patch[k]);
   }
-  if (patch.allowRegistration !== undefined) { sets.push('allow_registration = ?'); args.push(patch.allowRegistration ? 1 : 0); }
   if (Array.isArray(patch.reportColumns)) {
     sets.push('report_columns = ?');
     args.push(JSON.stringify(patch.reportColumns.map(c => String(c).trim()).filter(Boolean)));
@@ -285,7 +283,7 @@ function restoreUser(id) {
 function countAdmins(companyId) {
   return db.prepare("SELECT COUNT(*) AS n FROM users WHERE company_id = ? AND role = 'admin' AND disabled_at IS NULL").get(companyId).n;
 }
-// The company self-registration joins: the first one made.
+// The company a sign-up joins: the first one made.
 function firstCompanyId() {
   const r = db.prepare('SELECT company_id FROM users ORDER BY created_at LIMIT 1').get();
   return r ? r.company_id : null;

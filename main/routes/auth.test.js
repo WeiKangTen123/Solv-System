@@ -21,37 +21,40 @@ describe('routes/auth', () => {
     expect(me.body.user.companyName).toBe('Solv');
   });
 
-  // The sign-in screen asks this to decide whether to offer a Register tab.
-  // After the first account, registering is open only when an admin has
-  // switched it on in Company settings. The environment variable that used to
-  // decide it is no longer read.
-  test('/status, and registering, follow the company switch, not the environment', async () => {
+  // Signing up works like any login system: anyone may, and is in at once.
+  // The first account is the admin and makes the company; everyone after is
+  // a user in that company. No switch, no approval, whatever the environment.
+  test('anyone can sign up: the first as the admin, everyone after as a user of the same company', async () => {
     const empty = await request(serverFor(app)).get('/api/auth/status').expect(200);
     expect(empty.body).toEqual({ hasUsers: false, registrationOpen: true });
-    const first = await request(serverFor(app)).post('/api/auth/register').send({ email: 'a@solv.sg', password: 'password123' }).expect(201);
+    const first = await request(serverFor(app)).post('/api/auth/register').send({ name: 'Wei Kang', email: 'a@solv.sg', password: 'password123' }).expect(201);
+    expect(first.body.user.role).toBe('admin');
+    expect((await request(serverFor(app)).get('/api/auth/status').expect(200)).body).toEqual({ hasUsers: true, registrationOpen: true });
 
-    process.env.ALLOW_REGISTRATION = 'true';
-    const closed = await request(serverFor(app)).get('/api/auth/status').expect(200);
-    expect(closed.body).toEqual({ hasUsers: true, registrationOpen: false });
-    await request(serverFor(app)).post('/api/auth/register').send({ email: 'b@solv.sg', password: 'password123' }).expect(403);
+    process.env.ALLOW_REGISTRATION = 'false';                // an old setting changes nothing
+    const r = await request(serverFor(app)).post('/api/auth/register').send({ name: '  Aisha Rahman  ', email: 'b@solv.sg', password: 'password123', role: 'admin' }).expect(201);
     delete process.env.ALLOW_REGISTRATION;
+    expect(r.body.user).toMatchObject({ role: 'user', name: 'Aisha Rahman', companyId: first.body.user.companyId });
+    expect(r.body.token).toBeTruthy();
+    await request(serverFor(app)).get('/api/auth/me').set('Authorization', `Bearer ${r.body.token}`).expect(200);
+    await request(serverFor(app)).post('/api/auth/register').send({ name: 'Test Person', email: 'c@solv.sg', password: 'short' }).expect(400);
+  });
 
-    require('../store/users').updateCompany(first.body.user.companyId, { allowRegistration: true });
-    expect((await request(serverFor(app)).get('/api/auth/status').expect(200)).body.registrationOpen).toBe(true);
-    const r = await request(serverFor(app)).post('/api/auth/register').send({ email: 'b@solv.sg', password: 'password123' }).expect(201);
-    expect(r.body.user.role).toBe('user');
-    expect(r.body.user.companyId).toBe(first.body.user.companyId);
-    await request(serverFor(app)).post('/api/auth/register').send({ email: 'c@solv.sg', password: 'short' }).expect(400);
+  test('a sign-up needs a name', async () => {
+    for (const name of [undefined, '', '   ', 42]) {
+      const res = await request(serverFor(app)).post('/api/auth/register').send({ name, email: 'n@solv.sg', password: 'password123' }).expect(400);
+      expect(res.body.error).toMatch(/name/);
+    }
   });
 
   test('login works with the right password and fails with the wrong one', async () => {
-    await request(serverFor(app)).post('/api/auth/register').send({ email: 'a@solv.sg', password: 'password123' }).expect(201);
+    await request(serverFor(app)).post('/api/auth/register').send({ name: 'Test Person', email: 'a@solv.sg', password: 'password123' }).expect(201);
     await request(serverFor(app)).post('/api/auth/login').send({ email: 'a@solv.sg', password: 'password123' }).expect(200);
     await request(serverFor(app)).post('/api/auth/login').send({ email: 'a@solv.sg', password: 'nope' }).expect(401);
   });
 
   test('signing out ends the session; an image or export link is never a login', async () => {
-    const reg = await request(serverFor(app)).post('/api/auth/register').send({ email: 'a@solv.sg', password: 'password123' }).expect(201);
+    const reg = await request(serverFor(app)).post('/api/auth/register').send({ name: 'Test Person', email: 'a@solv.sg', password: 'password123' }).expect(201);
     const bearer = t => ({ Authorization: `Bearer ${t}` });
     await request(serverFor(app)).get('/api/auth/me').set(bearer(reg.body.token)).expect(200);
     const jwt = require('jsonwebtoken'); const secret = require('../middleware/auth-middleware').jwtSecret();
@@ -66,7 +69,7 @@ describe('routes/auth', () => {
   // lock used to be on the account alone, so one address could keep everyone
   // out of it — the only admin included — for as long as it kept trying.
   test('ten wrong passwords hold the guessing address out of that account, not its owner elsewhere', async () => {
-    await request(serverFor(app)).post('/api/auth/register').send({ email: 'a@solv.sg', password: 'password123' }).expect(201);
+    await request(serverFor(app)).post('/api/auth/register').send({ name: 'Test Person', email: 'a@solv.sg', password: 'password123' }).expect(201);
     const login = (from, password, email = 'a@solv.sg') => request(serverFor(app)).post('/api/auth/login').set('X-Forwarded-For', from).send({ email, password });
     for (let i = 0; i < 10; i++) await login('203.0.113.7', 'wrong-guess').expect(401);
     const held = await login('203.0.113.7', 'password123', 'A@solv.sg').expect(429);
@@ -77,7 +80,7 @@ describe('routes/auth', () => {
   // Spread over many addresses, the guess locks the account for addresses
   // that have never signed in to it; the owner's usual place still gets in.
   test('a guess spread over many addresses locks the account, except where its owner has signed in before', async () => {
-    await request(serverFor(app)).post('/api/auth/register').send({ email: 'a@solv.sg', password: 'password123' }).expect(201);
+    await request(serverFor(app)).post('/api/auth/register').send({ name: 'Test Person', email: 'a@solv.sg', password: 'password123' }).expect(201);
     const login = (from, password) => request(serverFor(app)).post('/api/auth/login').set('X-Forwarded-For', from).send({ email: 'a@solv.sg', password });
     await login('198.51.100.20', 'password123').expect(200);                   // the owner's office
     const { SPREAD_AFTER, LOCK_AFTER } = require('../middleware/account-lock');
@@ -95,12 +98,11 @@ describe('routes/auth', () => {
   });
 
   test('registration checks the email, and does not say whether an account exists', async () => {
-    await request(serverFor(app)).post('/api/auth/register').send({ email: 'not-an-email', password: 'password123' }).expect(400);
-    await request(serverFor(app)).post('/api/auth/register').send({ email: ' First@Solv.sg ', password: 'password123' }).expect(201);
-    require('../store/users').updateCompany(require('../store/users').firstCompanyId(), { allowRegistration: true });
-    const again = await request(serverFor(app)).post('/api/auth/register').send({ email: 'first@solv.sg', password: 'password123' }).expect(400);
+    await request(serverFor(app)).post('/api/auth/register').send({ name: 'Test Person', email: 'not-an-email', password: 'password123' }).expect(400);
+    await request(serverFor(app)).post('/api/auth/register').send({ name: 'Test Person', email: ' First@Solv.sg ', password: 'password123' }).expect(201);
+    const again = await request(serverFor(app)).post('/api/auth/register').send({ name: 'Test Person', email: 'first@solv.sg', password: 'password123' }).expect(400);
     expect(again.body.error).not.toMatch(/exists|removed/i);
-    await request(serverFor(app)).post('/api/auth/register').send({ email: 'b@solv.sg', password: '        ' }).expect(400);
-    await request(serverFor(app)).post('/api/auth/register').send({ email: 'c@solv.sg', password: 'x'.repeat(80) }).expect(400);
+    await request(serverFor(app)).post('/api/auth/register').send({ name: 'Test Person', email: 'b@solv.sg', password: '        ' }).expect(400);
+    await request(serverFor(app)).post('/api/auth/register').send({ name: 'Test Person', email: 'c@solv.sg', password: 'x'.repeat(80) }).expect(400);
   });
 });

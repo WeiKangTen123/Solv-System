@@ -6,6 +6,7 @@ import { ViewModeProvider } from './context/ViewModeContext';
 import { ConfirmProvider } from './context/ConfirmContext';
 import Layout from './components/layout/Layout';
 import Login from './pages/Login';
+import Signup from './pages/Signup';
 
 const Capture       = lazy(() => import('./pages/Capture'));
 const Home          = lazy(() => import('./pages/Home'));
@@ -33,6 +34,7 @@ function AppRoutes() {
     <Suspense fallback={Loading}>
       <Routes>
         <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+        <Route path="/signup" element={user ? <Navigate to="/" replace /> : <Signup />} />
         {/* No login on purpose: the pairing token in the URL is the phone's only credential. */}
         <Route path="/capture/:token" element={<Capture />} />
         <Route path="/" element={<Private><Layout /></Private>}>

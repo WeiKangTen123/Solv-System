@@ -1,44 +1,33 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { useTheme } from '../context/ThemeContext';
 import { api } from '../api/client';
+import AuthShell from '../components/auth/AuthShell';
+import { PasswordField, SubmitButton, SwitchLink } from '../components/auth/fields';
 
-// Every colour here comes from the palette. This page used to carry fourteen
-// hex values of its own, inherited from the app it was ported from, so it was
-// the one screen that did not change when the theme did — you signed in to one
-// product and landed in another.
+// Signing in. Creating an account is its own page now (Signup.jsx), linked
+// below the card, rather than a tab that appeared only when an admin had
+// switched registration on — which in practice was never.
 export default function Login() {
-  const { login, register } = useAuth();
-  const { theme, toggle }   = useTheme();
+  const { login } = useAuth();
   const navigate = useNavigate();
 
-  const [mode, setMode]       = useState('login');
-  const [firstRun, setFirstRun] = useState(false);
-  // Until the server answers, assume registration is closed: showing a tab and
-  // withdrawing it reads worse than a tab that appears a moment late.
-  const [canRegister, setCanRegister] = useState(false);
-  const [email, setEmail]     = useState('');
-  const [name, setName]       = useState('');
+  const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
-  const [error, setError]     = useState('');
-  const [loading, setLoading] = useState(false);
-  const [shaking, setShaking] = useState(false);
-  const [tabKey, setTabKey]   = useState(0);
-  const [slideDir, setSlideDir] = useState('right');
-
+  const [error, setError]       = useState('');
+  const [loading, setLoading]   = useState(false);
+  const [shaking, setShaking]   = useState(false);
   const shakeTimer = useRef(null);
 
+  // A brand-new system has nobody to sign in as: its first account, the
+  // administrator's, is made on the sign-up page.
   useEffect(() => {
     api.get('/auth/status')
-      .then(d => {
-        if (!d.hasUsers) { setFirstRun(true); setMode('register'); }
-        setCanRegister(!!d.registrationOpen);
-      })
+      .then(d => { if (!d.hasUsers) navigate('/signup', { replace: true }); })
       .catch(() => {});
     return () => clearTimeout(shakeTimer.current);
-  }, []);
+  }, [navigate]);
 
   function triggerError(msg) {
     setError(msg);
@@ -52,8 +41,7 @@ export default function Login() {
     setError('');
     setLoading(true);
     try {
-      if (mode === 'login') await login(email, password);
-      else                  await register(email, password, name.trim() || null);
+      await login(email, password);
       navigate('/');
     } catch (err) {
       // Locked out after too many wrong passwords. Waiting is not the only way
@@ -65,288 +53,49 @@ export default function Login() {
     }
   }
 
-  function switchMode(m) {
-    if (m === mode) return;
-    setSlideDir(m === 'register' ? 'left' : 'right');
-    setMode(m);
-    setTabKey(k => k + 1);
-    setError('');
-    setEmail('');
-    setName('');
-    setPassword('');
-    setShowPass(false);
-  }
-
-  const isDark = theme === 'dark';
-
-  // The drifting fields behind the card are ink on paper and light on ink:
-  // no hue, because the theme has no brand colour to spend here. They give the
-  // ground some depth without putting a colour on a page whose whole idea is
-  // that colour means a status.
-  const orb = isDark
-    ? ['rgba(240,246,252,0.075)', 'rgba(240,246,252,0.05)', 'rgba(240,246,252,0.035)']
-    : ['rgba(13,17,23,0.055)',    'rgba(13,17,23,0.040)',   'rgba(13,17,23,0.028)'];
-
   return (
-    <div style={{ position: 'relative', minHeight: '100vh', display: 'flex', overflow: 'hidden', background: 'var(--bg-primary)' }}>
-
-      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-        <div style={{
-          position: 'absolute', width: 650, height: 650, borderRadius: '50%',
-          background: `radial-gradient(circle, ${orb[0]} 0%, transparent 70%)`,
-          top: '-180px', left: '-120px',
-          animation: 'float1 10s ease-in-out infinite',
-        }} />
-        <div style={{
-          position: 'absolute', width: 550, height: 550, borderRadius: '50%',
-          background: `radial-gradient(circle, ${orb[1]} 0%, transparent 70%)`,
-          bottom: '-120px', right: '-100px',
-          animation: 'float2 13s ease-in-out infinite',
-        }} />
-        <div style={{
-          position: 'absolute', width: 380, height: 380, borderRadius: '50%',
-          background: `radial-gradient(circle, ${orb[2]} 0%, transparent 70%)`,
-          top: '38%', right: '28%',
-          animation: 'float3 8s ease-in-out infinite',
-        }} />
-
-        {/* Ledger grid, just visible */}
-        <div style={{
-          position: 'absolute', inset: 0,
-          backgroundImage: isDark
-            ? 'linear-gradient(rgba(240,246,252,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(240,246,252,0.03) 1px, transparent 1px)'
-            : 'linear-gradient(rgba(13,17,23,0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(13,17,23,0.045) 1px, transparent 1px)',
-          backgroundSize: '40px 40px',
-        }} />
-      </div>
-
-      <button
-        onClick={toggle}
-        style={{
-          position:       'fixed', top: 20, right: 20, zIndex: 10,
-          width:          40, height: 40,
-          borderRadius:   '50%',
-          border:         '1px solid var(--border)',
-          background:     'var(--bg-glass)',
-          backdropFilter: 'blur(8px)',
-          cursor:         'pointer', fontSize: 16,
-          display:        'flex', alignItems: 'center', justifyContent: 'center',
-          color:          'var(--text-secondary)',
-          transition:     'all 0.2s ease',
-          boxShadow:      'var(--shadow-sm)',
-        }}
-        title={`Switch to ${isDark ? 'light' : 'dark'} theme`}
-      >
-        {isDark ? '☀' : '◑'}
-      </button>
-
-      <div style={{
-        position: 'relative', zIndex: 1,
-        width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: '40px 20px',
-      }}>
-        <div style={{
-          width: '100%', maxWidth: 420,
-          animation: 'scaleIn 0.4s cubic-bezier(0.4,0,0.2,1)',
-        }}>
-
-          <div style={{ textAlign: 'center', marginBottom: 32 }}>
-            <div style={{
-              width:          52, height: 52, borderRadius: 16,
-              background:     'var(--accent-gradient)',
-              color:          'var(--accent-text)',
-              margin:         '0 auto 16px',
-              display:        'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow:      'var(--shadow-md)',
-              fontSize:       24, fontWeight: 800,
-              animation:      'fadeUp 0.5s ease 0.1s both',
-            }}>
-              S
-            </div>
-            <h1 style={{
-              fontSize:      26, fontWeight: 800, letterSpacing: '-0.6px',
-              color:         'var(--text-primary)',
-              marginBottom:  6,
-              animation:     'fadeUp 0.4s ease 0.15s both',
-            }}>
-              Solv Expenses
-            </h1>
-            <p style={{
-              fontSize:  14, color: 'var(--text-muted)', lineHeight: 1.5,
-              animation: 'fadeUp 0.4s ease 0.2s both',
-            }}>
-              {firstRun
-                ? 'Create the administrator account and your company'
-                : mode === 'login'
-                  ? 'Welcome back, sign in to continue'
-                  : 'Create a new account'}
-            </p>
-          </div>
-
-          {/* Card — shake applied here on error */}
-          <div style={{
-            background:     'var(--bg-glass)',
-            backdropFilter: 'blur(24px)',
-            border:         '1px solid var(--border-card)',
-            borderRadius:   20,
-            padding:        '30px 28px',
-            boxShadow:      'var(--shadow-lg)',
-            animation:      shaking ? 'shake 0.55s ease' : undefined,
-          }}>
-
-            {!firstRun && canRegister && (
-              <div style={{
-                display:      'flex', gap: 4,
-                background:   'var(--bg-input)',
-                borderRadius: 10, padding: 4, marginBottom: 24,
-              }}>
-                {['login', 'register'].map(m => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => switchMode(m)}
-                    style={{
-                      flex:         1, padding: '8px 0', fontSize: 13, fontWeight: 600,
-                      borderRadius: 7, border: 'none', cursor: 'pointer',
-                      transition:   'all 0.2s ease',
-                      fontFamily:   'inherit',
-                      background:   mode === m ? 'var(--bg-card)' : 'transparent',
-                      color:        mode === m ? 'var(--text-primary)' : 'var(--text-muted)',
-                      boxShadow:    mode === m ? 'var(--shadow-xs)' : 'none',
-                    }}
-                  >
-                    {m === 'login' ? 'Sign in' : 'Register'}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {error && (
-              <div className="alert alert-error">
-                <span className="alert-icon">✕</span>
-                {error}
-              </div>
-            )}
-            {firstRun && !error && (
-              <div className="alert alert-info" style={{ marginBottom: 20 }}>
-                <span className="alert-icon">ℹ</span>
-                The first account becomes the administrator and creates the company.
-              </div>
-            )}
-
-            <form
-              key={tabKey}
-              onSubmit={handleSubmit}
-              style={{
-                animation: tabKey > 0
-                  ? `${slideDir === 'left' ? 'slideFromRight' : 'slideFromLeft'} 0.22s ease`
-                  : undefined,
-              }}
-            >
-              <div className="form-group" style={{ animation: 'fadeUp 0.3s ease 0ms both' }}>
-                <label htmlFor="login-email" className="form-label">Email address</label>
-                <div className="input-wrapper">
-                  {/* autocomplete lets a password manager fill the right box,
-                      and offer to save a new password rather than overwrite
-                      the one it holds. */}
-                  <input id="login-email"
-                    type="email"
-                    className="form-input has-icon"
-                    placeholder="you@company.com"
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    required
-                    autoFocus
-                    autoComplete="username"
-                  />
-                  <span className="input-icon" style={{ left: 12, top: '50%', transform: 'translateY(-50%)', position: 'absolute', color: 'var(--text-muted)', fontSize: 15 }}>✉</span>
-                </div>
-              </div>
-
-              {/* The server takes a name with the account; without the box the
-                  first admin was "admin@…" on every screen until they found
-                  My Profile. */}
-              {mode === 'register' && (
-                <div className="form-group" style={{ animation: 'fadeUp 0.3s ease 30ms both' }}>
-                  <label htmlFor="login-name" className="form-label">Your name</label>
-                  <input id="login-name"
-                    className="form-input"
-                    placeholder="Jane Tan"
-                    value={name}
-                    onChange={e => setName(e.target.value)}
-                    maxLength={120}
-                    autoComplete="name"
-                  />
-                </div>
-              )}
-
-              <div className="form-group" style={{ marginBottom: 22, animation: 'fadeUp 0.3s ease 60ms both' }}>
-                <label htmlFor="login-password" className="form-label">Password</label>
-                <div className="input-wrapper" style={{ position: 'relative' }}>
-                  <input id="login-password"
-                    type={showPass ? 'text' : 'password'}
-                    className="form-input has-icon"
-                    placeholder={mode === 'register' ? 'Min. 8 characters' : 'Enter your password'}
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    required
-                    minLength={mode === 'register' ? 8 : 1}
-                    autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-                    style={{ paddingRight: 42 }}
-                  />
-                  <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: 15 }}>🔒</span>
-                  <button
-                    type="button"
-                    onClick={() => setShowPass(v => !v)}
-                    style={{
-                      position:  'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-                      background: 'none', border: 'none', cursor: 'pointer',
-                      color:     'var(--text-muted)', fontSize: 14, padding: 2,
-                      transition: 'color 0.15s',
-                    }}
-                    title={showPass ? 'Hide password' : 'Show password'}
-                  >
-                    {showPass ? '🙈' : '👁'}
-                  </button>
-                </div>
-              </div>
-
-              <div style={{ animation: 'fadeUp 0.3s ease 110ms both' }}>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  style={{
-                    width:       '100%', padding: '12px 0',
-                    background:  'var(--accent-gradient)',
-                    color:       'var(--accent-text)', border: 'none', borderRadius: 10,
-                    fontSize:    15, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer',
-                    fontFamily:  'inherit',
-                    display:     'flex', alignItems: 'center', justifyContent: 'center', gap: 9,
-                    opacity:     loading ? 0.7 : 1,
-                    boxShadow:   'var(--shadow-sm)',
-                    transition:  'all 0.2s ease',
-                  }}
-                  onMouseEnter={e => { if (!loading) { e.currentTarget.style.background = 'var(--accent-hover)'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'var(--accent-gradient)'; e.currentTarget.style.transform = 'none'; }}
-                >
-                  {loading && <span className="btn-spinner" />}
-                  {loading
-                    ? 'Please wait...'
-                    : mode === 'login' ? 'Sign in' : 'Create account'}
-                </button>
-              </div>
-            </form>
-          </div>
-
-          <p style={{
-            textAlign:  'center', marginTop: 20, fontSize: 12,
-            color:      'var(--text-muted)',
-            animation:  'fadeIn 0.5s ease 0.4s both',
-          }}>
-            Receipts stay on your company's server.
-          </p>
+    <AuthShell
+      subtitle="Welcome back, sign in to continue"
+      shaking={shaking}
+      below={<SwitchLink prompt="New to Solv?" to="/signup">Create an account →</SwitchLink>}
+    >
+      {error && (
+        <div className="alert alert-error" role="alert">
+          <span className="alert-icon">✕</span>
+          {error}
         </div>
-      </div>
-    </div>
+      )}
+
+      <form onSubmit={handleSubmit}>
+        <div className="form-group" style={{ animation: 'fadeUp 0.3s ease 0ms both' }}>
+          <label htmlFor="login-email" className="form-label">Email address</label>
+          <div className="input-wrapper">
+            {/* autocomplete lets a password manager fill the right box. */}
+            <input id="login-email"
+              type="email"
+              className="form-input has-icon"
+              placeholder="you@company.com"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              required
+              autoFocus
+              autoComplete="username"
+            />
+            <span className="input-icon" style={{ left: 12, top: '50%', transform: 'translateY(-50%)', position: 'absolute', color: 'var(--text-muted)', fontSize: 15 }}>✉</span>
+          </div>
+        </div>
+
+        <PasswordField
+          id="login-password" label="Password" value={password} onChange={setPassword}
+          show={showPass} onToggleShow={() => setShowPass(v => !v)}
+          placeholder="Enter your password" autoComplete="current-password" minLength={1}
+          style={{ marginBottom: 22, animation: 'fadeUp 0.3s ease 60ms both' }}
+        />
+
+        <div style={{ animation: 'fadeUp 0.3s ease 110ms both' }}>
+          <SubmitButton loading={loading}>Sign in</SubmitButton>
+        </div>
+      </form>
+    </AuthShell>
   );
 }

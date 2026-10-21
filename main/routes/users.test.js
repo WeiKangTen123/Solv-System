@@ -12,7 +12,7 @@ describe('routes/users and routes/company', () => {
     app.use('/api/auth', require('./auth'));
     app.use('/api/users', require('./users'));
     app.use('/api/company', require('./company'));
-    const reg = await request(serverFor(app)).post('/api/auth/register').send({ email: 'wk@solv.sg', password: 'password123' });
+    const reg = await request(serverFor(app)).post('/api/auth/register').send({ name: 'Test Person', email: 'wk@solv.sg', password: 'password123' });
     admin = reg.body.user; token = reg.body.token;
   });
   const as = t => ({ Authorization: `Bearer ${t}` });
@@ -137,8 +137,6 @@ describe('routes/users and routes/company', () => {
     expect(cols.body.company.reportColumns).toEqual(['Meals', 'Lodging']);
     await patch({ reportColumns: ['Snacks'] }).expect(400);
     await patch({ reportColumns: [] }).expect(400);
-    await patch({ allowRegistration: 'true' }).expect(400);
-    await patch({ allowRegistration: true }).expect(200);
   });
 
   test('the company says when its base currency is locked', async () => {

@@ -38,7 +38,7 @@ sudo -u weika pm2 startup              # run the line it prints, so a reboot res
 `npm run preflight` is the gate: Node version, the three native modules, both
 secrets, the data and log directories, the database's integrity and schema, the
 built UI, the fonts, disk space, and the settings that should not be true of a
-production box (self-registration open, the all-zero test encryption key, a
+production box (a leftover ALLOW_REGISTRATION, the all-zero test encryption key, a
 non-HTTPS Xero callback). It reads and never repairs. Anything it marks ✗ is a
 boot failure waiting to happen, and `deploy.sh` runs it on the box and refuses
 to restart when it fails.
