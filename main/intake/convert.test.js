@@ -137,12 +137,12 @@ describe('intake/convert', () => {
     });
 
     test('the real decoder runs in a worker thread and reports a bad file back', async () => {
-      process.env.HEIC_IN_WORKER = '1';
+      convert._heicInWorker(true);
       try {
         await expect(convert.decodeHeic(ftyp('heic', 'mif1', 'heic'))).rejects.toThrow();
         expect(decode).not.toHaveBeenCalled();
       } finally {
-        delete process.env.HEIC_IN_WORKER;
+        convert._heicInWorker(false);
       }
     }, 30000);
   });

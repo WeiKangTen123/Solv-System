@@ -33,13 +33,13 @@ const FAILED_NOTE  = 'The receipt could not be read. Press Re-read, or type the 
 const STOPPED_NOTE = 'Reading was stopped. Type the fields from the receipt, or press Re-read.';
 const BUSY_ERROR   = 'The AI service was busy.';
 
-const _count = (name, fallback) => {
-  const n = Math.floor(Number(process.env[name]));
+const _count = (value, fallback) => {
+  const n = Math.floor(Number(value));
   return Number.isFinite(n) && n >= 1 ? n : fallback;
 };
 const cfg = {
-  concurrency: _count('READ_CONCURRENCY', 4),
-  perUser: _count('READ_PER_USER', 2),
+  concurrency: _count(process.env.READ_CONCURRENCY, 4),
+  perUser: _count(process.env.READ_PER_USER, 2),
   now: () => Date.now(),
   read: _readFromDisk,
 };

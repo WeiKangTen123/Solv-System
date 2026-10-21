@@ -208,12 +208,13 @@ function _pdfOf(pages) {
 
 // HEIC is decoded in a worker thread (intake/heic-worker.js), because the
 // decoder blocks whatever thread it runs on for about a second per photo.
-// Tests decode in-process, where jest can stand in for the decoder; they ask
-// for the worker with HEIC_IN_WORKER=1.
+// Tests decode in-process, where jest can stand in for the decoder, and ask
+// for the worker with _heicInWorker(true).
 const HEIC_TIMEOUT_MS = 60 * 1000;
-const _inWorker = () => (process.env.HEIC_IN_WORKER ? process.env.HEIC_IN_WORKER === '1' : process.env.NODE_ENV !== 'test');
+let _inWorker = process.env.NODE_ENV !== 'test';
+function _heicInWorker(on) { _inWorker = !!on; }
 function decodeHeic(buffer) {
-  if (!_inWorker()) return require('heic-decode')({ buffer });
+  if (!_inWorker) return require('heic-decode')({ buffer });
   const { Worker } = require('worker_threads');
   return new Promise((resolve, reject) => {
     // The worker is given no environment: it opens a stranger's file, and
@@ -239,4 +240,4 @@ function decodeHeic(buffer) {
   });
 }
 
-module.exports = { toStorable, sniff, convertibleMime, decodeHeic, ACCEPTED, MAX_SIDE, MAX_TIFF_PAGES, KEEP, CONVERT };
+module.exports = { toStorable, sniff, convertibleMime, decodeHeic, _heicInWorker, ACCEPTED, MAX_SIDE, MAX_TIFF_PAGES, KEEP, CONVERT };
