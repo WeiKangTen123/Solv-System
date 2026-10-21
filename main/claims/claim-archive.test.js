@@ -102,6 +102,26 @@ describe('claims/claim-archive', () => {
     expect((await readArchive(null)).entries).toEqual([]);
   });
 
+  // A zip unpacked into a case also takes what an upload converts; the claim
+  // import keeps only what it can store as it is.
+  test('only when asked, the kinds an upload converts are kept, each as what its bytes are', async () => {
+    const heic = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypheic\0\0\0\0mif1heic', 'latin1'), Buffer.alloc(16)]);
+    const webp = Buffer.concat([Buffer.from('RIFF\0\0\0\0WEBPVP8 ', 'latin1'), Buffer.alloc(16)]);
+    const files = [
+      { name: 'r/IMG_0001.HEIC', data: heic },
+      { name: 'r/shot.webp', data: webp },
+      { name: 'r/fake.tiff', data: Buffer.from('not a tiff at all') },
+      { name: 'r/a.jpg', data: JPEG },
+    ];
+    const plain = await readArchive(makeZip(files));
+    expect(plain.entries.map(e => e.name)).toEqual(['r/a.jpg']);
+    expect(plain.skipped.map(s => s.reason)).toEqual(['not a receipt file type', 'not a receipt file type', 'not a receipt file type']);
+
+    const wide = await readArchive(makeZip(files), { convertible: true });
+    expect(wide.entries.map(e => [e.name, e.mime])).toEqual([['r/IMG_0001.HEIC', 'image/heic'], ['r/shot.webp', 'image/webp'], ['r/a.jpg', 'image/jpeg']]);
+    expect(wide.skipped).toEqual([{ name: 'r/fake.tiff', reason: 'not a real image or PDF' }]);
+  });
+
   test('directory entries are not mistaken for files', async () => {
     const r = await readArchive(makeZip([
       { name: 'claims/', data: Buffer.alloc(0) },
@@ -114,7 +134,10 @@ describe('claims/claim-archive', () => {
     test('mimeFor is case-insensitive, matching real filenames like IMG_0321.PNG', () => {
       expect(mimeFor('IMG_0321.PNG')).toBe('image/png');
       expect(mimeFor('a.JPEG')).toBe('image/jpeg');
-      expect(mimeFor('a.heic')).toBeNull();   // browsers convert these; a zip cannot
+      expect(mimeFor('a.heic')).toBeNull();   // the claim import keeps what it can store as it is
+      expect(mimeFor('a.heic', { convertible: true })).toBe('image/heic');
+      expect(mimeFor('scan.TIF', { convertible: true })).toBe('image/tiff');
+      expect(mimeFor('a.bmp', { convertible: true })).toBeNull();
     });
 
     test('isJunk covers every macOS artefact seen in a real archive', () => {

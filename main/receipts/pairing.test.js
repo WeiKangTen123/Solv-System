@@ -104,7 +104,7 @@ describe('receipts/pairing', () => {
       const t = pairing.create('u1');
       for (let i = 0; i < pairing.MAX_USES; i++) pairing.consume(t, `r${i}`);
       // verify() gates uploads, so it must refuse. This is the check that stops
-      // a spent pairing from accepting a twenty-first photo.
+      // a spent pairing from accepting one photo more than it allows.
       expect(pairing.verify(t)).toBeNull();
     });
 

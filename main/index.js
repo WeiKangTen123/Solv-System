@@ -33,7 +33,7 @@ const compression = require('compression');
 const rateLimit   = require('express-rate-limit');
 const morgan      = require('morgan');
 const logger      = require('./utils/logger');
-const { rateLimitKey } = require('./middleware/rate-limit-key');
+const { rateLimitKey, skipRateLimit } = require('./middleware/rate-limit-key');
 
 // No signing secret, no server: checked here rather than on the first login,
 // so a misconfigured box refuses to start instead of starting open.
@@ -70,13 +70,14 @@ morgan.token('id', req => req.id);
 morgan.token('safe-url', req => String(req.originalUrl || req.url || '').split('?')[0].replace(/\/capture\/[^/]+/, '/capture/[token]'));
 app.use(morgan(':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent" :id',
   { stream: { write: msg => logger.info(msg.trim()) } }));
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, keyGenerator: rateLimitKey, standardHeaders: true, legacyHeaders: false,
+// The New case page's progress poll is not counted (rate-limit-key.js).
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, keyGenerator: rateLimitKey, skip: skipRateLimit, standardHeaders: true, legacyHeaders: false,
                     message: { error: 'Too many requests — slow down' } }));
-// 100 KB of JSON is plenty for everything except a file. The three routes that
+// 100 KB of JSON is plenty for everything except a file. The four routes that
 // take one parse their own 25 MB body after checking who is asking (receipts
 // and claims routes); a body parsed here, before any route, was 25 MB for
 // anyone at all, the login form included.
-const LARGE_BODY_ROUTE = /^\/api\/(receipts\/?$|receipts\/capture\/[^/]+\/?$|claims\/import\/?$)/;
+const LARGE_BODY_ROUTE = /^\/api\/(receipts\/?$|receipts\/archive\/?$|receipts\/capture\/[^/]+\/?$|claims\/import\/?$)/;
 const smallJson = express.json({ limit: '100kb' });
 app.use((req, res, next) => (req.method === 'POST' && LARGE_BODY_ROUTE.test(req.path) ? next() : smallJson(req, res, next)));
 app.use(express.urlencoded({ extended: false, limit: '100kb' }));

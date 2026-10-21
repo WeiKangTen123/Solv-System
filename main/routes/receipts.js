@@ -1,17 +1,20 @@
 const express      = require('express');
+const path         = require('path');
 const router       = express.Router();
 const link         = require('../utils/signed-link');
 const QRCode       = require('qrcode');
 const { newId }    = require('../utils/ids');
 const { decodeBase64 } = require('../utils/base64');
 const { hashBuffer }   = require('../intake/dedup');
+const { toStorable }   = require('../intake/convert');
+const { HttpError }    = require('../utils/http-error');
 const { requireAuth } = require('../middleware/auth-middleware');
 const asyncHandler = require('../middleware/async-handler');
 const { canView } = require('../middleware/roles');
 const express_ = require('express');
 
 // Receipt files arrive as base64 inside JSON (4/3 inflation): 25 MB carries a
-// 15 MB original. Mounted on the two upload routes alone, and only after the
+// 15 MB original. Mounted on the three upload routes alone, and only after the
 // caller is known to be allowed; index.js keeps everything else to 100 KB.
 const bigJson = express_.json({ limit: '25mb' });
 const users        = require('../store/users');
@@ -19,12 +22,14 @@ const store        = require('../store/expenses');
 const receiptStore = require('../receipts/receipt-store');
 const thumbnailer  = require('../receipts/thumbnailer');
 const pairing      = require('../receipts/pairing');
-const { readReceipt } = require('../receipts/read-receipt');
+const readQueue    = require('../receipts/read-queue');
+const { readArchive } = require('../claims/claim-archive');
 const logger       = require('../utils/logger');
 
-// A receipt FILE arrives here: dropped on the desktop or photographed on a
-// paired phone. It is stored first, an expense row is created, and the read
-// runs off the response path. Nothing here reaches Xero.
+// A receipt FILE arrives here: dropped on the desktop, photographed on a
+// paired phone, or unpacked from a zip. It is converted to what the store
+// keeps (intake/convert.js), stored, an expense row is created, and its read
+// is queued (receipts/read-queue.js). Nothing here reaches Xero.
 
 // A link to one receipt's file (utils/signed-link.js): the owner, whose
 // folder the file is in, and `by`, the person it was made for, who must
@@ -32,9 +37,6 @@ const logger       = require('../utils/logger');
 function issueImageToken(ownerId, receiptId, viewerId = ownerId) {
   return link.sign('receipt', { userId: ownerId, receiptId, by: viewerId });
 }
-
-// Reads still running, so a test can wait for them.
-const _inflight = new Set();
 
 // May this person put a receipt in this case? Asked BEFORE anything is stored.
 // It used to be asked after, which meant a refused upload — into a colleague's
@@ -57,25 +59,34 @@ function checkCase(user, reportId) {
   return null;
 }
 
-function storeReceipt(user, { mime: declaredMime, data, filename, source, reportId }) {
-  let mime = declaredMime;
+// Stores one file for `user`, into `reportId` when given, and queues its read.
+// The file is `data` (base64, from a browser) or `buffer` (from a zip).
+// Answers { status, body } for everything the person sent, a refusal included.
+async function storeReceipt(user, { mime: declaredMime, data, buffer: given, filename, source, reportId }) {
   const noCase = checkCase(user, reportId);
   if (noCase) return { status: noCase.status, body: { error: noCase.error } };
-  if (!receiptStore.isAcceptedMime(mime)) {
-    return { status: 400, body: { error: `Unsupported file type${mime ? ` (${mime})` : ''}. Accepted: ${receiptStore.acceptedMimes().join(', ')}.` } };
-  }
-  const buffer = decodeBase64(data);
-  if (!buffer) return { status: 400, body: { error: 'File data is missing or not valid base64' } };
+  const raw = Buffer.isBuffer(given) ? given : decodeBase64(data);
+  if (!raw) return { status: 400, body: { error: 'File data is missing or not valid base64' } };
   const mb = n => `${(n / 1024 / 1024).toFixed(1)}MB`;
-  if (buffer.length > receiptStore.MAX_BYTES) {
-    return { status: 413, body: { error: `The file is ${mb(buffer.length)}; the limit is ${mb(receiptStore.MAX_BYTES)}.` } };
+  if (raw.length > receiptStore.MAX_BYTES) {
+    return { status: 413, body: { error: `The file is ${mb(raw.length)}; the limit is ${mb(receiptStore.MAX_BYTES)}.` } };
   }
   // What is stored, and later served, is decided by the bytes rather than by
-  // what the browser declared: a file that is not a JPEG, PNG or PDF is
-  // refused, and one declared as the wrong one of those is kept as what it is.
-  const actualMime = receiptStore.sniffMime(buffer);
-  if (!actualMime) return { status: 400, body: { error: 'That file is not a JPEG, PNG or PDF.' } };
-  mime = actualMime;
+  // what the browser declared, and it is decided first: a HEIC is kept as the
+  // JPEG it becomes, so the quota, the duplicate check and the hash are all
+  // about the bytes that will be on disk. A file that is none of the accepted
+  // kinds is refused, naming them.
+  let kept;
+  try {
+    kept = await toStorable(raw, { declaredMime, filename });
+  } catch (err) {
+    if (err instanceof HttpError) return { status: err.status, body: { error: err.message } };
+    throw err;
+  }
+  const { buffer, mime, convertedFrom, note } = kept;
+  // Converting takes a moment, and the case may have been claimed in it.
+  const stillOpen = checkCase(user, reportId);
+  if (stillOpen) return { status: stillOpen.status, body: { error: stillOpen.error } };
   const used = store.bytesStoredBy(user.id);
   if (used + buffer.length > receiptStore.QUOTA_BYTES) {
     return { status: 413, body: { error: `Your receipts already take ${mb(used)} of the ${mb(receiptStore.QUOTA_BYTES)} allowed. Ask your administrator.` } };
@@ -98,31 +109,85 @@ function storeReceipt(user, { mime: declaredMime, data, filename, source, report
   const receiptId = newId();
   const storedName = receiptStore.forUser(user.id).save(receiptId, buffer, mime);
   const src = source === 'phone' ? 'phone' : 'upload';
-  const receipt = store.createReceipt({ id: receiptId, companyId: user.companyId, userId: user.id, file: storedName, mime, sizeBytes: buffer.length, sha256: hash, source: src, originalName: filename || null });
-  const expense = store.createExpense({ companyId: user.companyId, userId: user.id, receiptId, source: src, status: 'reading', currency: users.getUserDefaults(user.id).currency });
-  if (reportId) require('../store/reports').addExpense(reportId, expense.id);
-  logger.info('Receipt stored', { userId: user.id, receiptId, bytes: buffer.length, mime, source: src });
+  const receipt = store.createReceipt({ id: receiptId, companyId: user.companyId, userId: user.id, file: storedName, mime, sizeBytes: buffer.length, sha256: hash, source: src, originalName: filename || null, convertedFrom });
+  let expense = store.createExpense({ companyId: user.companyId, userId: user.id, receiptId, source: src, status: 'reading', currency: users.getUserDefaults(user.id).currency });
+  // Answered as filed, so the page knows which case it is in.
+  if (reportId) { require('../store/reports').addExpense(reportId, expense.id); expense = store.getExpense(expense.id); }
+  logger.info('Receipt stored', { userId: user.id, receiptId, bytes: buffer.length, mime, convertedFrom, source: src });
 
-  const done = new Promise(resolve => setImmediate(() => {
-    readReceipt({ companyId: user.companyId, userId: user.id, receiptId, expenseId: expense.id, buffer, mime, source: src })
-      .catch(err => logger.warn('Receipt read failed', { userId: user.id, receiptId, error: err.message }))
-      .finally(resolve);
-  }));
-  _inflight.add(done);
-  done.finally(() => _inflight.delete(done));
+  readQueue.enqueue({ companyId: user.companyId, userId: user.id, receiptId, expenseId: expense.id });
 
-  return { status: 201, body: { receipt, expense, imageToken: issueImageToken(user.id, receiptId) } };
+  return { status: 201, body: { receipt, expense, imageToken: issueImageToken(user.id, receiptId), ...(note ? { note } : {}) } };
 }
 
-router.post('/', requireAuth, bigJson, (req, res) => {
+router.post('/', requireAuth, bigJson, asyncHandler(async (req, res) => {
   try {
     const me = users.findById(req.user.id);
-    const { status, body } = storeReceipt(me, req.body || {});
+    const { status, body } = await storeReceipt(me, req.body || {});
     res.status(status).json(body);
   } catch (err) {
     logger.error('Receipt upload failed', { userId: req.user.id, error: err.message });
     res.status(500).json({ error: 'The upload failed. Try again.' });
   }
+}));
+
+// ── A zip of receipts, unpacked into a case ─────────────────────────────────
+// Every receipt in it goes through storeReceipt as if dropped one by one, so
+// it is converted, checked for a duplicate and queued for reading the same
+// way. A zip with a claim form in it is a claim, and the claim import matches
+// the form's rows to the receipts; it is sent there instead, untouched.
+const CLAIM_FORM = /\.xlsx$/i;
+router.post('/archive', requireAuth, bigJson, asyncHandler(async (req, res) => {
+  const me = users.findById(req.user.id);
+  const { data, filename, reportId } = req.body || {};
+  if (!reportId) return res.status(400).json({ error: 'Choose the case these receipts go into.' });
+  const bad = checkCase(me, reportId);
+  if (bad) return res.status(bad.status).json({ error: bad.error });
+  const zip = decodeBase64(data);
+  if (!zip) return res.status(400).json({ error: 'File data is missing or not valid base64' });
+  const archive = await readArchive(zip, { convertible: true });
+  if (archive.error && !archive.entries.length) return res.status(400).json({ error: 'That file is not a zip that can be opened.' });
+  if (archive.skipped.some(s => CLAIM_FORM.test(s.name))) {
+    return res.status(409).json({ error: 'This zip holds a claim form, so it is imported as a claim.', claimForm: true });
+  }
+  const stored = [], skipped = [];
+  for (const entry of archive.entries) {
+    const out = await storeReceipt(me, { buffer: entry.buffer, mime: entry.mime, filename: path.posix.basename(entry.name), source: 'upload', reportId });
+    if (out.status === 201) stored.push({ receipt: out.body.receipt, expense: out.body.expense, imageToken: out.body.imageToken, ...(out.body.note ? { note: out.body.note } : {}) });
+    else skipped.push({ name: entry.name, why: out.body.error });
+  }
+  for (const s of archive.skipped) skipped.push({ name: s.name, why: s.reason });
+  logger.info('Receipt archive unpacked', { userId: me.id, reportId, archive: filename ? String(filename).slice(0, 120) : null, stored: stored.length, skipped: skipped.length });
+  res.status(stored.length ? 201 : 200).json({ stored, skipped });
+}));
+
+// ── The read of one receipt ─────────────────────────────────────────────────
+// Its owner's alone: anyone else, an admin included, is told there is no such
+// receipt rather than whose it is.
+function _ownReceipt(req) {
+  const r = store.getReceipt(req.params.id);
+  return r && r.userId === req.user.id ? r : null;
+}
+function _readView(r) {
+  return { receiptId: r.id, read: readQueue.statesFor([r.id]).get(r.id) || null, expenses: store.expensesForReceipt(r.id) };
+}
+
+// "Try now": a read waiting for the AI is read at once; a failed one again.
+router.post('/:id/read/retry', requireAuth, (req, res) => {
+  const r = _ownReceipt(req);
+  if (!r) return res.status(404).json({ error: 'Receipt not found' });
+  try { readQueue.retryNow(r.id); }
+  catch (err) { if (err instanceof HttpError) return res.status(err.status).json({ error: err.message }); throw err; }
+  res.json(_readView(r));
+});
+
+// "Stop": a read still waiting is dropped, and the receipt is the person's to fill in.
+router.delete('/:id/read', requireAuth, (req, res) => {
+  const r = _ownReceipt(req);
+  if (!r) return res.status(404).json({ error: 'Receipt not found' });
+  try { readQueue.cancel(r.id); }
+  catch (err) { if (err instanceof HttpError) return res.status(err.status).json({ error: err.message }); throw err; }
+  res.json(_readView(r));
 });
 
 // ── Phone pairing ───────────────────────────────────────────────────────────
@@ -181,8 +246,8 @@ router.delete('/pair/:token', requireAuth, (req, res) => {
 });
 
 const EXPIRED = { error: 'This link has expired. Show a new QR code on your computer.' };
-// A spent link (twenty photos taken) still opens, saying so, so a reload of the
-// phone page shows what was sent instead of "Link expired".
+// A spent link (every photo it allows taken) still opens, saying so, so a
+// reload of the phone page shows what was sent instead of "Link expired".
 router.get('/capture/:token', (req, res) => {
   const state = pairing.status(req.params.token);
   if (!state || (!state.alive && !state.spent)) return res.status(401).json({ ok: false, ...EXPIRED });
@@ -195,7 +260,8 @@ router.get('/capture/:token', (req, res) => {
 });
 // Still answers once the link has taken its last photo: it is spent, not
 // expired, and the phone keeps its list of what it sent. It used to answer 401
-// after the twentieth photo, and the page swapped that list for "Link expired".
+// after the last photo it allowed, and the page swapped that list for "Link
+// expired".
 router.get('/capture/:token/status', (req, res) => {
   const state = pairing.status(req.params.token);
   if (!state || (!state.alive && !state.spent)) return res.status(401).json(EXPIRED);
@@ -212,13 +278,13 @@ const captureGate = (req, res, next) => {
   if (!owner || owner.removed) { if (state) pairing.revoke(req.params.token); return res.status(401).json(EXPIRED); }
   next();
 };
-router.post('/capture/:token', captureGate, bigJson, (req, res) => {
+router.post('/capture/:token', captureGate, bigJson, asyncHandler(async (req, res) => {
   const state = pairing.verify(req.params.token);
   if (!state) return res.status(401).json(EXPIRED);
   try {
     const me = users.findById(state.userId);
     if (!me) return res.status(401).json(EXPIRED);
-    const { status, body } = storeReceipt(me, { ...(req.body || {}), source: 'phone', reportId: state.reportId || null });
+    const { status, body } = await storeReceipt(me, { ...(req.body || {}), source: 'phone', reportId: state.reportId || null });
     if (status === 201) pairing.consume(req.params.token, body.receipt.id);
     if (body.imageToken) delete body.imageToken;
     res.status(status).json(body);
@@ -226,7 +292,7 @@ router.post('/capture/:token', captureGate, bigJson, (req, res) => {
     logger.error('Phone upload failed', { userId: state.userId, error: err.message });
     res.status(500).json({ error: 'The upload failed. Try again.' });
   }
-});
+}));
 
 // ── Images ──────────────────────────────────────────────────────────────────
 // Company-wide used to be enough here, which meant any colleague holding a
@@ -262,4 +328,5 @@ module.exports = router;
 module.exports.storeReceipt = storeReceipt;
 module.exports.checkCase = checkCase;
 module.exports.issueImageToken = issueImageToken;
-module.exports._drain = async function _drain() { while (_inflight.size) await Promise.allSettled([..._inflight]); };
+// For tests: resolves once the read queue has nothing running and nothing due.
+module.exports._drain = function _drain() { return readQueue.drain(); };
