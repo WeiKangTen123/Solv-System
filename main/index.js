@@ -33,7 +33,7 @@ const compression = require('compression');
 const rateLimit   = require('express-rate-limit');
 const morgan      = require('morgan');
 const logger      = require('./utils/logger');
-const { rateLimitKey } = require('./middleware/rate-limit-key');
+const { rateLimitKey, skipRateLimit } = require('./middleware/rate-limit-key');
 
 // No signing secret, no server: checked here rather than on the first login,
 // so a misconfigured box refuses to start instead of starting open.
@@ -70,13 +70,14 @@ morgan.token('id', req => req.id);
 morgan.token('safe-url', req => String(req.originalUrl || req.url || '').split('?')[0].replace(/\/capture\/[^/]+/, '/capture/[token]'));
 app.use(morgan(':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent" :id',
   { stream: { write: msg => logger.info(msg.trim()) } }));
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, keyGenerator: rateLimitKey, standardHeaders: true, legacyHeaders: false,
+// The New case page's progress poll is not counted (rate-limit-key.js).
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, keyGenerator: rateLimitKey, skip: skipRateLimit, standardHeaders: true, legacyHeaders: false,
                     message: { error: 'Too many requests — slow down' } }));
-// 100 KB of JSON is plenty for everything except a file. The three routes that
+// 100 KB of JSON is plenty for everything except a file. The four routes that
 // take one parse their own 25 MB body after checking who is asking (receipts
 // and claims routes); a body parsed here, before any route, was 25 MB for
 // anyone at all, the login form included.
-const LARGE_BODY_ROUTE = /^\/api\/(receipts\/?$|receipts\/capture\/[^/]+\/?$|claims\/import\/?$)/;
+const LARGE_BODY_ROUTE = /^\/api\/(receipts\/?$|receipts\/archive\/?$|receipts\/capture\/[^/]+\/?$|claims\/import\/?$)/;
 const smallJson = express.json({ limit: '100kb' });
 app.use((req, res, next) => (req.method === 'POST' && LARGE_BODY_ROUTE.test(req.path) ? next() : smallJson(req, res, next)));
 app.use(express.urlencoded({ extended: false, limit: '100kb' }));
@@ -156,9 +157,17 @@ const server = app.listen(PORT, HOST, () => {
   assistantRoutes.pruneUsage();
   setInterval(assistantRoutes.pruneUsage, 24 * 60 * 60 * 1000).unref();
 
-  // Receipts a restart left half-read are read again, or released with a note.
-  require('./receipts/recover').recoverStuckReads({ before: BOOT_AT })
-    .catch(err => logger.warn('Could not recover interrupted reads', { error: err.message }));
+  // Receipts a restart left half-read: the read queue's jobs caught mid-read
+  // go back in the queue, older rows are queued from their files or released
+  // with a note, and then the queue starts reading.
+  const readQueue = require('./receipts/read-queue');
+  try {
+    readQueue.recover();
+    require('./receipts/recover').recoverStuckReads({ before: BOOT_AT });
+  } catch (err) {
+    logger.warn('Could not recover interrupted reads', { error: err.message });
+  }
+  readQueue.start();
 
   // Copies of receipts left in the temp folder by a PDF read this process's
   // predecessor did not finish: an exit skips the read's own clean-up.
@@ -166,10 +175,11 @@ const server = app.listen(PORT, HOST, () => {
 });
 
 // pm2 sends SIGINT on a reload and waits kill_timeout before killing. Stop
-// taking requests and give the reads under way that long to land; whatever
-// does not is picked up by recoverStuckReads on the next boot. The rate timers
-// stop first, so a tick does not start new provider calls and writes inside
-// the drain, and the database is closed last so its WAL is checkpointed.
+// taking requests and new reads, and give the reads under way that long to
+// land; whatever does not is still a job, picked up again on the next boot.
+// The rate timers stop first, so a tick does not start new provider calls and
+// writes inside the drain, and the database is closed last so its WAL is
+// checkpointed.
 let _stopping = false;
 function shutdown(signal) {
   if (_stopping) return;
@@ -177,8 +187,11 @@ function shutdown(signal) {
   logger.info('Shutting down', { signal });
   server.close();
   try { require('./fx/sweeper').stop(); require('./fx/live').stop(); } catch {}
-  const deadline = new Promise(resolve => setTimeout(resolve, 6500).unref());
-  Promise.race([receiptRoutes._drain(), deadline]).finally(() => {
+  const readQueue = require('./receipts/read-queue');
+  readQueue.stop();
+  const DRAIN_MS = 6500;
+  const deadline = new Promise(resolve => setTimeout(resolve, DRAIN_MS).unref());
+  Promise.race([readQueue.drain(DRAIN_MS), deadline]).finally(() => {
     try { require('./db').close(); } catch {}
     process.exit(0);
   });

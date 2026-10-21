@@ -15,7 +15,18 @@ beforeEach(() => jest.clearAllMocks());
 describe('receipts/receipt-parser', () => {
   describe('normalise — where a bad model response is made harmless', () => {
     test('passes a clean response through', () => {
-      expect(parser.normalise(good)).toEqual({ ...good, invoiceNumber: null, lineItems: [], box: null });
+      expect(parser.normalise(good)).toEqual({ ...good, invoiceNumber: null, lineItems: [], box: null, city: null, country: null, docType: null });
+    });
+
+    // A case is named and dated from these, so a made-up value names it wrongly.
+    test('where and what: a city as printed, a two-letter country, a known kind of document, or nothing', () => {
+      expect(parser.normalise({ ...good, city: '  Navi   Mumbai ', country: 'in', docType: 'Hotel' }))
+        .toMatchObject({ city: 'Navi Mumbai', country: 'IN', docType: 'hotel' });
+      expect(parser.normalise({ ...good, city: 'x'.repeat(200) }).city).toHaveLength(80);
+      for (const country of ['India', 'IND', 'S', 12, '', null]) expect(parser.normalise({ ...good, country }).country).toBeNull();
+      for (const docType of ['taxi', 'restaurant', '', 7, null]) expect(parser.normalise({ ...good, docType }).docType).toBeNull();
+      for (const city of ['   ', 42, null]) expect(parser.normalise({ ...good, city }).city).toBeNull();
+      expect([...parser.DOC_TYPES]).toEqual(['hotel', 'flight', 'ride', 'meal', 'fuel', 'parking', 'telco', 'other']);
     });
 
     test('normalises time and prefixes category onto description if missing', () => {
@@ -186,6 +197,17 @@ describe('receipts/receipt-parser', () => {
       // Both rules exist because a receipt photo invites exactly these errors.
       expect(parser.SYSTEM_PROMPT).toMatch(/Never invent/i);
       expect(parser.SYSTEM_PROMPT).toMatch(/never the cash tendered/i);
+    });
+
+    test('the prompt asks where and what, and takes a country only on the receipt\'s evidence', () => {
+      const p = parser.SYSTEM_PROMPT;
+      expect(p).toMatch(/- city:/);
+      expect(p).toMatch(/- country: the ISO 3166-1 alpha-2 code/);
+      expect(p).toMatch(/ONLY when the receipt prints it or makes it\s+plain/);
+      expect(p).toMatch(/Singapore\s+GST registration/);
+      expect(p).toMatch(/CGST, SGST/);
+      expect(p).toMatch(/A currency alone does not settle the country/);
+      for (const t of parser.DOC_TYPES) expect(p).toContain(`"${t}"`);
     });
   });
 });
@@ -448,6 +470,15 @@ describe('receipt-parser — reading several at once', () => {
     expect(content.filter(c => c.type === 'image_url')).toHaveLength(2);
     expect(JSON.stringify(content)).toContain('Receipt 1:');
     expect(JSON.stringify(content)).toContain('Receipt 2:');
+    // The batch reply names its fields, and where and what are among them.
+    expect(content[0].text).toMatch(/"city": \.\.\., "country": \.\.\., "docType": \.\.\./);
+  });
+
+  test('a batch answer keeps where and what, cleaned as a single read is', async () => {
+    callGemini.mockResolvedValue(JSON.stringify([{ ...read(1, 'Grab', 15.8), city: 'Singapore', country: 'sg', docType: 'ride' }, { ...read(2, 'Shell', 80), docType: 'petrol' }]));
+    const out = await parser.parseReceiptBatch('u1', [img(1), img(2)]);
+    expect(out[0]).toMatchObject({ city: 'Singapore', country: 'SG', docType: 'ride' });
+    expect(out[1]).toMatchObject({ city: null, country: null, docType: null });
   });
 
   test('an empty list does no work', async () => {

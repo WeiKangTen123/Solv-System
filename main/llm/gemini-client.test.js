@@ -334,6 +334,28 @@ describe('gemini-client pacing, waiting and retries', () => {
   });
 });
 
+// Checking a key in Settings asks the reader's models and one widely
+// available model, never one Google has retired.
+describe('gemini-client testGeminiKey', () => {
+  const client = require('./gemini-client');
+  beforeEach(() => jest.clearAllMocks());
+
+  test('the models tried are the configured ones, then gemini-2.5-flash, and none retired', async () => {
+    const notFound = Object.assign(new Error('model not found'), { response: { status: 404, data: { error: { message: 'model not found' } } } });
+    axios.post.mockRejectedValue(notFound);
+    await expect(client.testGeminiKey('k')).rejects.toThrow(/Gemini test failed: model not found/);
+    const tried = axios.post.mock.calls.map(c => c[1].model);
+    expect(tried).toEqual([...client.GEMINI_MODELS, 'gemini-2.5-flash']);
+    expect(tried).not.toEqual(expect.arrayContaining(['gemini-2.0-flash']));
+    expect(tried).not.toEqual(expect.arrayContaining(['gemini-1.5-flash']));
+  });
+
+  test('the first model that answers is the one reported', async () => {
+    axios.post.mockResolvedValueOnce(okResponse('pong'));
+    await expect(client.testGeminiKey(' k ')).resolves.toMatchObject({ ok: true, model: client.GEMINI_MODELS[0], latencyMs: expect.any(Number) });
+  });
+});
+
 describe('gemini-client streaming', () => {
   const client = require('./gemini-client');
   const realFetch = global.fetch;

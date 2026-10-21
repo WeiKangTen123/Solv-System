@@ -22,6 +22,17 @@ describe('store/expenses', () => {
     expect(store.findReceiptByHash(u.companyId, 'nope')).toBeNull();
   });
 
+  test('what a converted file was, and where and what a receipt is, go through create, update and read', () => {
+    expect(rc().convertedFrom).toBeNull();
+    const r = rc({ sha256: 'heic1', convertedFrom: 'image/heic' });
+    expect(store.getReceipt(r.id).convertedFrom).toBe('image/heic');
+    const e = store.createExpense({ companyId: u.companyId, userId: u.id, receiptId: r.id, city: 'Pune', country: 'IN', docType: 'hotel' });
+    expect(store.getExpense(e.id)).toMatchObject({ city: 'Pune', country: 'IN', docType: 'hotel', receipt: { convertedFrom: 'image/heic' } });
+    expect(store.updateExpense(e.id, { city: 'Mumbai', docType: undefined })).toMatchObject({ city: 'Mumbai', country: 'IN', docType: 'hotel' });
+    expect(store.listExpenses({ receiptId: r.id })[0]).toMatchObject({ city: 'Mumbai', country: 'IN', docType: 'hotel', receipt: { convertedFrom: 'image/heic' } });
+    expect(store.createExpense({ companyId: u.companyId, userId: u.id })).toMatchObject({ city: null, country: null, docType: null });
+  });
+
   test('lines must reconcile to the total, to the cent', () => {
     const e = store.createExpense({ companyId: u.companyId, userId: u.id, currency: 'INR', total: 100, status: 'review-needed' });
     expect(() => store.replaceLines(e.id, [{ category: 'Lodging', amount: 60 }, { category: 'Meals', amount: 39.99 }])).toThrow(/99\.99.*100\.00/);

@@ -50,6 +50,24 @@ ${CATEGORIES.map(c => `    "${c.name}": ${c.scope}`).join('\n')}
   "Client lunch to discuss the project" is wrong, because the receipt does not say so.
   Do not invent a business purpose, a client, a meeting or a reason — the claimant
   adds that when they review. Do not add a place that is not printed.
+- city: the city the money was spent in, as printed on the receipt (the merchant's
+  address, the hotel's location, a ride's pickup), e.g. "Mumbai", "Kuala Lumpur".
+  null when no city is printed. Never guess one from a chain's name.
+- country: the ISO 3166-1 alpha-2 code of the country the money was spent in
+  (SG, MY, IN, ID, TH, AU, GB, US...), ONLY when the receipt prints it or makes it
+  plain: the address names the country or a city in it, the phone number has the
+  country's code (+65 SG, +60 MY, +91 IN), or the tax is named for it (a Singapore
+  GST registration number with a UEN means SG; CGST, SGST, IGST or a GSTIN means
+  IN; SST means MY). null otherwise. A currency alone does not settle the country.
+- docType: what kind of document this is, exactly one of:
+    "hotel": a hotel or serviced-apartment bill, folio or booking receipt
+    "flight": an air ticket, airline receipt or boarding pass
+    "ride": a taxi, ride-hailing (Grab, Gojek, Uber), train, bus or ferry fare
+    "meal": a restaurant, café, bar or food-delivery receipt
+    "fuel": a petrol or charging station receipt
+    "parking": a car park or parking receipt
+    "telco": a phone, mobile data or internet bill
+    "other": anything else
 - lineItems: array of each individual charge listed on the receipt with its price:
     [
       {
@@ -124,6 +142,23 @@ function _dropPayments(lineItems, total) {
     return kept.filter(li => Math.round(li.unitAmount * 100) !== totalCents);
   }
   return kept;
+}
+
+// Where and what. A case is named and dated from these (a trip to Mumbai, a
+// month of fuel), so a value the model made up would name it wrongly: an
+// unknown kind of document, or a country that is not two letters, is nothing.
+const DOC_TYPES = new Set(['hotel', 'flight', 'ride', 'meal', 'fuel', 'parking', 'telco', 'other']);
+function _docType(value) {
+  const s = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return DOC_TYPES.has(s) ? s : null;
+}
+function _country(value) {
+  const s = typeof value === 'string' ? value.trim().toUpperCase() : '';
+  return /^[A-Z]{2}$/.test(s) ? s : null;
+}
+function _city(value) {
+  const s = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+  return s ? s.slice(0, 80) : null;
 }
 
 // Names are printed in whatever case the hotel's system uses; one colleague
@@ -229,6 +264,9 @@ function normalise(parsed) {
     tax:         taxOut,
     subTotal:    sub !== null && sub >= 0 && (usableTotal === null || sub <= usableTotal) ? sub : null,
     description: desc,
+    city:        _city(parsed.city),
+    country:     _country(parsed.country),
+    docType:     _docType(parsed.docType),
     lineItems,
     confidence:  parsed.confidence === 'high' ? 'high' : 'low',
     box:         _box(parsed.box_2d),
@@ -482,7 +520,7 @@ function _batchPrompt(count) {
   return `You are reading ${count} SEPARATE receipts. They are unrelated to each other.
 
 Return ONLY a JSON array with exactly ${count} entries, one per image, in the order given:
-[{"index": 1, "count": 1, "merchant": ..., "date": ..., "time": ..., "category": ..., "currency": ..., "total": ..., "tax": ..., "subTotal": ..., "description": ..., "lineItems": [...], "confidence": ...}]
+[{"index": 1, "count": 1, "merchant": ..., "date": ..., "time": ..., "category": ..., "currency": ..., "total": ..., "tax": ..., "subTotal": ..., "city": ..., "country": ..., "docType": ..., "description": ..., "lineItems": [...], "confidence": ...}]
 
 "index" is the image's position, starting at 1. Every image must appear exactly once.
 "count" is how many separate receipts you can see in that image, usually 1. When it is more than 1, still give that image one entry.
@@ -574,4 +612,4 @@ async function parseReceiptBatch(userId, images, { batchSize = BATCH_SIZE, onPro
   return results;
 }
 
-module.exports = { parseReceiptImage, parseReceiptText, parseReceiptPages, parseReceiptBatch, _readBatch, BATCH_SIZE, READ_MAX_TOKENS, PAGES_MAX_TOKENS, normalise, normaliseMany, splittable, separateDocuments, SYSTEM_PROMPT, _num, _isoDate, _time, _currency, _box, _overlapFraction, _withoutTransfer };
+module.exports = { parseReceiptImage, parseReceiptText, parseReceiptPages, parseReceiptBatch, _readBatch, BATCH_SIZE, READ_MAX_TOKENS, PAGES_MAX_TOKENS, normalise, normaliseMany, splittable, separateDocuments, SYSTEM_PROMPT, DOC_TYPES, _num, _isoDate, _time, _currency, _box, _overlapFraction, _withoutTransfer };

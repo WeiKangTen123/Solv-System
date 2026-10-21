@@ -9,6 +9,34 @@ jest.mock('../receipts/receipt-parser', () => ({
 jest.mock('../pdf/render', () => ({ renderPdfPages: jest.fn().mockResolvedValue(null) }));
 jest.mock('../fx/rates', () => ({ getRate: jest.fn().mockResolvedValue({ rate: 1, rateDate: '2026-09-01', providerDate: '2026-09-01', source: 'frankfurter', fetchedAt: 'x' }) }));
 
+// A real .zip, STORED (uncompressed), built by hand as claims/claim-archive.test.js does.
+function makeZip(files) {
+  const zlib = require('zlib');
+  const chunks = [], central = [];
+  let offset = 0;
+  for (const { name, data } of files) {
+    const nameBuf = Buffer.from(name, 'utf8');
+    const body = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    const crc = zlib.crc32(body) >>> 0;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(crc, 14); local.writeUInt32LE(body.length, 18); local.writeUInt32LE(body.length, 22);
+    local.writeUInt16LE(nameBuf.length, 26);
+    chunks.push(local, nameBuf, body);
+    const cen = Buffer.alloc(46);
+    cen.writeUInt32LE(0x02014b50, 0); cen.writeUInt16LE(20, 4); cen.writeUInt16LE(20, 6);
+    cen.writeUInt32LE(crc, 16); cen.writeUInt32LE(body.length, 20); cen.writeUInt32LE(body.length, 24);
+    cen.writeUInt16LE(nameBuf.length, 28); cen.writeUInt32LE(offset, 42);
+    central.push(cen, nameBuf);
+    offset += local.length + nameBuf.length + body.length;
+  }
+  const cd = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...chunks, cd, end]);
+}
+
 describe('routes/receipts', () => {
   let app, users, u, token, store, receiptStore, pairing, parser, routes;
   let _n = 0;
@@ -51,23 +79,83 @@ describe('routes/receipts', () => {
     expect(dup.body.duplicateOf).toBe(first.body.expense.id);
   });
 
-  test('rejects an unsupported type, an oversized file, and bad base64 without creating rows', async () => {
-    await upload({ mime: 'image/heic', data: jpeg() }).expect(400);
+  test('rejects a file of no accepted kind, an oversized file, and bad base64 without creating rows', async () => {
+    const bmp = Buffer.concat([Buffer.from('BM'), Buffer.alloc(60)]).toString('base64');
+    const refused = await upload({ mime: 'image/bmp', data: bmp, filename: 'scan.bmp' }).expect(400);
+    expect(refused.body.error).toMatch(/Accepted: JPEG, PNG, PDF, HEIC\/HEIF, WebP, TIFF, GIF and AVIF\./);
     await upload({ mime: 'image/jpeg', data: Buffer.alloc(receiptStore.MAX_BYTES + 10, 1).toString('base64') }).expect(413);
     await upload({ mime: 'image/jpeg', data: 'not base64 !!!' }).expect(400);
     expect(store.listExpenses({ userId: u.id })).toHaveLength(0);
   });
 
   // The bytes decide what a file is. Declared as a PDF, an HTML page is
-  // refused; declared as a JPEG, a PNG is kept as the PNG it is.
-  test('a file is stored as what its bytes are, and refused when they are none of JPEG, PNG or PDF', async () => {
+  // refused; declared as a JPEG, a PNG is kept as the PNG it is; declared as
+  // a HEIC, a JPEG is kept as the JPEG it is and nothing is converted.
+  test('a file is stored as what its bytes are, and refused when it is none of the kinds taken', async () => {
     const html = Buffer.from('<html><script>alert(1)</script></html>').toString('base64');
-    const bad = await upload({ mime: 'application/pdf', data: html }).expect(400);
-    expect(bad.body.error).toMatch(/not a JPEG, PNG or PDF/);
+    const bad = await upload({ mime: 'application/pdf', data: html, filename: 'x.pdf' }).expect(400);
+    expect(bad.body.error).toMatch(/"x\.pdf" is not a receipt file Solv can read/);
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7]).toString('base64');
     const ok = await upload({ mime: 'image/jpeg', data: png }).expect(201);
-    expect(ok.body.receipt).toMatchObject({ mime: 'image/png' });
+    expect(ok.body.receipt).toMatchObject({ mime: 'image/png', convertedFrom: null });
     expect(ok.body.receipt.file).toMatch(/\.png$/);
+    const named = await upload({ mime: 'image/heic', data: jpeg(), filename: 'IMG_1.HEIC' }).expect(201);
+    expect(named.body.receipt).toMatchObject({ mime: 'image/jpeg', convertedFrom: null });
+  });
+
+  // Converted first, so the quota, the duplicate check and the hash are all
+  // about the bytes that are kept.
+  test('a WebP is stored as the JPEG it becomes, and the same WebP again is the same receipt', async () => {
+    const sharp = require('sharp');
+    const webp = (await sharp({ create: { width: 120, height: 160, channels: 3, background: '#c33' } }).webp().toBuffer()).toString('base64');
+    const first = await upload({ mime: 'image/webp', data: webp, filename: 'shot.webp' }).expect(201);
+    expect(first.body.receipt).toMatchObject({ mime: 'image/jpeg', convertedFrom: 'image/webp', originalName: 'shot.webp' });
+    expect(first.body.receipt.file).toMatch(/\.jpg$/);
+    const kept = receiptStore.forUser(u.id).read(first.body.receipt.file);
+    expect(kept.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+    expect(first.body.receipt.sizeBytes).toBe(kept.length);
+    expect(first.body.receipt.sha256).toBe(require('../intake/dedup').hashBuffer(kept));
+    const again = await upload({ mime: 'image/webp', data: webp }).expect(409);
+    expect(again.body.duplicateOf).toBe(first.body.expense.id);
+  });
+
+  // The read is a job (receipts/read-queue.js), not a promise in the request.
+  test('the read is queued, and a busy AI is waited out rather than failed', async () => {
+    const readQueue = require('../receipts/read-queue');
+    parser.parseReceiptImage.mockResolvedValueOnce({ receipts: [], split: false, unavailable: true })
+      .mockResolvedValueOnce({ split: false, receipts: [{ merchant: 'Grab', total: 18.4, currency: 'SGD', category: 'Air & Transport', confidence: 'high', lineItems: [] }] });
+    const up = await upload({ mime: 'image/jpeg', data: jpeg() }).expect(201);
+    await routes._drain();
+    expect(readQueue.statesFor([up.body.receipt.id]).get(up.body.receipt.id)).toMatchObject({ state: 'queued', attempts: 1, errorKind: 'unavailable' });
+    expect(store.getExpense(up.body.expense.id).status).toBe('reading');
+
+    // Try now, as the page's button does.
+    const tried = await request(serverFor(app)).post(`/api/receipts/${up.body.receipt.id}/read/retry`).set(auth()).expect(200);
+    expect(tried.body.read).toMatchObject({ state: expect.stringMatching(/queued|reading/) });
+    await routes._drain();
+    expect(store.getExpense(up.body.expense.id)).toMatchObject({ status: 'review-needed', merchant: 'Grab' });
+    expect(readQueue.statesFor([up.body.receipt.id]).get(up.body.receipt.id).state).toBe('done');
+    await request(serverFor(app)).post(`/api/receipts/${up.body.receipt.id}/read/retry`).set(auth()).expect(409);
+  });
+
+  test('a read still waiting can be stopped by its owner, and by nobody else', async () => {
+    const readQueue = require('../receipts/read-queue');
+    readQueue.stop();
+    // u is the company's first user and so its admin; the receipt is a colleague's.
+    const owner = await users.createUser({ email: `s${Date.now()}@solv.sg`, password: 'password123', companyId: u.companyId });
+    const as = { Authorization: `Bearer ${require('../middleware/auth-middleware').signSession(owner, users.tokenVersion(owner.id))}` };
+    const up = await request(serverFor(app)).post('/api/receipts').set(as).send({ mime: 'image/jpeg', data: jpeg() }).expect(201);
+    await request(serverFor(app)).delete(`/api/receipts/${up.body.receipt.id}/read`).set(auth()).expect(404);
+    await request(serverFor(app)).post(`/api/receipts/${up.body.receipt.id}/read/retry`).set(auth()).expect(404);
+    await request(serverFor(app)).delete('/api/receipts/no-such-receipt/read').set(as).expect(404);
+
+    const stopped = await request(serverFor(app)).delete(`/api/receipts/${up.body.receipt.id}/read`).set(as).expect(200);
+    expect(stopped.body.read).toMatchObject({ state: 'cancelled' });
+    expect(stopped.body.expenses[0]).toMatchObject({ status: 'review-needed', errorMsg: 'Reading was stopped. Type the fields from the receipt, or press Re-read.' });
+    await request(serverFor(app)).delete(`/api/receipts/${up.body.receipt.id}/read`).set(as).expect(409);
+    readQueue.start();
+    await routes._drain();
+    expect(parser.parseReceiptImage).not.toHaveBeenCalled();
   });
 
   test('one person cannot fill the disk', async () => {
@@ -105,7 +193,7 @@ describe('routes/receipts', () => {
     await request(serverFor(app)).get(`/api/receipts/capture/${pair.body.token}`).expect(401);
   });
 
-  // After the twentieth photo the link is spent, not expired: the phone page,
+  // After its last photo the link is spent, not expired: the phone page,
   // reloaded or polling, still shows what it sent and says the limit is reached.
   test('a spent phone link still opens and reports its photos, and takes no more', async () => {
     const pair = await request(serverFor(app)).post('/api/receipts/pair').set(auth()).expect(201);
@@ -117,7 +205,7 @@ describe('routes/receipts', () => {
     await request(serverFor(app)).post(`/api/receipts/capture/${pair.body.token}`).send({ mime: 'image/jpeg', data: jpeg() }).expect(401);
   });
   // Phone links outlived sign-out and removal, still storing receipts (and
-  // spending reader quota) under the account for up to twenty photos.
+  // spending reader quota) under the account until the link ran out.
   test('a phone link dies with sign-out, and with the removal of its owner', async () => {
     app.use('/api/auth', require('./auth'));
     let pair = await request(serverFor(app)).post('/api/receipts/pair').set(auth()).expect(201);
@@ -293,5 +381,57 @@ describe('routes/receipts — uploading into a case', () => {
     const loose = store.listExpenses({ userId: owner.id, unfiled: true });
     expect(loose).toHaveLength(1);
     expect(loose[0].reportId).toBeFalsy();
+  });
+
+  // ── a zip of receipts ─────────────────────────────────────────────────────
+  const archive = (body, tok = ownerTok) => request(serverFor(app)).post('/api/receipts/archive').set(as(tok)).send(body);
+  const zipOf = files => makeZip(files).toString('base64');
+
+  test('a zip of receipts is unpacked into the case, each converted, stored and queued, and what was not taken says why', async () => {
+    const sharp = require('sharp');
+    const c = newCase();
+    const webp = await sharp({ create: { width: 80, height: 100, channels: 3, background: '#3a3' } }).webp().toBuffer();
+    const one = Buffer.from(jpeg(), 'base64');
+    const res = await archive({ reportId: c.id, filename: 'trip.zip', data: zipOf([
+      { name: 'trip/one.jpg', data: one },
+      { name: 'trip/two.webp', data: webp },
+      { name: 'trip/again.jpg', data: one },                       // the same bytes twice
+      { name: 'trip/notes.txt', data: 'hello' },
+      { name: '__MACOSX/trip/._one.jpg', data: 'junk' },
+    ]) }).expect(201);
+    expect(res.body.stored.map(s => [s.receipt.originalName, s.receipt.mime, s.receipt.convertedFrom])).toEqual([
+      ['one.jpg', 'image/jpeg', null], ['two.webp', 'image/jpeg', 'image/webp'],
+    ]);
+    expect(res.body.stored.every(s => s.expense.reportId === c.id && s.imageToken)).toBe(true);
+    expect(res.body.skipped).toEqual([
+      { name: 'trip/again.jpg', why: expect.stringMatching(/already uploaded this receipt/) },
+      { name: 'trip/notes.txt', why: 'not a receipt file type' },
+    ]);
+    await routes._drain();
+    expect(reports.getReport(c.id).expenses).toHaveLength(2);
+    const states = require('../receipts/read-queue').statesFor(res.body.stored.map(s => s.receipt.id));
+    expect([...states.values()].map(s => s.state)).toEqual(['done', 'done']);
+  });
+
+  test('a zip with a claim form in it is sent to the claim import, and nothing is stored', async () => {
+    const c = newCase();
+    const res = await archive({ reportId: c.id, data: zipOf([
+      { name: 'claim/Expense claim.xlsx', data: Buffer.from('PK fake workbook') },
+      { name: 'claim/r1.jpg', data: Buffer.from(jpeg(), 'base64') },
+    ]) }).expect(409);
+    expect(res.body).toEqual({ error: expect.any(String), claimForm: true });
+    expect(store.listExpenses({ userId: owner.id })).toHaveLength(0);
+  });
+
+  test('a zip needs the owner\'s own open case, and has to be a zip', async () => {
+    const files = zipOf([{ name: 'r.jpg', data: Buffer.from(jpeg(), 'base64') }]);
+    await archive({ data: files }).expect(400);
+    await archive({ reportId: newCase(other).id, data: files }).expect(403);
+    await archive({ reportId: 'no-such-case', data: files }).expect(404);
+    const c = newCase();
+    await archive({ reportId: c.id, data: Buffer.from('not a zip').toString('base64') }).expect(400);
+    await archive({ reportId: c.id }).expect(400);
+    await request(serverFor(app)).post('/api/receipts/archive').send({ reportId: c.id, data: files }).expect(401);
+    expect(store.listExpenses({ userId: owner.id })).toHaveLength(0);
   });
 });

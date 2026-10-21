@@ -14,6 +14,11 @@ const { sniffMime } = require('../receipts/receipt-store');
 // Mirrors receipt-store's accepted types: anything else cannot become a Xero
 // attachment, so there is no point extracting it.
 const IMAGE_EXT = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', pdf: 'application/pdf' };
+// The kinds an upload converts to a JPEG or PDF on the way in
+// (intake/convert.js). A zip of receipts unpacked into a case asks for these
+// too (routes/receipts.js); the claim import does not, and keeps only what it
+// can store as it is.
+const CONVERTIBLE_EXT = { heic: 'image/heic', heif: 'image/heif', webp: 'image/webp', tif: 'image/tiff', tiff: 'image/tiff', gif: 'image/gif', avif: 'image/avif' };
 
 // An import of more receipts than this is a mistake, not a claim. Each one
 // costs a vision call, so an unbounded import is an unbounded bill. The limit
@@ -26,9 +31,9 @@ const MAX_ENTRY_BYTES = 15 * 1024 * 1024;   // before compression to ≤3MB
 // route caps what arrives; this caps what it can become.
 const MAX_TOTAL_BYTES = 150 * 1024 * 1024;
 
-function mimeFor(name) {
+function mimeFor(name, { convertible = false } = {}) {
   const ext = String(name).split('.').pop().toLowerCase();
-  return IMAGE_EXT[ext] || null;
+  return IMAGE_EXT[ext] || (convertible && CONVERTIBLE_EXT[ext]) || null;
 }
 
 // macOS metadata, hidden files, and directory entries.
@@ -40,8 +45,9 @@ function isJunk(name) {
 
 // Returns { entries: [{ name, mime, buffer }], skipped: [...] }. Never throws —
 // a corrupt archive yields no entries and a reason, so an import can report it
-// rather than dying. `max` is how many receipts this archive may still add.
-function readArchive(buffer, { max = MAX_RECEIPTS } = {}) {
+// rather than dying. `max` is how many receipts this archive may still add;
+// `convertible` keeps the kinds intake/convert.js turns into a JPEG or PDF.
+function readArchive(buffer, { max = MAX_RECEIPTS, convertible = false } = {}) {
   return new Promise(resolve => {
     if (!Buffer.isBuffer(buffer) || !buffer.length) {
       return resolve({ entries: [], skipped: [], error: 'empty archive' });
@@ -65,7 +71,7 @@ function readArchive(buffer, { max = MAX_RECEIPTS } = {}) {
         // The type is checked before the limit, so a stray text file past the
         // hundredth receipt is skipped as what it is rather than counted as one
         // receipt too many.
-        const mime = mimeFor(name);
+        const mime = mimeFor(name, { convertible });
         if (!mime) { skipped.push({ name, reason: 'not a receipt file type' }); return zip.readEntry(); }
         if (entries.length >= max) { skipped.push({ name, reason: 'archive limit reached' }); return zip.readEntry(); }
         if (entry.uncompressedSize > MAX_ENTRY_BYTES) { skipped.push({ name, reason: 'file too large' }); return zip.readEntry(); }
@@ -81,8 +87,9 @@ function readArchive(buffer, { max = MAX_RECEIPTS } = {}) {
             const buffer = Buffer.concat(chunks);
             // The name is a claim and the bytes are the answer. A phone photo
             // saved as .png is still a JPEG, and is kept as one; anything that
-            // is not a JPEG, PNG or PDF whatever it is called is not kept.
-            const actual = sniffMime(buffer);
+            // is not a JPEG, PNG or PDF whatever it is called is not kept —
+            // or, when asked for, one of the kinds an upload converts.
+            const actual = sniffMime(buffer) || (convertible ? require('../intake/convert').convertibleMime(buffer) : null);
             if (!actual) skipped.push({ name, reason: 'not a real image or PDF' });
             else entries.push({ name, mime: actual, buffer });
             zip.readEntry();

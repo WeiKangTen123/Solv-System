@@ -96,6 +96,7 @@ async function applyRead(expenseId, r, { reread = false } = {}) {
     total: r.total ?? undefined, tax: r.tax ?? undefined, subTotal: r.subTotal ?? undefined,
     purpose: purpose ?? undefined,
     description: r.description ?? undefined, category: canonicalCategory(r.category) ?? undefined,
+    city: r.city ?? undefined, country: r.country ?? undefined, docType: r.docType ?? undefined,
     // A successful read supersedes every earlier note about reading this
     // receipt — "could not be read", a suspected duplicate (flagIfSuspected
     // puts that one back if it still holds). What a read may add is that the
@@ -105,7 +106,8 @@ async function applyRead(expenseId, r, { reread = false } = {}) {
     // What the reader saw on the paper, kept beside whatever the fields say
     // later, so a total that was changed away from the receipt shows.
     aiRead: { merchant: r.merchant ?? null, receiptDate: r.date ?? null, currency: r.currency ?? null, total: r.total ?? null,
-              tax: r.tax ?? null, invoiceNo: r.invoiceNumber ?? null, category: canonicalCategory(r.category) ?? null },
+              tax: r.tax ?? null, invoiceNo: r.invoiceNumber ?? null, category: canonicalCategory(r.category) ?? null,
+              city: r.city ?? null, country: r.country ?? null, docType: r.docType ?? null },
   };
   const updated = store.updateExpense(expenseId, patch);
   if (!updated) return null;
@@ -296,11 +298,23 @@ function _sibling({ companyId, userId, receiptId, source, page = null, box = nul
 // The upload path: read the file, and make its parts into rows. The first
 // part is the expense the upload created; every further part is a sibling
 // owning its page or region of the shared file.
-async function readReceipt({ companyId, userId, receiptId, expenseId, buffer, mime, source = 'upload' }) {
+//
+// With deferIfUnavailable (the read queue, receipts/read-queue.js), a read
+// that found every AI key busy and so read nothing at all answers
+// { unavailable: true } and touches nothing: the rows stay 'reading' and the
+// receipt unstamped, for the queue to try again in a few minutes. Released
+// with "press Re-read in a few minutes", the person had to do the waiting.
+// A read that got anything at all lands as it always has.
+async function readReceipt({ companyId, userId, receiptId, expenseId, buffer, mime, source = 'upload' }, { deferIfUnavailable = false } = {}) {
   const touched = [expenseId];
   let parsed = null;
+  let deferred = false;
   try {
     const out = await readParts(userId, buffer, mime);
+    if (deferIfUnavailable && out.notes.includes(UNAVAILABLE_NOTE) && !out.parts.some(p => p.r)) {
+      deferred = true;
+      return { unavailable: true };
+    }
     parsed = out.parsed;
     if (out.numPages) store.updateReceipt(receiptId, { pages: out.numPages });
     if (out.notes.length) {
@@ -334,13 +348,16 @@ async function readReceipt({ companyId, userId, receiptId, expenseId, buffer, mi
   } finally {
     // However it ended, the read is over: every row from this file leaves
     // 'reading', and the receipt is stamped so the phone can tell "read,
-    // nothing found" from "still reading".
-    const at = new Date().toISOString();
-    for (const id of touched) {
-      const e = store.getExpense(id);
-      if (e && e.status === 'reading') store.updateExpense(id, { status: 'review-needed' });
+    // nothing found" from "still reading". Unless it was put off, when it
+    // is not over.
+    if (!deferred) {
+      const at = new Date().toISOString();
+      for (const id of touched) {
+        const e = store.getExpense(id);
+        if (e && e.status === 'reading') store.updateExpense(id, { status: 'review-needed' });
+      }
+      store.updateReceipt(receiptId, { parsedAt: at, parseJson: parsed ? parsed.receipts : null });
     }
-    store.updateReceipt(receiptId, { parsedAt: at, parseJson: parsed ? parsed.receipts : null });
   }
   return { expenseIds: touched };
 }
@@ -405,4 +422,4 @@ async function readOne(userId, buffer, mime, { page = null, box = null } = {}) {
   return mine || _scannedPage(userId, buffer, page, box);
 }
 
-module.exports = { readReceipt, readParts, readOne, applyRead, buildLines, flagIfSuspected, currencyNote, withoutCurrencyNote, CURRENCY_NOTE_RE, MAX_PAGES_ONE_DOC };
+module.exports = { readReceipt, readParts, readOne, applyRead, buildLines, flagIfSuspected, currencyNote, withoutCurrencyNote, CURRENCY_NOTE_RE, MAX_PAGES_ONE_DOC, UNAVAILABLE_NOTE };
