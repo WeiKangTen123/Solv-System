@@ -11,6 +11,9 @@ const { issueImageToken } = require('./receipts');
 const { readOne, applyRead, flagIfSuspected } = require('../receipts/read-receipt');
 const wf      = require('../reports/workflow');
 const { isLocked } = wf;
+const { flagsFor } = require('../receipts/flags');
+const { localDate } = require('../utils/zone-date');
+const db      = require('../db');
 const asyncHandler = require('../middleware/async-handler');
 const logger  = require('../utils/logger');
 
@@ -44,9 +47,26 @@ function _loadActionable(req, res) {
   return e;
 }
 
-// The expense, and what the person looking at it may do with it.
+// The company's currency and day, for the flags (receipts/flags.js): "in the
+// future" is the company's today, not the server's UTC one.
+function _flagOptions(companyId) {
+  const c = users.getCompany(companyId) || {};
+  return { baseCurrency: c.baseCurrency || 'SGD', today: localDate(c.timezone || 'Asia/Singapore') };
+}
+// The cases a list of receipts sits in, in one query however many there are:
+// asking per receipt was a query each, on a page that lists hundreds.
+function _casesOf(list) {
+  const ids = [...new Set(list.map(e => e.reportId).filter(Boolean))];
+  if (!ids.length) return new Map();
+  return new Map(db.prepare('SELECT id, number, title, status, period_from, period_to FROM expense_reports WHERE id IN (SELECT value FROM json_each(?))')
+    .all(JSON.stringify(ids)).map(r => [r.id, { number: r.number, title: r.title, status: r.status, periodFrom: r.period_from, periodTo: r.period_to }]));
+}
+
+// The expense, what is worth a look on it, and what the person looking at it
+// may do with it.
 function _out(e, req) {
-  return { expense: e, locked: isLocked(e), ...edit.permissions(e, req.user),
+  const flags = flagsFor(e, _casesOf([e]).get(e.reportId) || null, _flagOptions(e.companyId));
+  return { expense: { ...e, flags }, locked: isLocked(e), ...edit.permissions(e, req.user),
            imageToken: e.receipt ? issueImageToken(e.receipt.userId, e.receipt.id, req.user.id) : null };
 }
 // An error thrown with a status is an answer; anything else is a fault.
@@ -55,7 +75,15 @@ function _answer(res, err) {
   res.status(err.status).json({ error: err.message });
 }
 
+// ?q= finds a receipt by what is printed on it: the merchant, the
+// description or the invoice number, any part, any case.
+const Q_MAX = 100;
+function _matches(e, q) {
+  return [e.merchant, e.description, e.invoiceNo].some(v => v && String(v).toLowerCase().includes(q));
+}
+
 router.get('/', requireAuth, (req, res) => {
+  if (req.query.q !== undefined && typeof req.query.q !== 'string') return res.status(400).json({ error: 'q must be text' });
   const wide = req.query.all === '1' && req.user.role === 'admin';
   const filter = { status: req.query.status || undefined, reportId: req.query.reportId || undefined, unfiled: req.query.unfiled === '1',
                    from: req.query.from || undefined, to: req.query.to || undefined };
@@ -66,7 +94,16 @@ router.get('/', requireAuth, (req, res) => {
     if (!owner || !canView(req.user, owner.id, owner.companyId)) return res.status(404).json({ error: 'Not found' });
     list = store.listExpenses({ userId: owner.id, ...filter });
   } else list = store.listExpenses({ userId: req.user.id, ...filter });
-  res.json({ expenses: list });
+  const q = String(req.query.q || '').trim().slice(0, Q_MAX).toLowerCase();
+  if (q) list = list.filter(e => _matches(e, q));
+  // Each row says which case it is in and what is worth a look on it, so
+  // the list can show both without asking again for every row.
+  const cases = _casesOf(list);
+  const opts = _flagOptions(req.user.companyId);
+  res.json({ expenses: list.map(e => {
+    const c = cases.get(e.reportId) || null;
+    return { ...e, reportNumber: c ? c.number : null, reportTitle: c ? c.title : null, reportStatus: c ? c.status : null, flags: flagsFor(e, c, opts) };
+  }) });
 });
 
 router.get('/:id', requireAuth, (req, res) => { const e = _load(req, res); if (e) res.json(_out(e, req)); });

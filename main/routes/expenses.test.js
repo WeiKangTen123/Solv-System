@@ -235,4 +235,33 @@ describe('routes/expenses', () => {
     r = await request(serverFor(app)).patch(`/api/expenses/${e2.id}/status`).set(as(emp)).send({ status: 'reviewed' }).expect(200);
     expect(r.body.expense.errorMsg).toBeNull();
   });
+
+  // My receipts shows the case each receipt is in and what is worth a look,
+  // from one call, and finds a receipt by what is printed on it.
+  test('the list says which case each receipt is in and carries its flags; q finds by merchant, description or invoice number', async () => {
+    const reports = require('../store/reports');
+    const draft = reports.createReport({ companyId: emp.companyId, userId: emp.id, draft: true });
+    const open = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'Pune', periodFrom: '2026-09-01', periodTo: '2026-09-03' });
+    const a = seed(emp, { merchant: 'Courtyard Pune', invoiceNo: 'INV-77' }); reports.addExpense(open.id, a.id);
+    const b = seed(emp, { merchant: null, description: 'Taxi to Chakan' }); reports.addExpense(draft.id, b.id);
+    const c = seed(emp, { merchant: 'Toast Box' });
+    const list = await request(serverFor(app)).get('/api/expenses').set(as(emp)).expect(200);
+    const byId = Object.fromEntries(list.body.expenses.map(e => [e.id, e]));
+    expect(byId[a.id]).toMatchObject({ reportNumber: open.number, reportTitle: 'Pune', reportStatus: 'open' });
+    expect(byId[a.id].flags.map(f => f.code)).toEqual(expect.arrayContaining(['outside-case', 'no-rate']));
+    expect(byId[b.id]).toMatchObject({ reportNumber: null, reportTitle: null, reportStatus: 'draft' });
+    expect(byId[b.id].flags.map(f => f.code)).toContain('no-merchant');
+    expect(byId[c.id]).toMatchObject({ reportNumber: null, reportTitle: null, reportStatus: null });
+    const q = async s => (await request(serverFor(app)).get(`/api/expenses?q=${encodeURIComponent(s)}`).set(as(emp)).expect(200)).body.expenses.map(e => e.id);
+    expect(await q('courtyard')).toEqual([a.id]);
+    expect(await q('inv-77')).toEqual([a.id]);
+    expect(await q(' chakan ')).toEqual([b.id]);
+    expect((await q('')).sort()).toEqual([a.id, b.id, c.id].sort());
+    expect(await q('nothing like it')).toEqual([]);
+    await request(serverFor(app)).get('/api/expenses?q=a&q=b').set(as(emp)).expect(400);
+    const one = await request(serverFor(app)).get(`/api/expenses/${a.id}`).set(as(emp)).expect(200);
+    expect(one.body.expense.flags.map(f => f.code)).toEqual(expect.arrayContaining(['outside-case', 'no-rate']));
+    const reading = seed(emp, { status: 'reading', merchant: null });
+    expect((await request(serverFor(app)).get(`/api/expenses/${reading.id}`).set(as(emp)).expect(200)).body.expense.flags).toEqual([]);
+  });
 });
