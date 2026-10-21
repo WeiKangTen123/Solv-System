@@ -76,6 +76,11 @@ function intakeView(report, { baseCurrency, today }) {
     caseId: report.id, status: report.status, number: report.number || null,
     counts, etaSeconds, files,
     loose: loose.map(e => _expenseSummary(e, report, ctx)),
+    // The cover as it stands, so the page polling this shows the AI's latest
+    // title and dates without asking for the whole case as well.
+    cover: { kind: report.kind, title: report.title, purpose: report.purpose, periodFrom: report.periodFrom, periodTo: report.periodTo,
+             destination: report.destination, nights: report.nights, advances: report.advances, notes: report.notes },
+    totals: report.totals || null,
     coverAi: report.coverAi || { auto: [], user: [] },
     suggestion: suggestCover(report.expenses, ctx),
     match: report.status === 'draft' ? findMatch(report.id, report.userId) : null,

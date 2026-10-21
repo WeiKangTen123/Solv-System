@@ -101,5 +101,9 @@ describe('GET /api/reports/:id/intake', () => {
     expect(r).toMatchObject({ kind: 'period', periodFrom: '2026-10-01', periodTo: '2026-10-31' });
     expect(r.title).toMatch(/October 2026/);
     expect(r.coverAi.auto).toEqual(expect.arrayContaining(['kind', 'title', 'periodFrom', 'periodTo']));
+    // The page polling the intake sees the cover the AI just wrote.
+    const body = (await get(emp, draft.id).expect(200)).body;
+    expect(body.cover).toMatchObject({ kind: 'period', periodFrom: '2026-10-01', periodTo: '2026-10-31', title: r.title });
+    expect(body.totals).toMatchObject({ expenseCount: 1 });
   });
 });
