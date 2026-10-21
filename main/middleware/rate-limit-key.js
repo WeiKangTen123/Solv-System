@@ -44,4 +44,14 @@ function rateLimitKey(req) {
   return `ip:${ipBucket(req.ip)}`;
 }
 
-module.exports = { rateLimitKey, ipBucket };
+// Requests the global limit does not count. The New case page asks for a
+// case's intake every two seconds while its receipts are being read, and a
+// batch of fifty takes minutes: counted, the page alone spent the person's
+// whole allowance and everything else they did answered 429. It is that one
+// read of that one path, signed in like any other, and nothing else.
+const INTAKE_POLL = /^\/api\/reports\/[^/]+\/intake\/?$/;
+function skipRateLimit(req) {
+  return req.method === 'GET' && INTAKE_POLL.test(req.path || '');
+}
+
+module.exports = { rateLimitKey, ipBucket, skipRateLimit };
