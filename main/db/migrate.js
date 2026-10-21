@@ -216,6 +216,22 @@ function run() {
       }
     }
   });
+
+  // Which cover fields the AI wrote and which the owner set (store/reports.js),
+  // so the AI fills a draft's cover as its receipts are read and never writes
+  // over a field somebody typed.
+  _ensureColumn('expense_reports', 'cover_ai', 'cover_ai TEXT');
+
+  // 8. A case starts as a draft the moment its first receipt lands, and only
+  // takes a number when its owner creates it, so a draft that is abandoned
+  // leaves no gap in the numbers. Another CHECK constraint, and a NOT NULL
+  // dropped, so another rebuild; every case already made keeps its number.
+  // The store's default kind becomes 'case' with it.
+  _step(8, 'a case starts as a draft with no number', () => {
+    const has = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'expense_reports'").get();
+    if (!has || /'draft'/.test(has.sql)) return;
+    _rebuild('expense_reports');
+  });
 }
 
 // Rebuilds one table to the shape schema.sql now gives it, carrying every row
