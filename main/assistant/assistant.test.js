@@ -109,6 +109,25 @@ describe('assistant', () => {
       expect(await tools.run(own, 'propose_file_in_case', { id: e.id, caseId: mine.id })).toMatchObject({ proposed: true });
     });
 
+    // A draft is listed, so the assistant can say where receipts went, but it
+    // is the New case page's until it is created: never a place to file.
+    test('drafts are listed and named as drafts, and are not offered as a place to file', async () => {
+      const own = ctxFor(emp);
+      const draft = reports.createReport({ companyId: emp.companyId, userId: emp.id, draft: true });
+      const open = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'Open' });
+      const e = seed(emp);
+      reports.addExpense(draft.id, e.id);
+      const all = await tools.run(own, 'find_cases', {});
+      expect(all.cases.map(c => [c.status, c.number])).toEqual(expect.arrayContaining([['draft', null], ['open', open.number]]));
+      expect((await tools.run(own, 'find_cases', { status: 'draft' })).cases.map(c => c.id)).toEqual([draft.id]);
+      expect((await tools.run(own, 'find_cases', { status: 'open' })).cases.map(c => c.id)).toEqual([open.id]);
+      expect((await tools.run(own, 'get_receipt', { id: e.id })).case).toMatchObject({ number: null, label: 'a draft', status: 'draft' });
+      const other = seed(emp);
+      expect((await tools.run(own, 'propose_file_in_case', { id: other.id, caseId: draft.id })).error).toMatch(/still a draft/);
+      // taking one out of a draft, or moving it on to an open case, is filing like any other
+      expect(await tools.run(own, 'propose_file_in_case', { id: e.id, caseId: open.id })).toMatchObject({ proposed: true });
+    });
+
     test('nothing can be proposed on a receipt in a case that is in Xero', async () => {
       const e = seed(emp);
       const r = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'T' });

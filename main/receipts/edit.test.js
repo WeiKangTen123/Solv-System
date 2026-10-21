@@ -138,4 +138,41 @@ describe('receipts/edit', () => {
     expect(log.find(c => c.field === 'status')).toMatchObject({ oldValue: 'to check', newValue: 'checked', via: 'assistant', label: 'Status' });
     expect(log.find(c => c.field === 'case')).toMatchObject({ oldValue: null, newValue: r.number, via: 'app', label: 'Case' });
   });
+
+  // A draft takes receipts like an open case, and gives them up the same way:
+  // the New case page files into one before it has a number.
+  test('a receipt moves into a draft, out of one, and between a draft and an open case; never into or out of a claimed one', () => {
+    const reports = require('../store/reports');
+    const e = seed();                                                    // not checked: filing does not ask
+    const draft = reports.createReport({ companyId: emp.companyId, userId: emp.id, draft: true });
+    const open = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'Open' });
+    expect(edit.fileInCase(e.id, draft.id, actor(emp)).reportId).toBe(draft.id);
+    expect(edit.fileInCase(e.id, open.id, actor(emp)).reportId).toBe(open.id);
+    expect(edit.fileInCase(e.id, draft.id, actor(emp)).reportId).toBe(draft.id);
+    expect(edit.fileInCase(e.id, null, actor(emp)).reportId).toBeNull();
+    const claimed = reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'Claimed' });
+    require('../db').prepare("UPDATE expense_reports SET status = 'claimed' WHERE id = ?").run(claimed.id);
+    expect(() => edit.fileInCase(e.id, claimed.id, actor(emp))).toThrow(expect.objectContaining({ status: 409 }));
+    reports.addExpense(claimed.id, e.id);
+    expect(() => edit.fileInCase(e.id, draft.id, actor(emp))).toThrow(expect.objectContaining({ status: 409 }));
+    // somebody else's draft is not a place to file
+    const theirs = reports.createReport({ companyId: admin.companyId, userId: admin.id, draft: true });
+    expect(() => edit.fileInCase(seed().id, theirs.id, actor(emp))).toThrow(expect.objectContaining({ status: 403 }));
+  });
+
+  // There is no restore anywhere, so the refusal says what can be done.
+  test('a duplicate is refused with what the person can actually do about it', async () => {
+    const dup = store.createExpense({ companyId: emp.companyId, userId: emp.id, status: 'duplicate', merchant: 'M', receiptDate: '2026-09-04', currency: 'SGD', total: 10,
+      lines: [{ category: 'Meals', amount: 10 }] });
+    const r = require('../store/reports').createReport({ companyId: emp.companyId, userId: emp.id, draft: true });
+    const said = [];
+    await edit.editDetails(dup.id, { merchant: 'x' }, actor(emp)).catch(err => said.push(err.message));
+    try { edit.setStatus(dup.id, 'reviewed', actor(emp)); } catch (err) { said.push(err.message); }
+    try { edit.fileInCase(dup.id, r.id, actor(emp)); } catch (err) { said.push(err.message); }
+    expect(said).toHaveLength(3);
+    for (const m of said) {
+      expect(m).not.toMatch(/restore/i);
+      expect(m).toMatch(/Delete it, or ask an admin/);
+    }
+  });
 });

@@ -8,13 +8,26 @@ const expenses = require('./expenses');
 const now = () => new Date().toISOString();
 const toCents = expenses.toCents, toDollars = expenses.toDollars;
 
+// The cover fields the AI may fill, and the ones cover_ai keeps track of.
+// `auto` are the fields whose current value the AI wrote (the page marks
+// them); `user` are those the owner set, which the AI never writes again.
+const AI_FIELDS = ['kind', 'title', 'purpose', 'periodFrom', 'periodTo', 'destination', 'nights'];
+// A column written by hand or by an older build may hold anything; a cover
+// that cannot be read is one nobody has marked yet, not an error.
+function _coverAi(raw) {
+  let v = null;
+  try { v = raw ? JSON.parse(raw) : null; } catch { v = null; }
+  const list = x => (Array.isArray(x) ? [...new Set(x.filter(f => AI_FIELDS.includes(f)))] : []);
+  return { auto: list(v && v.auto), user: list(v && v.user) };
+}
+
 function _row(r) {
   if (!r) return null;
   return {
     id: r.id, companyId: r.company_id, userId: r.user_id, number: r.number, kind: r.kind, title: r.title, purpose: r.purpose,
     periodFrom: r.period_from, periodTo: r.period_to, destination: r.destination, nights: r.nights, status: r.status,
     advances: toDollars(r.advances_cents) ?? 0, claimedAt: r.claimed_at, xeroInvoiceId: r.xero_invoice_id, xeroError: r.xero_error, notes: r.notes,
-    createdAt: r.created_at, updatedAt: r.updated_at,
+    coverAi: _coverAi(r.cover_ai), createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
 
@@ -36,18 +49,65 @@ const KINDS = new Set(['trip', 'period', 'case']);
 
 const STATE = { status: 'status', claimedAt: 'claimed_at', xeroInvoiceId: 'xero_invoice_id', xeroError: 'xero_error' };
 
+const _filled = v => v !== null && v !== undefined && v !== '';
+
 // The number, the case and its first event together: a failure part-way used
 // to spend a case number on a case that did not exist.
+//
+// A draft is the case a first receipt lands in before its owner has said
+// what it is. It has no number until it is opened (openDraft), so the drafts
+// people abandon leave no gaps in the numbering.
+//
+// Whatever cover the caller gave is the person's (cover_ai.user), so the AI
+// filling in a draft never writes over it. The kind defaults to 'case', the
+// one that claims nothing about the receipts.
 function createReport(args) {
   return db.transaction(_createReport)(args);
 }
-function _createReport({ id = newId(), companyId, userId, kind = 'trip', title = null, purpose = null, periodFrom = null, periodTo = null, destination = null, nights = null, advances = 0, notes = null }) {
-  const number = nextNumber(companyId);
-  db.prepare(`INSERT INTO expense_reports (id, company_id, user_id, number, kind, title, purpose, period_from, period_to, destination, nights, status, advances_cents, notes, created_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)`)
-    .run(id, companyId, userId, number, KINDS.has(kind) ? kind : 'trip', title, purpose, periodFrom, periodTo, destination, nights, toCents(advances) || 0, notes, now());
-  addEvent(id, userId, 'created', null);
+function _createReport({ id = newId(), companyId, userId, draft = false, kind, title = null, purpose = null, periodFrom = null, periodTo = null, destination = null, nights = null, advances = 0, notes = null }) {
+  const given = { kind, title, purpose, periodFrom, periodTo, destination, nights };
+  const coverAi = { auto: [], user: AI_FIELDS.filter(f => _filled(given[f])) };
+  const number = draft ? null : nextNumber(companyId);
+  db.prepare(`INSERT INTO expense_reports (id, company_id, user_id, number, kind, title, purpose, period_from, period_to, destination, nights, status, advances_cents, notes, cover_ai, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, companyId, userId, number, KINDS.has(kind) ? kind : 'case', title, purpose, periodFrom, periodTo, destination, nights,
+         draft ? 'draft' : 'open', toCents(advances) || 0, notes, JSON.stringify(coverAi), now());
+  addEvent(id, userId, 'created', draft ? 'draft' : null);
   return getReport(id);
+}
+
+// "Receipts, 21 Oct 2026": what a draft is called when its owner creates it
+// before anything in it has been read well enough to suggest a name.
+function _fallbackTitle(timezone) {
+  const day = localDate(timezone);
+  return `Receipts, ${require('../reports/cover-suggest').dayRange(day, day)}`;
+}
+
+// A draft becomes a case: whatever the owner sent with it is saved first and
+// is theirs, a missing title is filled from what the receipts suggest, and
+// only then is a number taken. All of it or none of it, so a failure cannot
+// spend a number on a case still a draft, or open one without a number.
+// Returns null when it is not a draft (any more): two clicks on Create case
+// open it once.
+function openDraft(id, patch = {}, actorId = null) {
+  return db.transaction(() => {
+    const r = db.prepare('SELECT company_id, status FROM expense_reports WHERE id = ?').get(id);
+    if (!r || r.status !== 'draft') return null;
+    if (Object.keys(patch).length) _saveCover(id, patch, { by: 'user' });
+    const cur = getReport(id);
+    if (!cur.title) {
+      const company = db.prepare('SELECT base_currency, timezone FROM companies WHERE id = ?').get(r.company_id) || {};
+      const { suggestCover } = require('../reports/cover-suggest');
+      const s = suggestCover(cur.expenses, { baseCurrency: company.base_currency || 'SGD', today: localDate(company.timezone) });
+      const ai = cur.coverAi;
+      _saveCover(id, { title: (s && s.title) || _fallbackTitle(company.timezone) }, { by: 'auto' });
+      setCoverAi(id, { auto: [...new Set([...ai.auto, 'title'])], user: ai.user.filter(f => f !== 'title') });
+    }
+    const number = nextNumber(r.company_id);
+    db.prepare("UPDATE expense_reports SET number = ?, status = 'open', updated_at = ? WHERE id = ? AND status = 'draft'").run(number, now(), id);
+    addEvent(id, actorId, 'opened', null);
+    return getReport(id);
+  })();
 }
 
 // pendingRates: receipts with an amount still waiting for a rate. noAmount:
@@ -97,14 +157,48 @@ function getReport(id) {
   return { ...r, expenses: list, totals, events: listEvents(id) };
 }
 
-function listReports({ companyId, userId, userIds, status } = {}) {
+// The cases list. The scope (a company, a person, a list of people, and an
+// admin's choice of owner) decides which cases are counted at all; the rest
+// (status, kind, ready, posted, q) only narrows what is shown, and `counts`
+// ignores it, so the tabs say how many each holds whichever one is open.
+//
+// One query reads the scope's cases with their sums, and the filtering,
+// sorting and paging happen here. The counts need "ready" for every case in
+// the scope anyway, which is the expensive part, so asking SQL for a page
+// as well would have read the same cases twice.
+//
+// Without a limit every case comes back, as before; Home asks for them all.
+const SORTS = {
+  newest: (a, b) => _cmp(b.createdAt, a.createdAt),
+  oldest: (a, b) => _cmp(a.createdAt, b.createdAt),
+  amount: (a, b) => b.totalBase - a.totalBase || _cmp(b.createdAt, a.createdAt),
+  // Most recent trip first; a case with no dates after every one that has.
+  dates:  (a, b) => (a.periodFrom ? 0 : 1) - (b.periodFrom ? 0 : 1) || _cmp(b.periodFrom || '', a.periodFrom || '') || _cmp(b.createdAt, a.createdAt),
+};
+const _cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const _list = v => (v === undefined || v === null || v === '' ? null : (Array.isArray(v) ? v : String(v).split(',')).map(s => String(s).trim()).filter(Boolean));
+// A LIKE pattern that matches what was typed, "%" and "_" included.
+const _like = q => `%${String(q).replace(/[\\%_]/g, c => `\\${c}`)}%`;
+
+function listReports({ companyId, userId, userIds, owner, status, kind, q, ready, posted, sort = 'newest', limit, offset = 0 } = {}) {
   const where = [], args = [];
   if (companyId) { where.push('r.company_id = ?'); args.push(companyId); }
   if (userId)    { where.push('r.user_id = ?'); args.push(userId); }
-  if (userIds)   { if (!userIds.length) return []; where.push(`r.user_id IN (${userIds.map(() => '?').join(',')})`); args.push(...userIds); }
-  if (status)    { const list = String(status).split(','); where.push(`r.status IN (${list.map(() => '?').join(',')})`); args.push(...list); }
+  if (owner)     { where.push('r.user_id = ?'); args.push(owner); }
+  if (userIds)   {
+    if (!userIds.length) return { rows: [], total: 0, counts: { draft: 0, open: 0, ready: 0, claimed: 0, all: 0 } };
+    where.push(`r.user_id IN (${userIds.map(() => '?').join(',')})`); args.push(...userIds);
+  }
+  const text = q === undefined || q === null ? '' : String(q).trim();
+  // Whether each case matches the search, asked in the same query: the title,
+  // number, purpose and destination, or the merchant of any receipt in it.
+  const hit = text
+    ? `(r.title LIKE ? ESCAPE '\\' OR r.number LIKE ? ESCAPE '\\' OR r.purpose LIKE ? ESCAPE '\\' OR r.destination LIKE ? ESCAPE '\\'
+        OR EXISTS (SELECT 1 FROM expenses e WHERE e.report_id = r.id AND e.merchant LIKE ? ESCAPE '\\'))`
+    : '1';
+  const hitArgs = text ? Array(5).fill(_like(text)) : [];
   const rows = db.prepare(`
-    SELECT r.*, u.name AS owner_name, u.email AS owner_email,
+    SELECT r.*, u.name AS owner_name, u.email AS owner_email, ${hit} AS q_hit,
       (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id) AS expense_count,
       (SELECT SUM(l.base_cents) FROM expense_lines l JOIN expenses e ON e.id = l.expense_id WHERE e.report_id = r.id) AS base_cents,
       -- Receipts waiting for a rate, and receipts with no amount yet, as the
@@ -114,19 +208,72 @@ function listReports({ companyId, userId, userIds, status } = {}) {
          AND EXISTS (SELECT 1 FROM expense_lines l WHERE l.expense_id = e.id AND l.base_cents IS NULL)) AS pending_lines,
       (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id
          AND NOT EXISTS (SELECT 1 FROM expense_lines l WHERE l.expense_id = e.id)) AS no_amount,
-      (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id AND e.status != 'reviewed') AS unreviewed
+      (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id AND e.status != 'reviewed') AS unreviewed,
+      (SELECT COUNT(*) FROM expenses e WHERE e.report_id = r.id AND e.status = 'reading') AS reading
     FROM expense_reports r JOIN users u ON u.id = r.user_id
-    ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY r.created_at DESC`).all(...args);
-  return rows.map(x => ({ ..._row(x), ownerName: x.owner_name, ownerEmail: x.owner_email, expenseCount: x.expense_count, totalBase: toDollars(x.base_cents) ?? 0, pendingRates: x.pending_lines, noAmount: x.no_amount, unreviewed: x.unreviewed }));
+    ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY r.created_at DESC, r.id DESC`).all(...hitArgs, ...args);
+  const all = rows.map(x => ({
+    ..._row(x), ownerName: x.owner_name, ownerEmail: x.owner_email, expenseCount: x.expense_count, totalBase: toDollars(x.base_cents) ?? 0,
+    pendingRates: x.pending_lines, noAmount: x.no_amount, unreviewed: x.unreviewed, reading: x.reading,
+    // Ready to claim: open, something in it, and nothing unchecked, unpriced
+    // or without an amount — the checks claiming makes (reports/workflow.js).
+    ready: x.status === 'open' && x.expense_count > 0 && !x.unreviewed && !x.pending_lines && !x.no_amount,
+    _hit: !!x.q_hit,
+  }));
+  const counts = { draft: 0, open: 0, ready: 0, claimed: 0, all: all.length };
+  for (const r of all) { if (counts[r.status] !== undefined) counts[r.status]++; if (r.ready) counts.ready++; }
+
+  const statuses = _list(status), kinds = _list(kind);
+  const isPosted = posted === undefined || posted === null || posted === '' ? null : posted === true || String(posted) === '1';
+  const wantReady = ready === true || String(ready) === '1';
+  const shown = all.filter(r => (!statuses || statuses.includes(r.status)) && (!kinds || kinds.includes(r.kind))
+    && (!wantReady || r.ready) && (isPosted === null || !!r.xeroInvoiceId === isPosted) && r._hit)
+    .sort(SORTS[sort] || SORTS.newest);
+  for (const r of all) delete r._hit;
+  const start = Math.max(0, Number(offset) || 0);
+  const page = limit === undefined || limit === null ? shown.slice(start) : shown.slice(start, start + Math.max(0, Number(limit) || 0));
+  return { rows: page, total: shown.length, counts };
 }
 
+// The owner's edit of the cover. Every cover field in it becomes theirs: the
+// AI fills a draft as its receipts are read, and must not then change a
+// title somebody typed, or put back a destination somebody cleared.
 function updateReport(id, patch) {
+  db.transaction(() => _saveCover(id, patch, { by: 'user' }))();
+  return getReport(id);
+}
+// `by: 'user'` moves the fields to cover_ai.user and out of auto; `by: 'auto'`
+// leaves cover_ai to the caller (reports/cover-auto.js keeps it itself).
+function _saveCover(id, patch, { by = 'user' } = {}) {
   const sets = [], args = [];
   for (const [k, col] of Object.entries(COVER)) { if (patch[k] === undefined) continue; sets.push(`${col} = ?`); args.push(patch[k] === '' ? null : patch[k]); }
   if (patch.advances !== undefined) { sets.push('advances_cents = ?'); args.push(toCents(patch.advances) || 0); }
+  if (by === 'user') {
+    const mine = AI_FIELDS.filter(f => patch[f] !== undefined);
+    if (mine.length) {
+      const ai = _coverAi((db.prepare('SELECT cover_ai FROM expense_reports WHERE id = ?').get(id) || {}).cover_ai);
+      sets.push('cover_ai = ?');
+      args.push(JSON.stringify({ auto: ai.auto.filter(f => !mine.includes(f)), user: [...new Set([...ai.user, ...mine])] }));
+    }
+  }
   sets.push('updated_at = ?'); args.push(now());
   db.prepare(`UPDATE expense_reports SET ${sets.join(', ')} WHERE id = ?`).run(...args, id);
-  return getReport(id);
+}
+
+// Which cover fields the AI wrote and which are the owner's, replaced whole.
+function setCoverAi(id, coverAi) {
+  const v = _coverAi(JSON.stringify(coverAi || {}));
+  db.prepare('UPDATE expense_reports SET cover_ai = ? WHERE id = ?').run(JSON.stringify(v), id);
+}
+
+// The AI's cover, written with the record of which fields it now holds, and
+// nothing else: no event, and no field outside what the caller worked out
+// (reports/cover-auto.js decides which fields it may touch).
+function applyAutoCover(id, patch, coverAi) {
+  db.transaction(() => {
+    if (Object.keys(patch).length) _saveCover(id, patch, { by: 'auto' });
+    setCoverAi(id, coverAi);
+  })();
 }
 
 // Claiming a report for posting, atomically. postReport reads the row, checks
@@ -188,6 +335,25 @@ function removeExpense(reportId, expenseId) {
 }
 function deleteReport(id) { db.prepare('DELETE FROM expense_reports WHERE id = ?').run(id); }
 
+// Two cases that turned out to be one: every receipt of the source moves to
+// the target, the target's history says where they came from, and the source
+// goes. One transaction, so a failure cannot leave the receipts split between
+// a case that is gone and one that does not say it took them. Who may, and
+// which states allow it, is the route's question (routes/reports.js).
+// Returns how many receipts moved.
+function mergeInto(sourceId, targetId, actorId = null) {
+  return db.transaction(() => {
+    const src = db.prepare('SELECT number, title FROM expense_reports WHERE id = ?').get(sourceId);
+    if (!src || sourceId === targetId) return 0;
+    const moved = db.prepare('UPDATE expenses SET report_id = ?, updated_at = ? WHERE report_id = ?').run(targetId, now(), sourceId).changes;
+    const name = src.number ? `${src.number}${src.title ? ` (${src.title})` : ''}` : src.title ? `the draft "${src.title}"` : 'a draft';
+    addEvent(targetId, actorId, 'edited', `Merged ${moved} receipt${moved === 1 ? '' : 's'} from ${name}`);
+    db.prepare('UPDATE expense_reports SET updated_at = ? WHERE id = ?').run(now(), targetId);
+    deleteReport(sourceId);
+    return moved;
+  })();
+}
+
 function addEvent(reportId, actorId, action, note = null) {
   db.prepare('INSERT INTO report_events (report_id, actor_id, action, note, at) VALUES (?, ?, ?, ?, ?)').run(reportId, actorId || null, action, note, now());
 }
@@ -197,4 +363,5 @@ function listEvents(reportId) {
 }
 
 module.exports = {
-  claimForPost, releasePost, isPosting, recordBill, POST_STALE_MS, createReport, getReport, head, listReports, updateReport, setState, addExpense, removeExpense, deleteReport, addEvent, listEvents, nextNumber };
+  claimForPost, releasePost, isPosting, recordBill, POST_STALE_MS, createReport, openDraft, getReport, head, listReports, updateReport, setCoverAi, applyAutoCover,
+  setState, addExpense, removeExpense, deleteReport, mergeInto, addEvent, listEvents, nextNumber, AI_FIELDS, SORTS };

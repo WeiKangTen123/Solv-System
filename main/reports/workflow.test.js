@@ -11,11 +11,26 @@ describe('reports/workflow', () => {
     lines: [{ category: 'Air & Transport', amount: 10, baseAmount: 10, fxRate: 1, fxSource: 'base', fxRateDate: '2026-09-04', fxFetchedAt: 'x' }], ...extra });
   const fresh = () => reports.createReport({ companyId: owner.companyId, userId: owner.id, title: 'T' });
 
-  test('a new case is open, and open is the only editable state', () => {
+  test('a new case is open, and a draft and an open case are the editable ones', () => {
     const r = fresh();
     expect(r.status).toBe('open');
     expect(wf.isEditable(r)).toBe(true);
-    expect(wf.EDITABLE.has('claimed')).toBe(false);
+    expect([...wf.EDITABLE].sort()).toEqual(['draft', 'open']);
+    expect(wf.isEditable(null)).toBe(false);
+  });
+
+  // A draft takes receipts and edits like an open case, but has no number
+  // yet, so it cannot be claimed, and was never claimed to be reopened.
+  test('a draft is editable and unlocked, and cannot be claimed or reopened', () => {
+    const d = reports.createReport({ companyId: owner.companyId, userId: owner.id, draft: true });
+    const e = ready(); reports.addExpense(d.id, e.id);
+    expect(wf.isEditable(reports.getReport(d.id))).toBe(true);
+    expect(wf.isLocked(store.getExpense(e.id))).toBe(false);
+    expect(() => wf.markClaimed(d.id, owner)).toThrow(expect.objectContaining({ status: 409, message: 'Create the case before claiming it.' }));
+    expect(() => wf.reopen(d.id, owner)).toThrow(expect.objectContaining({ status: 409, message: expect.stringMatching(/draft/) }));
+    expect(() => wf.markClaimed(d.id, other)).toThrow(/claimant/);
+    expect(store.getExpense(e.id).claimed).toBe(false);
+    expect(reports.getReport(d.id).status).toBe('draft');
   });
 
   // Claiming carries the checks that submitting used to. A claim with an

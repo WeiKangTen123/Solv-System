@@ -4,14 +4,18 @@ const expenses = require('../store/expenses');
 
 // The case state machine, and who may move it.
 //
+//   draft ──→ open            the owner presses Create case (store/reports.js openDraft)
 //   open ──→ claimed          the owner, once every receipt is checked and priced
 //   open ←── claimed          reopen, if it was marked by mistake
 //
 // That is all of it. This system records claims; it does not route them
-// through anybody, so there is nobody to submit to, approve, or reject. A case
-// is open while receipts are still going in and claimed once its owner has
-// put it through whatever actually reimburses them. Claimed locks it.
-const EDITABLE = new Set(['open']);
+// through anybody, so there is nobody to submit to, approve, or reject. A
+// draft is the case its first receipts landed in before its owner said what
+// it is; it has no number yet. A case is open while receipts are still going
+// in and claimed once its owner has put it through whatever actually
+// reimburses them. Claimed locks it. A draft and an open case both take
+// receipts and edits; only an open one can be claimed.
+const EDITABLE = new Set(['draft', 'open']);
 
 // Errors carry the HTTP status a route answers with: who may act is a 403,
 // a state that does not allow it a 409, anything about the content a 400.
@@ -63,6 +67,8 @@ function _mine(r, actor, what) {
 function markClaimed(reportId, actor) {
   const r = _get(reportId);
   _mine(r, actor, 'mark their own case claimed');
+  // A draft has no number, and a claim with no number is one nobody can find.
+  if (r.status === 'draft') fail(409, 'Create the case before claiming it.');
   if (r.status !== 'open') fail(409, 'This case was already claimed');
   if (!r.expenses.length) fail(400, 'Add at least one receipt before claiming');
   const unreviewed = r.expenses.filter(e => e.status !== 'reviewed');
@@ -94,6 +100,7 @@ function markClaimed(reportId, actor) {
 function reopen(reportId, actor) {
   const r = _get(reportId);
   _mine(r, actor, 'reopen their own case');
+  if (r.status === 'draft') fail(409, 'This case is still a draft; it has not been claimed.');
   if (r.status !== 'claimed') fail(409, 'This case is already open');
   // Once it is in Xero it is in the books. Reopening it here let the amounts
   // change under a bill that had already been raised, and the two then
