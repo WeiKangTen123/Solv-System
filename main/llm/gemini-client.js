@@ -444,7 +444,10 @@ function chatWithTools(userId, messages, tools, opts = {}) {
 async function testGeminiKey(apiKey) {
   if (!apiKey || !apiKey.trim()) throw new Error('API key is required');
   const key = apiKey.trim();
-  const testModels = [...GEMINI_MODELS, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  // The models the reader uses, then one widely available. Google has
+  // retired gemini-2.0-flash and gemini-1.5-flash: asked last, they turned a
+  // failed check's message into "model not found" instead of the real reason.
+  const testModels = [...new Set([...GEMINI_MODELS, 'gemini-2.5-flash'])];
   let lastErr = null;
   for (const model of testModels) {
     const t0 = Date.now();
