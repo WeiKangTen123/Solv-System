@@ -935,3 +935,487 @@ body {
 }
 .mobile-mode .expense-line { grid-template-columns: 1fr 0.8fr auto; }
 .mobile-mode .expense-line > :first-child { grid-column: 1 / -1; }
+
+/* ══ UI foundations (components/ui/*) ════════════════════════════════════════
+   The shared pieces the redesigned pages are built from. Rules for this
+   section:
+     - theme tokens only, so every piece follows light and dark with no rule
+       of its own for either;
+     - colour only where it means a status (a flag, a done step); everything
+       else is ink, paper and hairlines;
+     - under .mobile-mode, anything a finger presses is at least 44px (buttons
+       already are, from the touch-target rule above);
+     - focus rings on :focus-visible, so the keyboard sees them and a click
+       does not;
+     - anything that moves stands still under prefers-reduced-motion.
+   Class names start with ui- so none can collide with a page's own.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Read by a screen reader, not drawn. */
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+  white-space: nowrap; border: 0;
+}
+
+/* One focus ring for every piece. */
+.ui-page-back:focus-visible,
+.ui-tab:focus-visible,
+.ui-chip:focus-visible,
+.ui-search-clear:focus-visible,
+.ui-dropzone:focus-visible,
+.ui-flag-link:focus-visible,
+.ui-check input:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* A muted figure after a label: a tab's or a chip's count. */
+.ui-count {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+/* ── PageHeader ── */
+.ui-page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+}
+.ui-page-header-text { min-width: 0; }
+.ui-page-header h1 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ui-page-back {
+  display: inline-flex;
+  gap: 4px;
+  margin-bottom: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-decoration: none;
+  border-radius: var(--radius-xs);
+}
+.ui-page-back:hover { color: var(--text-primary); text-decoration: underline; }
+.ui-page-header-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+/* A bigger target for the thumb without moving the title down. */
+.mobile-mode .ui-page-back { padding: 12px 12px 12px 0; margin: -12px 0 -10px; }
+
+/* ── Tabs ── */
+.ui-tabs { display: flex; }
+.ui-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  /* A button's own line height, as Settings' tab buttons always had; the
+     page's 1.6 made each tab taller. */
+  line-height: normal;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+.ui-tab-label { display: inline-flex; align-items: center; gap: 7px; }
+
+/* line: underlined, and on a narrow screen it scrolls sideways rather than
+   wrapping into rows that no longer read as one set. The rule under the row
+   is a shadow, not a border, so the scroller does not clip the active tab's
+   underline. */
+.ui-tabs-line {
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+.ui-tabs-line::-webkit-scrollbar { display: none; }
+.ui-tabs-line .ui-tab {
+  padding: 9px 12px 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+}
+.ui-tabs-line .ui-tab:hover { color: var(--text-primary); background: var(--bg-hover); }
+.ui-tabs-line .ui-tab.is-active { color: var(--text-primary); font-weight: 600; border-bottom-color: var(--accent); }
+/* Inside the scroller, a ring drawn outside the tab would be cut off. */
+.ui-tabs-line .ui-tab:focus-visible { outline-offset: -2px; }
+
+/* pills: filled buttons that wrap; the look Settings has always had. */
+.ui-tabs-pills {
+  gap: 8px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+  margin-bottom: 4px;
+}
+.ui-tabs-pills .ui-tab {
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+.ui-tabs-pills .ui-tab:hover:not(.is-active) { background: var(--bg-hover); color: var(--text-primary); }
+.ui-tabs-pills .ui-tab.is-active { font-weight: 600; color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+.ui-tabs-pills .ui-tab.is-active .ui-count { color: inherit; opacity: 0.75; }
+
+/* ── FilterChips ── */
+.ui-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 100px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font: 500 12.5px var(--font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.ui-chip:hover { background: var(--bg-hover); color: var(--text-primary); }
+.ui-chip.is-on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.ui-chip.is-on:hover { background: var(--accent-hover); color: var(--accent-text); }
+.ui-chip.is-on .ui-count { color: inherit; opacity: 0.75; }
+
+/* ── SearchInput ── */
+.ui-search { position: relative; min-width: 0; }
+.ui-search .form-input { padding-left: 34px; padding-right: 36px; }
+/* The browser's own clear button would sit beside ours. */
+.ui-search input[type="search"]::-webkit-search-cancel-button,
+.ui-search input[type="search"]::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
+/* A magnifier drawn in CSS: no search glyph is in every font. */
+.ui-search-icon {
+  position: absolute;
+  left: 13px; top: 50%;
+  width: 11px; height: 11px;
+  margin-top: -7px;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.ui-search-icon::after {
+  content: '';
+  position: absolute;
+  right: -5px; bottom: -3px;
+  width: 5px; height: 1.5px;
+  background: var(--text-muted);
+  transform: rotate(45deg);
+}
+.ui-search:focus-within .ui-search-icon { border-color: var(--text-primary); }
+.ui-search:focus-within .ui-search-icon::after { background: var(--text-primary); }
+.ui-search-clear {
+  position: absolute;
+  right: 4px; top: 50%;
+  transform: translateY(-50%);
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ui-search-clear:hover { background: var(--bg-hover); color: var(--text-primary); }
+.mobile-mode .ui-search-clear { right: 0; width: 44px; height: 44px; }
+
+/* ── EmptyState (on the .empty-state rule above) ── */
+.ui-empty { gap: 6px; }
+.ui-empty-title { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.ui-empty-body { max-width: 440px; font-size: 13px; line-height: 1.55; }
+.ui-empty-action { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
+.ui-empty-compact { padding: 24px 12px; }
+
+/* ── Skeleton (on the .skeleton rule above) ── */
+.ui-skeleton { display: flex; flex-direction: column; padding: 4px 0; }
+
+/* ── DropZone ── */
+.ui-dropzone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 140px;
+  padding: 28px 20px;
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
+}
+.ui-dropzone:hover { border-color: var(--text-muted); background: var(--bg-hover); }
+.ui-dropzone.is-over {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  box-shadow: var(--glow-accent);
+}
+.ui-dropzone.is-disabled,
+.ui-dropzone.is-disabled:hover { cursor: not-allowed; opacity: 0.55; border-color: var(--border); background: var(--bg-input); }
+.ui-dropzone-mark {
+  flex: 0 0 auto;
+  width: 40px; height: 40px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: 400 22px/1 var(--font-sans);
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.ui-dropzone.is-over .ui-dropzone-mark { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.ui-dropzone-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ui-dropzone-label { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.ui-dropzone-hint { font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+/* compact: one slim line, for a case that already has its receipts. */
+.ui-dropzone.is-compact { justify-content: flex-start; gap: 10px; min-height: 0; padding: 10px 14px; }
+.ui-dropzone.is-compact .ui-dropzone-mark { width: 26px; height: 26px; font-size: 16px; }
+.ui-dropzone.is-compact .ui-dropzone-text { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0 8px; }
+.ui-dropzone.is-compact .ui-dropzone-label { font-size: 13px; }
+.mobile-mode .ui-dropzone { min-height: 96px; padding: 18px 14px; }
+.mobile-mode .ui-dropzone.is-compact { min-height: 44px; padding: 8px 12px; }
+
+/* useWindowDrop's overlay: the whole window is the target. It lets the drag
+   events through to the page (pointer-events: none) and sits under any
+   dialog (z-index 1000 and up). */
+.ui-drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+  background: var(--bg-glass);
+  pointer-events: none;
+  animation: fadeIn 0.12s ease;
+}
+.ui-drop-overlay::before {
+  content: '';
+  position: absolute;
+  inset: 12px;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-lg);
+}
+.ui-drop-overlay-panel {
+  position: relative;
+  max-width: 90vw;
+  padding: 14px 22px;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+  box-shadow: var(--shadow-lg);
+}
+
+/* ── Stepper ── */
+.ui-stepper { display: flex; align-items: flex-start; list-style: none; margin: 0; padding: 0; }
+.ui-step { display: flex; align-items: flex-start; gap: 8px; flex: 1 1 0; min-width: 0; }
+.ui-step:last-child { flex: 0 0 auto; }
+/* The line to the next step: green once this step is done. */
+.ui-step:not(:last-child)::after {
+  content: '';
+  flex: 1 1 auto;
+  min-width: 12px;
+  height: 2px;
+  margin: 11px 10px 0 2px;
+  border-radius: 2px;
+  background: var(--border);
+}
+.ui-step.is-done:not(:last-child)::after { background: var(--success-border); }
+.ui-step-dot {
+  flex: 0 0 auto;
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font: 600 11.5px/1 var(--font-mono);
+}
+.ui-step.is-done .ui-step-dot { background: var(--success-subtle); border-color: var(--success-border); color: var(--success); }
+.ui-step.is-current .ui-step-dot { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.ui-step-text { display: flex; flex-direction: column; min-width: 0; padding-top: 2px; }
+.ui-step-of { display: none; font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+.ui-step-label { font-size: 13px; font-weight: 600; line-height: 1.35; color: var(--text-secondary); white-space: nowrap; }
+.ui-step.is-current .ui-step-label { color: var(--text-primary); }
+.ui-step.is-todo .ui-step-label { font-weight: 500; color: var(--text-muted); }
+.ui-step-hint { font-size: 11.5px; line-height: 1.35; color: var(--text-muted); }
+/* A phone: the other steps keep only their dots; the current one keeps its
+   words and says where it is. The hidden words stay for a screen reader. */
+.mobile-mode .ui-step { flex: 0 0 auto; }
+.mobile-mode .ui-step.is-current { flex: 1 1 auto; }
+.mobile-mode .ui-step:not(:last-child)::after { margin: 11px 6px 0 0; }
+.mobile-mode .ui-step-of { display: block; }
+.mobile-mode .ui-step:not(.is-current) .ui-step-text {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+/* ── ProgressBar ── */
+.ui-progress {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 100px;
+  background: var(--bg-hover);
+}
+.ui-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width var(--transition-slow);
+}
+.ui-progress-info    .ui-progress-fill { background: var(--info); }
+.ui-progress-success .ui-progress-fill { background: var(--success); }
+.ui-progress-warning .ui-progress-fill { background: var(--warning); }
+.ui-progress-danger  .ui-progress-fill { background: var(--danger); }
+.ui-progress.is-indeterminate .ui-progress-fill { width: 35%; animation: scanline 1.4s ease-in-out infinite; }
+
+/* ── KindBadge (on .badge) ── */
+.ui-kind {
+  gap: 5px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.ui-kind-glyph { font-size: 11px; line-height: 1; letter-spacing: 0; }
+
+/* ── FlagList ── */
+.ui-flags { display: flex; flex-direction: column; gap: 10px; }
+.ui-flag-group { padding: 2px 0 2px 10px; border-left: 3px solid var(--warning); }
+.ui-flag-group.is-red { border-left-color: var(--danger); }
+.ui-flag-title { margin-bottom: 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.ui-flag-group.is-red .ui-flag-title { color: var(--danger); }
+.ui-flag-group.is-yellow .ui-flag-title { color: var(--warning); }
+.ui-flags ul { display: flex; flex-direction: column; gap: 4px; list-style: none; }
+.ui-flag { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.45; color: var(--text-primary); }
+.ui-flag-mark {
+  flex: 0 0 auto;
+  width: 16px; height: 16px;
+  margin-top: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  font: 700 10.5px/1 var(--font-sans);
+}
+.ui-flag-group.is-red .ui-flag-mark { background: var(--danger-subtle); color: var(--danger); }
+.ui-flag-group.is-yellow .ui-flag-mark { background: var(--warning-subtle); color: var(--warning); }
+.ui-flag-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-underline-offset: 3px;
+}
+.ui-flag-link:hover { text-decoration-color: currentColor; }
+/* On a phone the flag is a 44px button; its mark stays level with its words. */
+.mobile-mode .ui-flag { align-items: center; }
+.ui-flag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid transparent;
+  border-radius: 100px;
+  font: 600 11px var(--font-mono);
+  white-space: nowrap;
+  cursor: default;
+}
+.ui-flag-pill.is-red { background: var(--danger-subtle); border-color: var(--danger-border); color: var(--danger); }
+.ui-flag-pill.is-yellow { background: var(--warning-subtle); border-color: var(--warning-border); color: var(--warning); }
+
+/* ── Pagination ── */
+.ui-pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding-top: 12px; }
+.ui-pager-range { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-muted); }
+.ui-pager-buttons { display: flex; gap: 6px; }
+
+/* ── Menu ── */
+.ui-menu-wrap { position: relative; display: inline-flex; }
+.ui-menu-caret { margin-left: -2px; font-size: 10px; opacity: 0.7; }
+.ui-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  max-width: min(340px, calc(100vw - 24px));
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-md);
+  animation: fadeIn 0.12s ease;
+}
+.ui-menu.is-end { left: auto; right: 0; }
+.ui-menu.is-up { top: auto; bottom: calc(100% + 4px); }
+.ui-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-primary);
+  font: 500 13px var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+/* The item with focus is the one Enter will choose, so it is marked however
+   it got focus; the ring is added only for the keyboard. */
+.ui-menu-item:hover:not(:disabled),
+.ui-menu-item:focus { background: var(--bg-hover); outline: none; }
+.ui-menu-item:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+.ui-menu-item:disabled { color: var(--text-muted); cursor: not-allowed; }
+.ui-menu-item.is-danger { color: var(--danger); }
+.ui-menu-hint { font-size: 11.5px; font-weight: 400; color: var(--text-muted); }
+.mobile-mode .ui-menu-item { justify-content: center; }
+
+/* ── Checkbox ── */
+.ui-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.ui-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.ui-check input:disabled { cursor: not-allowed; }
+.mobile-mode .ui-check { min-width: 44px; min-height: 44px; justify-content: center; }
+.mobile-mode .ui-check input { width: 20px; height: 20px; }
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .ui-page-header,
+  .skeleton,
+  .ui-drop-overlay,
+  .ui-menu { animation: none; }
+  .skeleton { background: var(--bg-hover); }
+  .ui-progress.is-indeterminate .ui-progress-fill { animation: none; width: 100%; opacity: 0.35; }
+  .ui-tab, .ui-chip, .ui-dropzone, .ui-dropzone-mark, .ui-progress-fill { transition: none; }
+}

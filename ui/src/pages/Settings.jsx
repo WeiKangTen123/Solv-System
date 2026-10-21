@@ -9,6 +9,7 @@ import { useConfirm } from '../context/ConfirmContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
 import ExchangeRates from '../components/settings/ExchangeRates';
+import Tabs, { tabPanelProps } from '../components/ui/Tabs';
 import { forgetCompany } from '../utils/useCompany';
 
 // What the reader last saw from a key: worked, ran out of quota, or was
@@ -263,31 +264,19 @@ export default function Settings() {
       </div>
       {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
 
-      {/* Admin Tab Navigation Bar */}
+      {/* Admin Tab Navigation Bar. A real tablist (the same pills as
+          before), so a screen reader says which section is open and the
+          arrow keys move between them. */}
       {isAdmin && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', borderBottom: '1px solid var(--border)', paddingBottom: 12, marginBottom: 4 }}>
-          {ADMIN_TABS.map(t => (
-            <button
-              key={t.key}
-              type="button"
+        <Tabs variant="pills" idBase="settings" label="Settings sections" value={adminTab}
+              tabs={ADMIN_TABS.map(t => ({ id: t.key, label: <><span aria-hidden="true">{t.icon}</span><span>{t.label}</span></> }))}
               // A message belongs to the tab it came from; carried over, a
               // "Saved" from one tab sat on top of the next.
-              onClick={() => { setAdminTab(t.key); setMsg(null); }}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 14px', borderRadius: 8, fontSize: 13,
-                fontWeight: adminTab === t.key ? 600 : 500,
-                background: adminTab === t.key ? 'var(--accent)' : 'var(--bg-secondary)',
-                color: adminTab === t.key ? 'var(--accent-text, #fff)' : 'var(--text-secondary)',
-                border: '1px solid ' + (adminTab === t.key ? 'var(--accent)' : 'var(--border)'),
-                cursor: 'pointer', transition: 'all 0.15s ease'
-              }}>
-              <span>{t.icon}</span>
-              <span>{t.label}</span>
-            </button>
-          ))}
-        </div>
+              onChange={key => { setAdminTab(key); setMsg(null); }} />
       )}
 
+      {/* The open section. One wrapper, so the tabs have one panel to name. */}
+      <div {...(isAdmin ? tabPanelProps('settings', adminTab) : {})}>
       {/* Personal Settings (For regular user OR admin profile tab) */}
       {(!isAdmin || adminTab === 'profile') && (
         <PersonalSettings
@@ -396,6 +385,9 @@ export default function Settings() {
                       <select
                         className="form-input"
                         style={{ padding: '3px 8px', fontSize: 12, width: 'auto' }}
+                        // One box per row, all under one "Role" heading: the
+                        // name says whose it is.
+                        aria-label={`Role for ${u.name || u.email}`}
                         value={u.role}
                         onChange={e => askRole(u, e.target.value)}
                         disabled={u.id === user.id || u.removed}
@@ -605,6 +597,7 @@ export default function Settings() {
       {isAdmin && adminTab === 'fx' && (
         <ExchangeRates isAdmin={isAdmin} currencies={currencies} />
       )}
+      </div>
 
       {ask && (
         <ConfirmDialog title={ask.title} message={ask.message} confirmLabel={ask.label} danger={ask.danger !== false}

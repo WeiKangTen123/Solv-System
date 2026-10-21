@@ -81,7 +81,7 @@ export default function Login() {
               autoFocus
               autoComplete="username"
             />
-            <span className="input-icon" style={{ left: 12, top: '50%', transform: 'translateY(-50%)', position: 'absolute', color: 'var(--text-muted)', fontSize: 15 }}>✉</span>
+            <span className="input-icon" aria-hidden="true" style={{ left: 12, top: '50%', transform: 'translateY(-50%)', position: 'absolute', color: 'var(--text-muted)', fontSize: 15 }}>✉</span>
           </div>
         </div>
 

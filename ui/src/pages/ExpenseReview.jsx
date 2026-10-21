@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useViewMode } from '../context/ViewModeContext';
 import { useAuth } from '../context/AuthContext';
@@ -12,6 +12,7 @@ import { useVisiblePolling } from '../utils/useVisiblePolling';
 import { getCompany } from '../utils/useCompany';
 import { fxSourceLong } from '../utils/fxSources';
 import { useLeaveGuard } from '../utils/useLeaveGuard';
+import { usePageCrumbs } from '../utils/crumbs';
 
 // Image on the left, fields on the right, so a figure is checked against the
 // receipt without switching context. Below the fields, the split into report
@@ -141,6 +142,13 @@ export default function ExpenseReview() {
       .catch(() => {});
     return () => { alive = false; };
   }, [inCase, caseListed]);
+  // A receipt in a case is reached from the case, so the way back is the
+  // case: the link over the title and the header's trail both name it. They
+  // used to go to My receipts, where the case had to be found again.
+  const caseRow = !inCase ? null : (cases.find(r => r.id === inCase) || (caseHead && caseHead.id === inCase ? caseHead : null));
+  const caseName = (caseRow && (caseRow.number || caseRow.title)) || 'Case';
+  const { pathname } = useLocation();
+  usePageCrumbs(pathname, inCase ? [{ label: 'Cases', to: '/reports' }, { label: caseName, to: `/reports/${inCase}` }, { label: 'Check' }] : null);
   // Quickly while the reader works, slowly after; and not at all in a tab
   // nobody is looking at.
   useVisiblePolling(() => load({ preserveEdits: true }).catch(() => {}), () => (exp?.status === 'reading' ? 2500 : 4 * 60 * 1000));
@@ -237,8 +245,10 @@ export default function ExpenseReview() {
   }
   async function remove() {
     setConfirm(null);
+    // Back to the case it was in; My receipts only for one that was in none.
+    const back = exp.reportId ? `/reports/${exp.reportId}` : '/expenses';
     // Deleted, so nothing typed on it is left to lose: leave without asking.
-    try { await api.delete(`/expenses/${id}`); dirty.current = false; navigate('/expenses'); } catch (e) { setMsg({ tone: 'error', text: e.message }); }
+    try { await api.delete(`/expenses/${id}`); dirty.current = false; navigate(back); } catch (e) { setMsg({ tone: 'error', text: e.message }); }
   }
 
   if (!exp) return <div style={{ color: 'var(--text-muted)' }}>{msg?.text || 'Loading…'}</div>;
@@ -283,7 +293,11 @@ export default function ExpenseReview() {
     <div>
       <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><Link to="/expenses" style={{ color: 'inherit' }}>← My receipts</Link></div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            {inCase
+              ? <Link to={`/reports/${inCase}`} style={{ color: 'inherit' }}>← {caseName}</Link>
+              : <Link to="/expenses" style={{ color: 'inherit' }}>← My receipts</Link>}
+          </div>
           <h1 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>{exp.merchant || 'Untitled receipt'} <StatusBadge status={exp.status} /></h1>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>

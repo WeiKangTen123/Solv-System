@@ -1,6 +1,7 @@
 import { useTheme } from '../../context/ThemeContext';
 import { useViewMode } from '../../context/ViewModeContext';
 import { useLocation, Link } from 'react-router-dom';
+import { usePageCrumbsFor } from '../../utils/crumbs';
 
 function getBreadcrumbs(pathname) {
   if (pathname === '/')          return [{ label: 'Home' }];
@@ -17,7 +18,9 @@ export default function Header() {
   const { theme, toggle } = useTheme();
   const { mode, isMobile, toggleViewMode, mobileDrawerOpen, setMobileDrawerOpen } = useViewMode();
   const { pathname } = useLocation();
-  const crumbs = getBreadcrumbs(pathname);
+  // A page that knows more than its address (a receipt in a case) sets its
+  // own trail; otherwise it is worked out from the address.
+  const crumbs = usePageCrumbsFor(pathname) || getBreadcrumbs(pathname);
 
   return (
     <header style={{
@@ -56,7 +59,7 @@ export default function Header() {
               justifyContent: 'center',
             }}
           >
-            ☰
+            <span aria-hidden="true">☰</span>
           </button>
         )}
 
@@ -101,7 +104,7 @@ export default function Header() {
             transition: 'all 0.18s ease',
           }}
         >
-          <span>{isMobile ? '📱' : '💻'}</span>
+          <span aria-hidden="true">{isMobile ? '📱' : '💻'}</span>
           <span style={{ fontSize: 11 }}>{isMobile ? 'Mobile' : 'Web'}</span>
           {/* A dot when the layout was chosen rather than detected — otherwise
               a pinned layout is indistinguishable from the natural one, which
@@ -114,10 +117,12 @@ export default function Header() {
           )}
         </button>
 
-        {/* Theme toggle */}
+        {/* Theme toggle. Its face is a glyph, so a screen reader needs the
+            words too: a title alone is not reliably read out. */}
         <button
           onClick={toggle}
           title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+          aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
           style={{
             width: 32, height: 32,
             borderRadius: '50%',
@@ -131,7 +136,7 @@ export default function Header() {
           onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
           onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
         >
-          {theme === 'dark' ? '☀' : '◑'}
+          <span aria-hidden="true">{theme === 'dark' ? '☀' : '◑'}</span>
         </button>
       </div>
     </header>
