@@ -58,4 +58,18 @@ function refresh(reportId) {
   }
 }
 
-module.exports = { refresh, DRAFT_FIELDS, OPEN_FIELDS };
+// After a read: every case the file's receipts sit in. Usually one; a file
+// split into several receipts can have had one moved elsewhere while the rest
+// were still being read.
+function refreshForReceipt(receiptId) {
+  try {
+    const ids = receiptId ? require('../db').prepare('SELECT DISTINCT report_id AS id FROM expenses WHERE receipt_id = ? AND report_id IS NOT NULL').all(receiptId).map(r => r.id) : [];
+    for (const id of ids) refresh(id);
+    return ids;
+  } catch (err) {
+    logger.warn('Case cover not refreshed after a read', { receiptId, error: err.message });
+    return [];
+  }
+}
+
+module.exports = { refresh, refreshForReceipt, DRAFT_FIELDS, OPEN_FIELDS };

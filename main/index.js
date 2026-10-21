@@ -115,6 +115,12 @@ app.use('/api/dashboard', dashRoutes);
 app.use('/api/assistant', assistantRoutes);
 app.get('/dashboard/health', dashRoutes.health);
 
+// A read that lands brings the cover of the case it landed in up to date:
+// the dates and destination, and on a draft the kind and title as well
+// (reports/cover-auto.js). Set here, where both halves are loaded, so the
+// queue does not need to know what a case is.
+require('./receipts/read-queue').setOnDone(job => require('./reports/cover-auto').refreshForReceipt(job.receiptId));
+
 const UI_DIST = path.join(__dirname, '../ui/dist');
 if (PROD) {
   app.use(express.static(UI_DIST, {
@@ -169,6 +175,9 @@ const server = app.listen(PORT, HOST, () => {
   }
   readQueue.start();
 
+  // Drafts nobody put a receipt in and nobody came back to, after a day.
+  require('./reports/draft-sweep').start();
+
   // Copies of receipts left in the temp folder by a PDF read this process's
   // predecessor did not finish: an exit skips the read's own clean-up.
   require('./pdf/workers').sweepStaleTemp();
@@ -186,7 +195,7 @@ function shutdown(signal) {
   _stopping = true;
   logger.info('Shutting down', { signal });
   server.close();
-  try { require('./fx/sweeper').stop(); require('./fx/live').stop(); } catch {}
+  try { require('./fx/sweeper').stop(); require('./fx/live').stop(); require('./reports/draft-sweep').stop(); } catch {}
   const readQueue = require('./receipts/read-queue');
   readQueue.stop();
   const DRAIN_MS = 6500;

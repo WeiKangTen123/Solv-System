@@ -10,7 +10,12 @@ const FIELDS = {
 };
 const LABEL = { ...FIELDS, lines: 'Lines', rate: 'Exchange rate', status: 'Status', case: 'Case' };
 const STATUS_WORDS = { reviewed: 'checked', 'review-needed': 'to check', reading: 'being read', duplicate: 'duplicate', rejected: 'rejected' };
-const _caseNo = id => (id ? (require('./reports').head(id) || {}).number || 'a case' : null);
+// A draft has no number until it is created, so it is named as a draft.
+const _caseNo = id => {
+  if (!id) return null;
+  const h = require('./reports').head(id);
+  return (h && h.number) || (h && h.status === 'draft' ? 'a draft case' : 'a case');
+};
 
 const { formatAmount } = require('../utils/money');
 const money = n => formatAmount(n, { empty: '' });

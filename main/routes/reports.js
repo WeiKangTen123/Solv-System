@@ -11,6 +11,7 @@ const wf      = require('../reports/workflow');
 const coverAuto = require('../reports/cover-auto');
 const { flagsFor } = require('../receipts/flags');
 const { localDate } = require('../utils/zone-date');
+const { intakeView } = require('../reports/intake-view');
 const { reportPayload } = require('../reports/expense-payload');
 const exporter = require('../reports/expense-export');
 const doc     = require('../reports/expense-doc');
@@ -175,6 +176,15 @@ router.post('/:id/open', requireAuth, (req, res) => {
 });
 
 router.get('/:id', requireAuth, (req, res) => { const r = _load(req, res); if (r) res.json(_view(r, req)); });
+
+// What the New case page and the case page poll while receipts go in: each
+// file, how far its read has got, what came out of it, and what the AI makes
+// of the case so far (reports/intake-view.js). The rate limiter leaves it out
+// (index.js): a page asks every two seconds for as long as reads run.
+router.get('/:id/intake', requireAuth, (req, res) => {
+  const r = _load(req, res); if (!r) return;
+  res.json(intakeView(r, _flagOptions(r.companyId)));
+});
 
 // The cover, while the case takes edits. Every cover field sent becomes the
 // owner's (store/reports.js updateReport), and the AI stops writing it.

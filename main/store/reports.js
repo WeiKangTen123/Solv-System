@@ -349,6 +349,10 @@ function mergeInto(sourceId, targetId, actorId = null) {
     const name = src.number ? `${src.number}${src.title ? ` (${src.title})` : ''}` : src.title ? `the draft "${src.title}"` : 'a draft';
     addEvent(targetId, actorId, 'edited', `Merged ${moved} receipt${moved === 1 ? '' : 's'} from ${name}`);
     db.prepare('UPDATE expense_reports SET updated_at = ? WHERE id = ?').run(now(), targetId);
+    // A phone still pointed at the case being merged away keeps sending its
+    // photos to where that case's receipts went, rather than to no case at
+    // all once the foreign key empties it.
+    db.prepare('UPDATE phone_pairings SET report_id = ? WHERE report_id = ?').run(targetId, sourceId);
     deleteReport(sourceId);
     return moved;
   })();
