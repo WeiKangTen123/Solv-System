@@ -1,6 +1,7 @@
 import { useTheme } from '../../context/ThemeContext';
 import { useViewMode } from '../../context/ViewModeContext';
 import { useLocation, Link } from 'react-router-dom';
+import { usePageCrumbsFor } from '../../utils/crumbs';
 
 function getBreadcrumbs(pathname) {
   if (pathname === '/')          return [{ label: 'Home' }];
@@ -17,7 +18,9 @@ export default function Header() {
   const { theme, toggle } = useTheme();
   const { mode, isMobile, toggleViewMode, mobileDrawerOpen, setMobileDrawerOpen } = useViewMode();
   const { pathname } = useLocation();
-  const crumbs = getBreadcrumbs(pathname);
+  // A page that knows more than its address (a receipt in a case) sets its
+  // own trail; otherwise it is worked out from the address.
+  const crumbs = usePageCrumbsFor(pathname) || getBreadcrumbs(pathname);
 
   return (
     <header style={{
