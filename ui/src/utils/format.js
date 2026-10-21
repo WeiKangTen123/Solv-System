@@ -38,3 +38,61 @@ export function fmtRate(r) {
   const fixed = n.toPrecision(6);
   return fixed.includes('e') ? String(n) : fixed.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 }
+
+// ── Calendar dates ──────────────────────────────────────────────────────────
+// A receipt date or a case's from/to is a day on a calendar, stored as
+// YYYY-MM-DD, not a moment in time. Read through new Date('2026-09-02') it is
+// midnight UTC, which is still 1 Sep in New York: so these never make a Date
+// of one. The digits are read as they are and printed as they are.
+//
+// This module has no imports on purpose: main/scripts/ui-format-dates.test.js
+// loads it from source under jest, which cannot import an ES module here.
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// { y, m, d } from "2026-09-02" (anything after the date, such as a time, is
+// ignored), or null for a blank or a date that is not on the calendar.
+function _ymd(s) {
+  const hit = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s ?? '').trim());
+  if (!hit) return null;
+  const y = +hit[1], m = +hit[2], d = +hit[3];
+  if (m < 1 || m > 12 || d < 1 || d > _daysIn(y, m)) return null;
+  return { y, m, d };
+}
+function _daysIn(y, m) {
+  if (m === 2) return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0 ? 29 : 28;
+  return [4, 6, 9, 11].includes(m) ? 30 : 31;
+}
+const _key = p => p.y * 10000 + p.m * 100 + p.d;
+const _full = p => `${p.d} ${MONTHS[p.m - 1]} ${p.y}`;
+
+// "2 Sep" this year, "2 Sep 2025" any other: a list of this year's receipts
+// does not need the year on every row, and last December's must not pass for
+// this one's. `today` (YYYY-MM-DD) is for tests; `withYear` always adds it.
+export function fmtDay(date, { today, withYear = false } = {}) {
+  const p = _ymd(date);
+  if (!p) return '—';
+  const t = _ymd(today);
+  const thisYear = t ? t.y : new Date().getFullYear();
+  return withYear || p.y !== thisYear ? _full(p) : `${p.d} ${MONTHS[p.m - 1]}`;
+}
+
+// A case's dates, said once: "1–4 Sep 2026", "28 Sep – 2 Oct 2026",
+// "30 Dec 2026 – 2 Jan 2027", and "Oct 2026" for exactly one whole month
+// (which a Month case always is). One end missing reads "From …" or
+// "Until …"; neither is "—". Ends given the wrong way round are put right
+// rather than printed as "4–1 Sep".
+export function fmtDateRange(from, to) {
+  let a = _ymd(from), b = _ymd(to);
+  if (!a && !b) return '—';
+  if (!b) return `From ${_full(a)}`;
+  if (!a) return `Until ${_full(b)}`;
+  if (_key(a) > _key(b)) [a, b] = [b, a];
+  if (_key(a) === _key(b)) return _full(a);
+  if (a.y === b.y && a.m === b.m) {
+    if (a.d === 1 && b.d === _daysIn(b.y, b.m)) return `${MONTHS[a.m - 1]} ${a.y}`;
+    return `${a.d}–${b.d} ${MONTHS[a.m - 1]} ${a.y}`;
+  }
+  if (a.y === b.y) return `${a.d} ${MONTHS[a.m - 1]} – ${_full(b)}`;
+  return `${_full(a)} – ${_full(b)}`;
+}
