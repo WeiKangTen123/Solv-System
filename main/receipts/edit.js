@@ -32,6 +32,11 @@ const MAX_AMOUNT = 1e10;
 
 const { fail } = require('../utils/http-error');
 
+// What a person can do about a receipt marked as a duplicate. These used to
+// say "restore it", and nothing anywhere restores one: deleting it is the
+// owner's way out, and an admin is who to ask when it is not a duplicate.
+const DUPLICATE = what => `This receipt is a duplicate, so it cannot be ${what}. Delete it, or ask an admin if it is not a duplicate.`;
+
 const MONEY_FIELDS = ['total', 'tax', 'subTotal'];
 // Whether two values of one field say the same thing: amounts as numbers,
 // with empty equal to empty and never to 0; text without case or edge spaces.
@@ -63,7 +68,7 @@ function detailsBlocked(e, actor) {
   if (!canEditDetails(actor, e.userId, e.companyId)) return { status: 404, error: 'Expense not found' };
   if (wf.isPosted(e)) return { status: 409, error: 'This receipt is in a case that has been posted to Xero, which is final.' };
   if (wf.inPosting(e)) return { status: 409, error: 'This receipt\'s case is being posted to Xero right now. Try again once that has finished.' };
-  if (e.status === 'duplicate') return { status: 400, error: 'A duplicate cannot be edited; delete it or restore it first' };
+  if (e.status === 'duplicate') return { status: 400, error: DUPLICATE('edited') };
   // The reader's answer would land on top of whatever was typed meanwhile.
   if (e.status === 'reading') return { status: 409, error: 'This receipt is still being read. Edit it once the reading is done.' };
   return null;
@@ -230,7 +235,7 @@ function setStatus(expenseId, status, actor, { via = 'app' } = {}) {
   if (!['reviewed', 'review-needed'].includes(status)) fail(400, 'Status can be reviewed or review-needed here');
   // A duplicate is locked where it is (intake/dedup.js): checking it would let
   // the same receipt be filed and claimed twice.
-  if (e.status === 'duplicate') fail(409, 'It is a duplicate; delete it or restore it first');
+  if (e.status === 'duplicate') fail(409, DUPLICATE('checked'));
   if (e.status === 'reading') fail(409, 'It is still being read');
   if (status === 'reviewed') { const why = reviewBlocked(e); if (why) fail(400, why); }
   const patch = { status };
@@ -242,24 +247,27 @@ function setStatus(expenseId, status, actor, { via = 'app' } = {}) {
 }
 
 // Moving a receipt into a case, out of one, or between two. Both ends have to
-// be open, and the case has to be the owner's own.
+// be editable (a draft or an open case), and the case has to be the owner's
+// own. Only the cases' own rows are read: filing a zip's worth of receipts
+// asks this once per receipt, and loading every receipt of both cases each
+// time made that quadratic.
 function fileInCase(expenseId, reportId, actor, { via = 'app' } = {}) {
   const reports = require('../store/reports');
   const e = store.getExpense(expenseId);
   _assertAction(e, actor);
-  if (e.status === 'duplicate') fail(400, 'A duplicate cannot be filed; delete it or restore it first');
+  if (e.status === 'duplicate') fail(400, DUPLICATE('filed'));
   reportId = reportId || null;
   // Claimed on its own already: in a case it would be claimed a second time.
   if (reportId && e.claimedAt && !e.reportId) fail(409, 'This receipt was already claimed on its own. Unmark it as claimed before filing it in a case.');
   if (reportId === (e.reportId || null)) return e;
   const leaving = () => {
     if (!e.reportId) return;
-    const cur = reports.getReport(e.reportId);
+    const cur = reports.head(e.reportId);
     if (cur && !wf.isEditable(cur)) fail(409, `A ${cur.status} case cannot be changed`);
     reports.removeExpense(e.reportId, e.id);
   };
   if (reportId) {
-    const r = reports.getReport(reportId);
+    const r = reports.head(reportId);
     if (!r || r.companyId !== e.companyId) fail(404, 'Case not found');
     if (r.userId !== e.userId || r.userId !== actor.id) fail(403, 'That case belongs to someone else');
     if (!wf.isEditable(r)) fail(409, `A ${r.status} case cannot take more receipts`);

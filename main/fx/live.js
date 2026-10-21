@@ -263,8 +263,9 @@ async function backfill(companyId, currency, { now = new Date() } = {}) {
 }
 
 // Receipts priced during the day at the live figure move to the close. Only
-// those still open: a claimed receipt keeps the rate it was claimed at, a
-// rate somebody typed is theirs, and a duplicate is nobody's.
+// those not yet claimed (outside any case, or in a draft or an open one): a
+// claimed receipt keeps the rate it was claimed at, a rate somebody typed is
+// theirs, and a duplicate is nobody's.
 async function repriceDay(companyId, date) {
   const ids = db.prepare(`SELECT DISTINCT e.id FROM expenses e
                           JOIN expense_lines l ON l.expense_id = e.id
@@ -272,7 +273,7 @@ async function repriceDay(companyId, date) {
                           WHERE e.company_id = ? AND l.fx_asked_date = ?
                             AND l.fx_override_by IS NULL AND COALESCE(l.fx_source, '') NOT IN ('base', 'manual', 'same')
                             AND e.status NOT IN ('duplicate', 'rejected') AND e.claimed_at IS NULL
-                            AND (e.report_id IS NULL OR r.status = 'open')`).all(companyId, date).map(r => r.id);
+                            AND (e.report_id IS NULL OR r.status IN ('draft', 'open'))`).all(companyId, date).map(r => r.id);
   return _reprice(ids);
 }
 
@@ -287,7 +288,7 @@ async function repriceRate(companyId, currency, date) {
                           WHERE e.company_id = ? AND e.currency = ? AND l.fx_asked_date = ?
                             AND l.fx_override_by IS NULL AND COALESCE(l.fx_source, '') NOT IN ('base', 'same')
                             AND e.status NOT IN ('duplicate', 'rejected') AND e.claimed_at IS NULL
-                            AND (e.report_id IS NULL OR r.status = 'open')`).all(companyId, currency, date).map(r => r.id);
+                            AND (e.report_id IS NULL OR r.status IN ('draft', 'open'))`).all(companyId, currency, date).map(r => r.id);
   return _reprice(ids);
 }
 

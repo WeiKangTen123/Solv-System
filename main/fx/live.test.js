@@ -102,6 +102,24 @@ describe('fx/live', () => {
     expect(providers.frankfurter).not.toHaveBeenCalled();
   });
 
+  // A draft is a case nobody has claimed: its receipts move to the close like
+  // any open one. Only a claimed case keeps the rate it was claimed at.
+  test('a receipt in a draft moves to the close; one in a claimed case does not', async () => {
+    const reports = require('../store/reports');
+    const inDraft = expense('INR', 1000), inClaimed = expense('INR', 1000);
+    const d = reports.createReport({ companyId: u.companyId, userId: u.id, draft: true });
+    const c = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'Claimed' });
+    reports.addExpense(d.id, inDraft.id); reports.addExpense(c.id, inClaimed.id);
+    await live.refresh(u.companyId);
+    await apply.applyFx(inDraft.id); await apply.applyFx(inClaimed.id);
+    db.prepare("UPDATE expense_reports SET status = 'claimed' WHERE id = ?").run(c.id);
+    providers.frankfurterAll.mockResolvedValue(ecb({ INR: 74 }));
+    const out = await live.close(u.companyId, today);
+    expect(out.repriced).toEqual({ looked: 1, changed: 1 });
+    expect(store.getExpense(inDraft.id).baseTotal).toBe(13.51);
+    expect(store.getExpense(inClaimed.id).baseTotal).toBe(13.33);
+  });
+
   test('a day the server missed is closed late from its history, never from today\'s live rate', async () => {
     expense('INR', 1000);
     await live.refresh(u.companyId);

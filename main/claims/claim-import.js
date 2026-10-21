@@ -109,8 +109,9 @@ function _asCase(job, expenseIds) {
     const owner = users.findById(job.userId);
     if (!owner) return null;
     // Checked again here rather than only when the import was queued: the case
-    // may have been submitted while the receipts were read, and then they go
-    // into a new one instead.
+    // may have been claimed while the receipts were read, and then they go
+    // into a new one instead. A draft takes them like an open case (the New
+    // case page sends a zip with a claim form here) and stays a draft.
     const started = job.reportId ? reports.getReport(job.reportId) : null;
     const into = started && started.userId === job.userId && wf.isEditable(started) ? started : null;
     const from = String(job.label || '').trim();

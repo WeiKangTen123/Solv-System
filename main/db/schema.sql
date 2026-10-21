@@ -103,20 +103,21 @@ CREATE TABLE IF NOT EXISTS expense_reports (
   id              TEXT PRIMARY KEY,
   company_id      TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  number          TEXT NOT NULL,
-  kind            TEXT NOT NULL DEFAULT 'trip' CHECK (kind IN ('trip', 'period', 'case')),
+  number          TEXT,      -- none while a draft: taken when it is opened, so an abandoned draft leaves no gap
+  kind            TEXT NOT NULL DEFAULT 'case' CHECK (kind IN ('trip', 'period', 'case')),
   title           TEXT,
   purpose         TEXT,
   period_from     TEXT,
   period_to       TEXT,
   destination     TEXT,
   nights          INTEGER,
-  status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'claimed')),
+  status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('draft', 'open', 'claimed')),
   advances_cents  INTEGER NOT NULL DEFAULT 0,
   claimed_at      TEXT,
   xero_invoice_id TEXT,
   xero_error      TEXT,
   notes           TEXT,
+  cover_ai        TEXT,      -- JSON {"auto": [...], "user": [...]}: cover fields the AI wrote, and those the owner set
   created_at      TEXT NOT NULL,
   updated_at      TEXT
 );

@@ -176,6 +176,19 @@ describe('dashboard summary', () => {
     expect(summary(me(ela)).open).toBe(0);
   });
 
+  // A draft is a case on its way: its money is open, but it is not yet a case
+  // to count, having no number.
+  test('money in a draft is open money; the draft is not counted as an open case', () => {
+    const d = reports.createReport({ companyId: cid, userId: ela.id, draft: true });
+    reports.addExpense(d.id, spend(ela, { merchant: 'Hotel', amount: 300, base: 300, date: day(1) }).id);
+    const s = summary(me(ela));
+    expect(s.open).toBe(300);
+    expect(s.claimed).toBe(0);
+    expect(s.cycle.openCount).toBe(0);
+    reports.openDraft(d.id, {}, ela.id);
+    expect(summary(me(ela)).cycle.openCount).toBe(1);
+  });
+
   test('an expense is dated by its receipt, not by when it was filed', () => {
     const lastMonth = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 15)).toISOString().slice(0, 10);
     spend(ela, { merchant: 'Late claim', amount: 80, base: 80, date: lastMonth });

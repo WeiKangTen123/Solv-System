@@ -27,11 +27,13 @@ let running = false;
 // the batch for ever, and the twenty-sixth, which the provider would have
 // priced instantly, was never reached on any sweep.
 //
-// A case is 'open' or 'claimed', nothing else (reports/workflow.js). This
-// used to ask for 'draft' or 'rejected', the names from before cases, and
-// since every receipt now lives in a case from the moment it lands, the query
-// matched nothing at all: the sweeper ran every quarter of an hour and never
-// priced a line.
+// A case is 'draft', 'open' or 'claimed' (reports/workflow.js), and only a
+// claimed one keeps the rates it was claimed at. This once asked for 'draft'
+// or 'rejected', the names from before cases, when no case was ever either,
+// and the query matched nothing at all: the sweeper ran every quarter of an
+// hour and never priced a line. 'draft' is back with a new meaning, the case
+// the New case page files receipts into before it has a number, and its
+// receipts need prices like any other.
 //
 // And a line that was tried and still has no rate waits an hour before it
 // is tried again, least recently tried first: a currency no provider prices,
@@ -48,7 +50,7 @@ function pendingExpenseIds(limit = BATCH, now = Date.now()) {
                        AND l.fx_check IS NULL
                        AND (l.fx_tried_at IS NULL OR l.fx_tried_at < ?)
                        AND e.status NOT IN ('duplicate', 'rejected')
-                       AND (e.report_id IS NULL OR r.status = 'open')
+                       AND (e.report_id IS NULL OR r.status IN ('draft', 'open'))
                      GROUP BY e.id
                      ORDER BY MAX(COALESCE(l.fx_tried_at, '')), e.created_at LIMIT ?`).all(cutoff, limit).map(r => r.id);
 }

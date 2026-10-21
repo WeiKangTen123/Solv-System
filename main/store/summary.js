@@ -70,14 +70,15 @@ function summary(me, { now = new Date(), timezone = 'UTC', base = 'SGD' } = {}) 
   const until = new Date(Date.UTC(ly, lm, 1)).toISOString().slice(0, 10);   // the 1st of next month
 
   // One pass over the window's lines, added up here. It used to be five
-  // queries, each scanning every line again.
+  // queries, each scanning every line again. Money in a draft is open money:
+  // nobody has claimed it, and it is on its way to a claim.
   const rows = db.prepare(`
     SELECT e.id AS id, substr(${DATED}, 1, 7) AS month,
            COALESCE(NULLIF(l.category, ''), e.category, 'Uncategorised') AS category,
            COALESCE(NULLIF(l.currency, ''), e.currency, '?') AS currency,
            l.base_cents AS cents,
            CASE WHEN r.status = 'claimed' OR e.claimed_at IS NOT NULL THEN 'claimed'
-                WHEN (r.status = 'open' OR r.id IS NULL) AND e.claimed_at IS NULL THEN 'open' ELSE '' END AS state
+                WHEN (r.status IN ('draft', 'open') OR r.id IS NULL) AND e.claimed_at IS NULL THEN 'open' ELSE '' END AS state
     FROM expenses e JOIN expense_lines l ON l.expense_id = e.id
     LEFT JOIN expense_reports r ON r.id = e.report_id
     WHERE ${w.sql} AND ${LIVE} AND ${DATED} >= ? AND ${DATED} < ?`).all(...w.args, from, until);
@@ -107,7 +108,8 @@ function summary(me, { now = new Date(), timezone = 'UTC', base = 'SGD' } = {}) 
   // How long a case stays open before it is claimed, in days, over cases that
   // have been. julianday subtracts two timestamps directly; AVG over an empty
   // set is NULL, which is reported as null rather than 0 — "no data" and
-  // "instant" are not the same answer.
+  // "instant" are not the same answer. The open count is of cases: a draft
+  // has not been created yet, has no number, and is counted with none.
   const cycle = db.prepare(`
     SELECT AVG(julianday(r.claimed_at) - julianday(r.created_at)) AS open_days,
            COUNT(r.claimed_at) AS claimed_n,

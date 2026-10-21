@@ -364,6 +364,22 @@ describe('claims/claim-import — everything that arrives together becomes a cas
     expect(c.expenses.map(e => e.merchant).sort()).toEqual(['CDG', 'Grab']);
   });
 
+  // The New case page sends a zip with a claim form here, from the draft the
+  // page is filling. The receipts go into that draft, which stays a draft
+  // until its owner creates it.
+  test('an import started from a draft files into the draft and makes no case of its own', async () => {
+    const draft = reports.createReport({ companyId: u.companyId, userId: u.id, draft: true });
+    const d = { waitMs: 0, storeReceipt: jest.fn(async () => 'stored.jpg'), suggest: jest.fn(async () => []),
+                createRecord: realRecords(), parseReceipts: inOrder(reads) };
+    const job = ci.startImport({ userId: u.id, archives: [{ name: 'c.zip', buffer: zipOfThree() }], forms: [], label: 'c.zip', reportId: draft.id }, d);
+    await settle(job);
+    expect(job.result.caseId).toBe(draft.id);
+    const c = reports.getReport(draft.id);
+    expect(c).toMatchObject({ status: 'draft', number: null });
+    expect(c.expenses).toHaveLength(3);
+    expect(reports.listReports({ userId: u.id }).total).toBe(1);
+  });
+
   test('an import that creates nothing creates no case', async () => {
     const d = { waitMs: 0, storeReceipt: jest.fn(async () => 'stored.jpg'), suggest: jest.fn(async () => []),
                 createRecord: jest.fn(async () => null), parseReceipts: jest.fn(async () => reads) };

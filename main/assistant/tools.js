@@ -71,11 +71,15 @@ function _who(ctx, userId) {
   if (!ctx.names.has(userId)) { const u = users.findById(userId); ctx.names.set(userId, u ? (u.name || u.email) : 'someone'); }
   return ctx.names.get(userId);
 }
+// What a case is called in an answer: its number, or for a draft, which has
+// none yet, that it is a draft. A receipt in a draft used to read as in no
+// case at all.
+const _caseLabel = r => r.number || (r.title ? `draft "${r.title}"` : 'a draft');
 function _case(ctx, reportId) {
   if (!reportId) return null;
   if (!ctx.cases.has(reportId)) {
     const r = reports.head(reportId);
-    ctx.cases.set(reportId, r ? { id: r.id, number: r.number, title: r.title, status: r.status, inXero: !!r.xeroInvoiceId } : null);
+    ctx.cases.set(reportId, r ? { id: r.id, number: r.number, label: _caseLabel(r), title: r.title, status: r.status, inXero: !!r.xeroInvoiceId } : null);
   }
   return ctx.cases.get(reportId);
 }
@@ -95,7 +99,7 @@ function _brief(ctx, e) {
   return {
     id: e.id, merchant: e.merchant || null, date: e.receiptDate || null, currency: e.currency || null, total: e.total,
     [`total_${ctx.base}`]: e.baseTotal, category: _category(e), status: e.status,
-    case: c ? c.number : null, claimed: !!e.claimed, ...(e.userId !== ctx.actor.id ? { owner: _who(ctx, e.userId) } : {}),
+    case: c ? c.label : null, claimed: !!e.claimed, ...(e.userId !== ctx.actor.id ? { owner: _who(ctx, e.userId) } : {}),
   };
 }
 
@@ -303,12 +307,15 @@ const READ = {
     },
   },
 
+  // Drafts are listed, so "where did my receipts go" has an answer, but they
+  // are never offered as a place to file: a draft belongs to the New case
+  // page until its owner creates it (propose_file_in_case refuses one).
   find_cases: {
-    description: 'List cases (bundles of receipts claimed together). Without person or everyone, the person\'s own.',
-    parameters: { type: 'object', properties: { status: { type: 'string', enum: ['open', 'claimed'] }, ...SCOPE_PROPS } },
+    description: 'List cases (bundles of receipts claimed together). Without person or everyone, the person\'s own. A draft is a case still being put together on the New case page: it has no number yet, and receipts are not filed into it from here.',
+    parameters: { type: 'object', properties: { status: { type: 'string', enum: ['draft', 'open', 'claimed'] }, ...SCOPE_PROPS } },
     run(ctx, a) {
       const scope = _scope(ctx, a);
-      const list = reports.listReports({ ...scope, status: a.status });
+      const list = reports.listReports({ ...scope, status: a.status || undefined }).rows;
       return { count: list.length, cases: list.slice(0, MAX_LIST).map(r => ({
         id: r.id, number: r.number, title: r.title, status: r.status, receipts: r.expenseCount, [`total_${ctx.base}`]: r.totalBase,
         notReviewed: r.unreviewed, withoutRate: r.pendingRates, claimedAt: r.claimedAt, inXero: !!r.xeroInvoiceId,
@@ -359,7 +366,7 @@ const READ = {
             : a.groupBy === 'month' ? (e.receiptDate || 'no date').slice(0, 7)
             : a.groupBy === 'merchant' ? (e.merchant || 'Unknown')
             : a.groupBy === 'currency' ? (e.currency || 'unknown')
-            : a.groupBy === 'case' ? (_case(ctx, e.reportId)?.number || 'not in a case')
+            : a.groupBy === 'case' ? (_case(ctx, e.reportId)?.label || 'not in a case')
             : _who(ctx, e.userId);
           add(key, base, e.id, missing, a.groupBy === 'currency' ? { currency: e.currency || '?', amount: Number(l.amount) || 0 } : null);
         }
@@ -410,7 +417,7 @@ const _show = (k, v) => (v === null || v === undefined || v === '' ? 'empty' : [
 function _about(ctx, e) {
   const c = _case(ctx, e.reportId);
   const mine = e.userId === ctx.actor.id;
-  return { mine, owner: mine ? null : _who(ctx, e.userId), case: c ? c.number : null, claimed: !!e.claimed };
+  return { mine, owner: mine ? null : _who(ctx, e.userId), case: c ? c.label : null, claimed: !!e.claimed };
 }
 
 function _propose(ctx, { expense, kind, payload, summary }) {
@@ -545,11 +552,12 @@ const PROPOSE = {
       if (e.status === 'duplicate') no('A duplicate cannot be filed.');
       const target = a.caseId ? reports.getReport(String(a.caseId)) : null;
       if (a.caseId && (!target || target.userId !== e.userId)) no('That is not one of this person\'s cases.');
+      if (target && target.status === 'draft') no('That case is still a draft on the New case page. Add receipts to it there, or create it first.');
       if (target && !wf.isEditable(target)) no(`Case ${target.number} has been claimed; it cannot take more receipts.`);
       if ((target ? target.id : null) === (e.reportId || null)) no('It is already there.');
       const cur = _case(ctx, e.reportId);
       return _propose(ctx, { expense: e, kind: 'file_in_case', payload: { expenseId: e.id, caseId: target ? target.id : null },
-        summary: `${_label(ctx, e)}: ${target ? `file in ${target.number}${target.title ? ` (${target.title})` : ''}` : `take out of ${cur ? cur.number : 'its case'}`}` });
+        summary: `${_label(ctx, e)}: ${target ? `file in ${target.number}${target.title ? ` (${target.title})` : ''}` : `take out of ${cur ? cur.label : 'its case'}`}` });
     },
   },
 };

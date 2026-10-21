@@ -29,7 +29,8 @@ describe('db/migrate', () => {
     const sql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='expense_reports'").get().sql;
     db.pragma('foreign_keys = OFF');
     db.exec('DROP TABLE expense_reports');
-    db.exec(sql.replace("CHECK (kind IN ('trip', 'period', 'case'))", "CHECK (kind IN ('trip', 'period'))"));
+    // (the default was 'trip' then; 'case' anywhere in the table reads as migrated)
+    db.exec(sql.replace("DEFAULT 'case' CHECK (kind IN ('trip', 'period', 'case'))", "DEFAULT 'trip' CHECK (kind IN ('trip', 'period'))"));
     db.pragma('foreign_keys = ON');
     db.prepare(`INSERT INTO expense_reports (id, company_id, user_id, number, kind, title, status, advances_cents, created_at)
                 VALUES ('r1','c1','u1','EXP-2026-0001','trip','India trip','open', 5000, '2026-09-01')`).run();
@@ -54,7 +55,7 @@ describe('db/migrate', () => {
       .replace("role         TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),",
                "role         TEXT NOT NULL DEFAULT 'employee' CHECK (role IN ('employee', 'manager', 'finance', 'admin')),\n  manager_id   TEXT REFERENCES users(id) ON DELETE SET NULL,");
     const oldReports = ddl.match(/CREATE TABLE IF NOT EXISTS expense_reports \([\s\S]*?\n\);/)[0]
-      .replace("status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'claimed')),",
+      .replace("status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('draft', 'open', 'claimed')),",
                "status          TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'approved', 'rejected', 'claimed', 'posted')),\n  submitted_at TEXT,\n  approved_by TEXT,\n  approved_at TEXT,\n  rejected_reason TEXT,");
     expect(oldUsers).toContain('manager_id'); expect(oldReports).toContain("'posted'");
     db.pragma('foreign_keys = OFF');
@@ -146,5 +147,48 @@ describe('db/migrate', () => {
     db.prepare("DELETE FROM fx_watch WHERE company_id = 'c1' AND currency = 'PHP'").run();
     require('./migrate').run();
     expect(chosen('c1')).not.toContain('PHP');
+  });
+
+  // Step 8: a case can be a draft with no number. A database at step 7 holds
+  // cases that each have one, and every one of them must come across intact.
+  test('a database at step 7 keeps every case and number, and then takes a draft with no number', () => {
+    const fs = require('fs'), path = require('path');
+    const ddl = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+    const step7 = ddl.match(/CREATE TABLE IF NOT EXISTS expense_reports \([\s\S]*?\n\);/)[0]
+      .replace(/number {10}TEXT,[^\n]*/, 'number          TEXT NOT NULL,')
+      .replace("DEFAULT 'case' CHECK (kind", "DEFAULT 'trip' CHECK (kind")
+      .replace("CHECK (status IN ('draft', 'open', 'claimed'))", "CHECK (status IN ('open', 'claimed'))")
+      .replace(/\n {2}cover_ai[^\n]*/, '');
+    expect(step7).toContain('number          TEXT NOT NULL,');
+    expect(step7).not.toContain('cover_ai');
+    expect(step7).not.toContain("'draft'");
+    db.pragma('foreign_keys = OFF');
+    db.exec('DROP TABLE expense_reports');
+    db.exec(step7.replace('IF NOT EXISTS ', ''));
+    db.pragma('foreign_keys = ON');
+    db.prepare("INSERT INTO companies (id, name, created_at) VALUES ('c1', 'Solv', '2026-01-01')").run();
+    db.prepare("INSERT INTO users (id, company_id, email, password, role, created_at) VALUES ('u1','c1','a@b.c','x','user','2026-01-01')").run();
+    const ins = db.prepare('INSERT INTO expense_reports (id, company_id, user_id, number, kind, title, status, advances_cents, claimed_at, xero_invoice_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+    ins.run('r1', 'c1', 'u1', 'EXP-2026-0001', 'trip', 'India trip', 'open', 5000, null, null, '2026-09-01');
+    ins.run('r2', 'c1', 'u1', 'EXP-2026-0002', 'period', 'September', 'claimed', 0, '2026-10-01T00:00:00Z', 'INV-1', '2026-09-02');
+    db.prepare("INSERT INTO expenses (id, company_id, user_id, report_id, status, created_at) VALUES ('e1','c1','u1','r1','reviewed','2026-09-01')").run();
+    expect(() => db.prepare("INSERT INTO expense_reports (id, company_id, user_id, status, created_at) VALUES ('d0','c1','u1','draft','2026-10-01')").run()).toThrow();
+    db.pragma('user_version = 7');
+
+    require('./migrate').run();
+
+    expect(db.pragma('user_version', { simple: true })).toBe(8);
+    expect(db.prepare('SELECT id, number, kind, title, status, advances_cents, claimed_at, xero_invoice_id FROM expense_reports ORDER BY id').all()).toEqual([
+      { id: 'r1', number: 'EXP-2026-0001', kind: 'trip', title: 'India trip', status: 'open', advances_cents: 5000, claimed_at: null, xero_invoice_id: null },
+      { id: 'r2', number: 'EXP-2026-0002', kind: 'period', title: 'September', status: 'claimed', advances_cents: 0, claimed_at: '2026-10-01T00:00:00Z', xero_invoice_id: 'INV-1' },
+    ]);
+    expect(db.prepare("SELECT report_id FROM expenses WHERE id = 'e1'").get().report_id).toBe('r1');
+    expect(db.prepare('PRAGMA table_info(expense_reports)').all().map(c => c.name)).toContain('cover_ai');
+    db.prepare("INSERT INTO expense_reports (id, company_id, user_id, status, created_at) VALUES ('d1','c1','u1','draft','2026-10-01')").run();
+    expect(db.prepare("SELECT number, kind, status FROM expense_reports WHERE id = 'd1'").get()).toEqual({ number: null, kind: 'case', status: 'draft' });
+    expect(() => db.prepare("INSERT INTO expense_reports (id, company_id, user_id, status, created_at) VALUES ('d2','c1','u1','paid','2026-10-01')").run()).toThrow();
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='expense_reports'").all().map(x => x.name)).toContain('idx_reports_user');
+    expect(() => require('./migrate').run()).not.toThrow();
+    expect(db.prepare('SELECT COUNT(*) AS n FROM expense_reports').get().n).toBe(3);
   });
 });
