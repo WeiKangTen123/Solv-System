@@ -34,6 +34,18 @@ describe('fx/sweeper', () => {
     expect(sweeper.pendingExpenseIds()).toEqual([e.id]);
   });
 
+  // The New case page files receipts into a draft before it has a number;
+  // they are not claimed, and need a price like any other.
+  test('a receipt waiting for a rate inside a draft is swept and priced', async () => {
+    const e = expense([{ category: 'Meals', amount: 100 }]);
+    const d = reports.createReport({ companyId: u.companyId, userId: u.id, draft: true });
+    reports.addExpense(d.id, e.id);
+    expect(sweeper.pendingExpenseIds()).toEqual([e.id]);
+    rates.getRate.mockResolvedValue({ rate: 0.0134, rateDate: '2026-09-04', providerDate: '2026-09-04', source: 'frankfurter', fetchedAt: 'x' });
+    expect(await sweeper.sweep()).toMatchObject({ looked: 1, priced: 1, locked: 0 });
+    expect(store.getExpense(e.id).baseTotal).toBe(1.34);
+  });
+
   test('a claimed case, a typed rate and a refused rate are left for a person', async () => {
     const priced = { category: 'Meals', amount: 100, fxRate: 0.0134, fxRateDate: '2026-09-04', fxSource: 'frankfurter', fxFetchedAt: 'x', baseAmount: 1.34 };
     const claimed = expense([priced], { status: 'reviewed' });
