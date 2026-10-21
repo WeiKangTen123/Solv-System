@@ -94,7 +94,8 @@ CREATE TABLE IF NOT EXISTS receipts (
   original_name TEXT,
   received_at   TEXT NOT NULL,
   parsed_at     TEXT,
-  parse_json    TEXT
+  parse_json    TEXT,
+  converted_from TEXT       -- the type the server converted the file from (image/heic, image/tiff, ...); null when kept as it came
 );
 CREATE INDEX IF NOT EXISTS idx_receipts_user ON receipts(user_id);
 CREATE INDEX IF NOT EXISTS idx_receipts_hash ON receipts(company_id, sha256);
@@ -151,7 +152,10 @@ CREATE TABLE IF NOT EXISTS expenses (
   source         TEXT NOT NULL DEFAULT 'upload',
   claimed_at     TEXT,
   created_at     TEXT NOT NULL,
-  updated_at     TEXT
+  updated_at     TEXT,
+  city           TEXT,      -- where the money was spent, as printed on the receipt
+  country        TEXT,      -- ISO 3166-1 alpha-2, only when the receipt shows it
+  doc_type       TEXT       -- hotel | flight | ride | meal | fuel | parking | telco | other
 );
 CREATE INDEX IF NOT EXISTS idx_expenses_user    ON expenses(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_expenses_report  ON expenses(report_id);
@@ -306,3 +310,40 @@ CREATE TABLE IF NOT EXISTS report_events (
   at        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_report ON report_events(report_id);
+
+-- One read of one receipt file (receipts/read-queue.js). A read used to run in
+-- the server's memory, so a restart lost it and a busy AI service failed it;
+-- a row here is picked up again after a restart and retried while the AI is
+-- busy. Rows go with their receipt.
+CREATE TABLE IF NOT EXISTS read_jobs (
+  id          TEXT PRIMARY KEY,
+  company_id  TEXT NOT NULL,
+  user_id     TEXT NOT NULL,
+  receipt_id  TEXT NOT NULL REFERENCES receipts(id) ON DELETE CASCADE,
+  expense_id  TEXT REFERENCES expenses(id) ON DELETE CASCADE,
+  state       TEXT NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'reading', 'done', 'failed', 'cancelled')),
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  next_at     TEXT NOT NULL,
+  error_kind  TEXT,            -- 'unavailable' | 'error'
+  error       TEXT,
+  created_at  TEXT NOT NULL,
+  started_at  TEXT,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_read_jobs_pick ON read_jobs(state, next_at);
+CREATE INDEX IF NOT EXISTS idx_read_jobs_receipt ON read_jobs(receipt_id);
+
+-- Phone-capture links (receipts/pairing.js). Kept here rather than in memory
+-- so a deploy does not cut off somebody photographing a stack of receipts.
+CREATE TABLE IF NOT EXISTS phone_pairings (
+  token_hash  TEXT PRIMARY KEY,   -- sha256 of the token; the token itself is never stored
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  report_id   TEXT REFERENCES expense_reports(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL,
+  expires_at  TEXT NOT NULL,
+  uses        INTEGER NOT NULL DEFAULT 0,
+  max_uses    INTEGER NOT NULL,
+  revoked_at  TEXT,
+  receipt_ids TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_phone_pairings_user ON phone_pairings(user_id);

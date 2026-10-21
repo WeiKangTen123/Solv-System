@@ -83,6 +83,14 @@ function run() {
   // When the sweeper last tried to price a line and failed, so a line that can
   // never be priced stops holding the batch (fx/sweeper.js).
   _ensureColumn('expense_lines', 'fx_tried_at', 'fx_tried_at TEXT');
+  // What a HEIC, WebP, TIFF, GIF or AVIF was before the server made it a JPEG
+  // or PDF (intake/convert.js); only the converted file is kept.
+  _ensureColumn('receipts', 'converted_from', 'converted_from TEXT');
+  // Where a receipt was spent and what kind of document it is, as the reader
+  // read them, so a case can be named and dated from its receipts.
+  _ensureColumn('expenses', 'city', 'city TEXT');
+  _ensureColumn('expenses', 'country', 'country TEXT');
+  _ensureColumn('expenses', 'doc_type', 'doc_type TEXT');
 
   // Steps run in ascending order, because each one stamps the database with its
   // own number and a lower number is then skipped for good.

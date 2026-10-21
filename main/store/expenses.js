@@ -23,14 +23,14 @@ function _receipt(row) {
   return {
     id: row.id, companyId: row.company_id, userId: row.user_id, file: row.file, mime: row.mime, sizeBytes: row.size_bytes,
     sha256: row.sha256, pages: row.pages, source: row.source, groupId: row.group_id, originalName: row.original_name,
-    receivedAt: row.received_at, parsedAt: row.parsed_at,
+    receivedAt: row.received_at, parsedAt: row.parsed_at, convertedFrom: row.converted_from || null,
   };
 }
 
-function createReceipt({ id = newId(), companyId, userId, file, mime, sizeBytes = 0, sha256 = null, pages = null, source = 'upload', groupId = null, originalName = null }) {
-  db.prepare(`INSERT INTO receipts (id, company_id, user_id, file, mime, size_bytes, sha256, pages, source, group_id, original_name, received_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, companyId, userId, file, mime, sizeBytes, sha256, pages, source, groupId, originalName ? String(originalName).slice(0, 200) : null, now());
+function createReceipt({ id = newId(), companyId, userId, file, mime, sizeBytes = 0, sha256 = null, pages = null, source = 'upload', groupId = null, originalName = null, convertedFrom = null }) {
+  db.prepare(`INSERT INTO receipts (id, company_id, user_id, file, mime, size_bytes, sha256, pages, source, group_id, original_name, received_at, converted_from)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, companyId, userId, file, mime, sizeBytes, sha256, pages, source, groupId, originalName ? String(originalName).slice(0, 200) : null, now(), convertedFrom || null);
   return getReceipt(id);
 }
 function getReceipt(id) { return _receipt(db.prepare('SELECT * FROM receipts WHERE id = ?').get(id)); }
@@ -38,7 +38,7 @@ function findReceiptByHash(companyId, sha256) {
   if (!sha256) return null;
   return _receipt(db.prepare('SELECT * FROM receipts WHERE company_id = ? AND sha256 = ? ORDER BY received_at LIMIT 1').get(companyId, sha256));
 }
-const RECEIPT_COLS = { pages: 'pages', parsedAt: 'parsed_at', parseJson: 'parse_json', groupId: 'group_id', sha256: 'sha256', file: 'file' };
+const RECEIPT_COLS = { pages: 'pages', parsedAt: 'parsed_at', parseJson: 'parse_json', groupId: 'group_id', sha256: 'sha256', file: 'file', convertedFrom: 'converted_from' };
 function updateReceipt(id, patch) {
   const sets = [], args = [];
   for (const [k, col] of Object.entries(RECEIPT_COLS)) {
@@ -134,7 +134,7 @@ const EXPENSE_COLS = {
   receiptId: 'receipt_id', reportId: 'report_id', merchant: 'merchant', receiptDate: 'receipt_date', receiptTime: 'receipt_time',
   invoiceNo: 'invoice_no', currency: 'currency', purpose: 'purpose', description: 'description', category: 'category', status: 'status',
   duplicateOf: 'duplicate_of', errorMsg: 'error_msg', aiReadAt: 'ai_read_at', aiConfidence: 'ai_confidence', page: 'page', source: 'source',
-  claimedAt: 'claimed_at', importId: 'import_id',
+  claimedAt: 'claimed_at', importId: 'import_id', city: 'city', country: 'country', docType: 'doc_type',
 };
 const MONEY = { total: 'total_cents', tax: 'tax_cents', subTotal: 'subtotal_cents' };
 
@@ -156,6 +156,7 @@ function _expense(row, lines, receipt) {
     purpose: row.purpose, description: row.description, category: row.category, status: row.status, duplicateOf: row.duplicate_of,
     errorMsg: row.error_msg, aiReadAt: row.ai_read_at, aiConfidence: row.ai_confidence, aiRead, box, page: row.page, source: row.source,
     claimedAt: row.claimed_at, claimed: !!row.claimed_at, importId: row.import_id || null,
+    city: row.city || null, country: row.country || null, docType: row.doc_type || null,
     createdAt: row.created_at, updatedAt: row.updated_at, lines: lines || [], receipt: receipt || null,
   };
 }
