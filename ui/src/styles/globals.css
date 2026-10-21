@@ -1013,6 +1013,9 @@ body {
   border: none;
   background: none;
   font: inherit;
+  /* A button's own line height, as Settings' tab buttons always had; the
+     page's 1.6 made each tab taller. */
+  line-height: normal;
   white-space: nowrap;
   cursor: pointer;
   transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
