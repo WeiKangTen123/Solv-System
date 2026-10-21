@@ -116,11 +116,13 @@ function expectStatus(r, want, what) {
     return `role ${r.json.user.role}`;
   });
 
-  await check('a second self-registration is refused', async () => {
+  // Signing up is open to anyone, and everyone after the first is a user.
+  await check('anyone else who signs up joins the company as a user', async () => {
     const r = await call('POST', '/api/auth/register', { body: { email: 'stranger@solv.sg', password: 'password123', name: 'Stranger' } });
-    expectStatus(r, [400, 403], 'second register');
-    expect(typeof r.json.error === 'string' && r.json.error.length > 5, 'the refusal should carry a sentence');
-    return r.json.error.slice(0, 48);
+    expectStatus(r, [200, 201], 'second sign-up');
+    expect(r.json.user.role === 'user', `a sign-up after the first should be a user, got ${r.json.user.role}`);
+    expect(r.json.user.companyId === S.admin.companyId, 'a sign-up should join the existing company');
+    return `role ${r.json.user.role}`;
   });
 
   await check('GET /api/auth/me returns the signed-in user', async () => {

@@ -142,7 +142,6 @@ export default function Settings() {
         fxPolicy: company.fxPolicy,
         timezone: company.timezone,
         reportColumns: columns,
-        allowRegistration: !!company.allowRegistration,
       });
       forgetCompany();
       await loadAll();
@@ -315,8 +314,8 @@ export default function Settings() {
             <button className="btn btn-primary btn-sm" type="button" onClick={() => setAdding(a => !a)}>{adding ? 'Close' : '+ Add a person'}</button>
           </div>
 
-          {/* Adding someone is an admin's job: self-registration is off unless
-              switched on in Company & Policy. */}
+          {/* People can sign up for themselves (/signup); an admin can also add
+              someone here, with a role and a starting password. */}
           {adding && (
             <form onSubmit={addPerson} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 8, marginTop: 12, padding: 12, borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
               <input className="form-input" type="email" required placeholder="Email" value={newPerson.email} onChange={e => setNewPerson({ ...newPerson, email: e.target.value })} aria-label="Email" autoComplete="off" />
@@ -509,16 +508,7 @@ export default function Settings() {
             </select>
             <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4 }}>A receipt in a category without a column of its own prints under Other.</div>
           </div>
-          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 13, margin: '4px 0 14px', cursor: 'pointer' }}>
-            <input type="checkbox" checked={!!company.allowRegistration} onChange={e => setCompany({ ...company, allowRegistration: e.target.checked })} style={{ marginTop: 3 }} />
-            <span>
-              Let people create their own account
-              <span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>
-                Off: only an admin can add people, in Users &amp; Monitoring. On: anyone who reaches the sign-in page can join this company as a user.
-              </span>
-            </span>
-          </label>
-          <button className="btn btn-primary" type="submit">Save company settings</button>
+          <button className="btn btn-primary" type="submit" style={{ marginTop: 4 }}>Save company settings</button>
         </form>
       )}
 

@@ -78,7 +78,7 @@ router.delete('/me/gemini-keys/:id', requireAuth, (req, res) => {
 
 // The staff list is an admin's: a user works on their own claims and has no
 // reason to read colleagues' names and emails. It used to be open to every
-// account, which with self-registration on meant to anyone on the internet.
+// account, and anyone can sign up.
 router.get('/', requireAuth, requireRole('admin'), (req, res) => {
   res.json({ users: users.getAllUsers(req.user.companyId) });
 });

@@ -24,33 +24,34 @@ const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const sign = user => signSession(user, users.tokenVersion(user.id));
 
-// Whether anyone may create their own account: always for the very first
-// account, which creates the company; after that only when an admin has
-// switched it on in Company settings. It used to be the ALLOW_REGISTRATION
-// environment variable, which was left on in production and needed a server
-// login to turn off. The variable is no longer read.
-function registrationOpen() {
-  if (!users.hasUsers()) return true;
-  const company = users.getCompany(users.firstCompanyId());
-  return !!(company && company.allowRegistration);
-}
+// `hasUsers` tells the sign-in page whether this is a brand-new system, which
+// it sends to the sign-up page to create the administrator. Signing up is
+// always open (`registrationOpen` stays for a page loaded before that).
+router.get('/status', (_req, res) => res.json({ hasUsers: users.hasUsers(), registrationOpen: true }));
 
-router.get('/status', (_req, res) => res.json({ hasUsers: users.hasUsers(), registrationOpen: registrationOpen() }));
-
-// The first account creates the company and is its admin. After that,
-// registration is closed unless an admin opens it; admins add staff.
-// One answer for an email that already has an account, removed or not: the
-// two used to differ, and told anyone asking which emails had accounts.
+// Signing up, like any login system: anyone may create an account and is in
+// at once. The very first account creates the company and is its admin;
+// everyone after joins that company as a user, and an admin can change a role
+// in Users & Monitoring. It used to be open only when an admin switched it
+// on in Company settings, so in practice nobody could sign up.
+//
+// Open to anyone, so: ten tries per address in fifteen minutes (authLimiter),
+// a real email, the password rules, a name, and one answer for an email that
+// already has an account, removed or not. The two used to differ, and told
+// anyone asking which emails had accounts.
 router.post('/register', authLimiter, asyncHandler(async (req, res) => {
   const { email, password, name } = req.body || {};
   if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) return res.status(400).json({ error: 'Email and password are required' });
   if (!EMAIL_SHAPE.test(email.trim())) return res.status(400).json({ error: 'That is not an email address' });
-  if (!registrationOpen()) return res.status(403).json({ error: 'Registration is closed. Ask your administrator to add you.' });
+  // The name goes on every claim this person prints; without it the cover
+  // and the people list showed an email address.
+  const who = typeof name === 'string' ? name.trim().slice(0, 120) : '';
+  if (!who) return res.status(400).json({ error: 'Type your name' });
   if (users.findByEmail(email.trim())) return res.status(400).json({ error: 'That email cannot be registered here. If it is yours, sign in, or ask your administrator.' });
   const first = !users.hasUsers();
   let user;
   try {
-    user = await users.createUser({ email, password, name: typeof name === 'string' ? name.trim().slice(0, 120) || null : null, companyId: first ? null : users.firstCompanyId() });
+    user = await users.createUser({ email, password, name: who, role: first ? null : 'user', companyId: first ? null : users.firstCompanyId() });
   } catch (err) {
     if (err.expose) return res.status(400).json({ error: err.message });
     throw err;
