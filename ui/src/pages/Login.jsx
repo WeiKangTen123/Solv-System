@@ -136,8 +136,10 @@ export default function Login() {
           boxShadow:      'var(--shadow-sm)',
         }}
         title={`Switch to ${isDark ? 'light' : 'dark'} theme`}
+        // The face is a glyph; a title alone is not reliably read out.
+        aria-label={`Switch to ${isDark ? 'light' : 'dark'} theme`}
       >
-        {isDark ? '☀' : '◑'}
+        <span aria-hidden="true">{isDark ? '☀' : '◑'}</span>
       </button>
 
       <div style={{
@@ -259,7 +261,7 @@ export default function Login() {
                     autoFocus
                     autoComplete="username"
                   />
-                  <span className="input-icon" style={{ left: 12, top: '50%', transform: 'translateY(-50%)', position: 'absolute', color: 'var(--text-muted)', fontSize: 15 }}>✉</span>
+                  <span className="input-icon" aria-hidden="true" style={{ left: 12, top: '50%', transform: 'translateY(-50%)', position: 'absolute', color: 'var(--text-muted)', fontSize: 15 }}>✉</span>
                 </div>
               </div>
 
@@ -294,7 +296,7 @@ export default function Login() {
                     autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
                     style={{ paddingRight: 42 }}
                   />
-                  <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: 15 }}>🔒</span>
+                  <span aria-hidden="true" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: 15 }}>🔒</span>
                   <button
                     type="button"
                     onClick={() => setShowPass(v => !v)}
@@ -305,8 +307,12 @@ export default function Login() {
                       transition: 'color 0.15s',
                     }}
                     title={showPass ? 'Hide password' : 'Show password'}
+                    // A toggle keeps one name and says whether it is on, so
+                    // a screen reader hears "Show password, pressed".
+                    aria-label="Show password"
+                    aria-pressed={showPass}
                   >
-                    {showPass ? '🙈' : '👁'}
+                    <span aria-hidden="true">{showPass ? '🙈' : '👁'}</span>
                   </button>
                 </div>
               </div>
