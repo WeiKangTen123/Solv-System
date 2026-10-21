@@ -1,8 +1,8 @@
 import { NavLink } from 'react-router-dom';
 
-// The same three tabs for everyone; an admin gets Settings as a fourth. It
-// used to be shown to everyone while the route behind it refused most of them,
-// which bounced people back to Home with no explanation.
+// The same four tabs for everyone, Settings included: every person has a
+// profile, a password and their preferences there (the route is open to all),
+// and an admin finds the company's controls behind the same tab.
 const ALL = [
   { to: '/',         label: 'Home',      icon: '▦', end: true },
   { to: '/reports',  label: 'Cases',     icon: '▤' },
