@@ -151,6 +151,61 @@ function idempotencyKey(reportId, bill) {
   return `solv-${reportId}-${digest}`;
 }
 
+// What goes up with the bill, as [{ label, files }]: each receipt file as
+// attachments.forReceipt prepares it, under the same R1, R2… the printed
+// report gives it. A receipt-less line (per diem, mileage) has nothing to
+// send. Xero takes ten attachments on a bill, and a PDF too big to send whole
+// is already a picture a page, so a case can need more: then the case PDF
+// goes instead, cover and every receipt, in as few files as fit (casePdfs).
+// What cannot go at all is said in `warnings`, which the case keeps.
+//
+// Counted as they are made, so a case of fifty receipts holds eleven before
+// it turns to the PDF, not fifty.
+async function _attachments(r, warnings) {
+  const refs = require('../reports/expense-payload').receiptRefs(r.expenses);
+  const max = attachments.MAX_FILES;
+  const each = [];
+  const unread = [];
+  let count = 0;
+  const seen = new Set();
+  for (const e of r.expenses) {
+    if (!e.receipt || seen.has(e.receipt.id)) continue;
+    seen.add(e.receipt.id);
+    const ref = refs.get(e.receipt.id);
+    let files;
+    try { files = await attachments.forReceipt(e.receipt, { ref }); }
+    catch (err) {
+      // The bill exists already: a receipt that cannot be prepared is noted,
+      // as one Xero refuses is, and the rest still go.
+      logger.warn('Receipt not prepared for the Xero bill', { reportId: r.id, ref, error: err.message });
+      unread.push(`${ref}: ${err.message}`);
+      continue;
+    }
+    count += files.length;
+    if (count > max) return _asCasePdf(r, warnings, max);
+    each.push({ label: ref, files });
+  }
+  warnings.push(...unread);
+  return each;
+}
+
+async function _asCasePdf(r, warnings, max) {
+  let out;
+  try {
+    out = await attachments.casePdfs(await reportPayload(r.id, { withReceipts: true }));
+  } catch (err) {
+    logger.warn('The case PDF could not be made for the Xero bill', { reportId: r.id, error: err.message });
+    warnings.push('Receipts: the case PDF could not be made, so none were attached. Attach the PDF export in Xero.');
+    return [];
+  }
+  logger.info('Receipts sent to Xero as the case PDF', { reportId: r.id, files: out.files.length, left: out.left.length });
+  if (out.left.length) {
+    const mb = Math.round(attachments.MAX_BYTES / (1024 * 1024));
+    warnings.push(`${out.left.join(', ')}: more than fits in the ${max} files of ${mb} MB Xero takes on a bill. They are in the case's PDF export.`);
+  }
+  return out.files.map(f => ({ label: f.refs.length > 1 ? `${f.refs[0]}-${f.refs.at(-1)}` : f.refs[0], files: [f] }));
+}
+
 async function postReport(reportId, actor, { dryRun = false } = {}) {
   const first = reports.getReport(reportId);
   _assertPostable(first);
@@ -228,20 +283,14 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
 
   // Receipts, best-effort: a rejected attachment is noted, never a reason to
   // lose the bill that was just created.
-  // The same R1, R2… the printed report gives each receipt.
-  const refs = require('../reports/expense-payload').receiptRefs(r.expenses);
-  const seen = new Set();
-  for (const e of r.expenses) {
-    if (!e.receipt || seen.has(e.receipt.id)) continue;
-    seen.add(e.receipt.id);
-    const ref = refs.get(e.receipt.id);
+  for (const item of await _attachments(r, warnings)) {
     try {
-      for (const a of await attachments.forReceipt(e.receipt, { ref })) {
+      for (const a of item.files) {
         await withRetry(() => api.createInvoiceAttachmentByFileName(tenant.tenantId, created.invoiceID, a.name, Readable.from(a.buffer), false, `${created.invoiceID}-${a.name}`.slice(0, 128)));
       }
     } catch (err) {
-      warnings.push(`${ref}: ${xeroErrMsg(err)}`);
-      logger.warn('Receipt not attached to the Xero bill', { reportId, ref, error: xeroErrMsg(err) });
+      warnings.push(`${item.label}: ${xeroErrMsg(err)}`);
+      logger.warn('Receipt not attached to the Xero bill', { reportId, ref: item.label, error: xeroErrMsg(err) });
     }
   }
 
