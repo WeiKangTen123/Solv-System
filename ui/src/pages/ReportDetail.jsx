@@ -1,107 +1,154 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+// api/client prepends BASE = '/api', so paths here start after it.
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import { useVisiblePolling } from '../utils/useVisiblePolling';
+import { useConfirm } from '../context/ConfirmContext';
 import { useViewMode } from '../context/ViewModeContext';
-import StatusBadge from '../components/StatusBadge';
-import ReceiptUpload from '../components/receipts/ReceiptUpload';
-import ConfirmDialog from '../components/ConfirmDialog';
-import { fmtMoney, fmtRate } from '../utils/format';
+import { PageHeader, Tabs, tabPanelProps, Stepper, KindBadge, Menu, Skeleton, EmptyState } from '../components/ui';
+import IntakePanel from '../components/intake/IntakePanel';
+import { useCover } from '../components/intake/useCover';
+import CaseStatus from '../components/cases/CaseStatus';
+import CaseReceipts from '../components/cases/CaseReceipts';
+import CaseTotals from '../components/cases/CaseTotals';
+import CaseDetails from '../components/cases/CaseDetails';
+import CaseActivity from '../components/cases/CaseActivity';
+import PostDialog from '../components/cases/PostDialog';
+import MergeDialog from '../components/cases/MergeDialog';
+import Poll from '../components/cases/Poll';
+import { caseFacts, caseSteps, casePrimary } from '../components/cases/case-logic';
+import { usePageCrumbs } from '../utils/crumbs';
+import { useLeaveGuard } from '../utils/useLeaveGuard';
+import { useOnChanged } from '../utils/useOnChanged';
+import { fmtDateRange } from '../utils/format';
 import { formatDateTime } from '../utils/formatDate';
-import { fxSourceName } from '../utils/fxSources';
-import { unpricedCount, unpricedText } from '../utils/caseTotals';
+import { unpricedText } from '../utils/caseTotals';
 
-// The cover, the receipts under it, the totals, and the one action the
-// current person can take on it right now.
-const COVER = [['title', 'Title', 'text'], ['purpose', 'Purpose', 'text'], ['periodFrom', 'From', 'date'], ['periodTo', 'To', 'date'], ['destination', 'Destination', 'text'], ['nights', 'Nights', 'number'], ['advances', 'Advances received', 'number'], ['notes', 'Notes', 'text']];
-// A case is a bundle of receipts that belong together. It has no destination
-// and nobody stayed any nights, so asking for them is noise on the form and an
-// empty row on the printed cover.
-const NOT_ON_A_CASE = new Set(['destination', 'nights']);
-const coverFor = kind => (kind === 'case' ? COVER.filter(([k]) => !NOT_ON_A_CASE.has(k)) : COVER);
-
-// What a receipt's lines are, in one short phrase. Listing every line's
-// category verbatim turned a folio split four ways into a column of single
-// words 170px tall, which is how the screen came to look unfinished.
-function summarise(lines = []) {
-  if (!lines.length) return '—';
-  const cats = [...new Set(lines.map(l => l.category).filter(Boolean))];
-  const shown = cats.slice(0, 2).join(', ') + (cats.length > 2 ? ` +${cats.length - 2}` : '');
-  const behalf = lines.some(l => l.onBehalfOf) ? ' ‡' : '';
-  // The reader does not always land a category, and a receipt checked in a
-  // hurry can carry none at all. Without this the cell read "4 lines · " with
-  // a separator pointing at nothing, or was simply empty for a single line.
-  const what = shown || 'Uncategorised';
-  if (lines.length === 1) return what + behalf;
-  return `${lines.length} lines · ${what}${behalf}`;
-}
-
-// The cell used to name the person inline — Lodging (Henry Bennett). The
-// dagger is shorter, but a mark nothing explains is worse than a long column,
-// so whoever it stands for is named once under the table.
-const onBehalfNames = (expenses = []) =>
-  [...new Set(expenses.flatMap(e => (e.lines || []).map(l => l.onBehalfOf).filter(Boolean)))];
+// One case: where it is on its way (Receipts → Check → Claim → Xero) and the
+// one button for its next step, its receipts (with more dropped straight in),
+// its details, and what happened to it. Doing anything to it is its owner's;
+// an admin sees it to monitor it, can export it, and can correct a receipt's
+// details in the review.
+//
+// A draft is still being put together on the New case page, and goes there.
+const TABS = ['receipts', 'details', 'activity'];
 
 export default function ReportDetail() {
   const { id } = useParams();
+  // Another case is another page: nothing ticked, typed or uploading on one
+  // carries over to the next (a merge lands on the case it went into).
+  return <CasePage key={id} id={id} />;
+}
+
+function CasePage({ id }) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const [params, setParams] = useSearchParams();
   const { user } = useAuth();
   const { isMobile } = useViewMode();
+  const confirm = useConfirm();
   const base = user?.baseCurrency || 'SGD';
+
   const [view, setView] = useState(null);
-  const [cover, setCover] = useState({});
-  const [unfiled, setUnfiled] = useState([]);
-  const [picked, setPicked] = useState([]);
+  const [loadError, setLoadError] = useState(null);   // { status, message } while nothing is shown
+  const [msg, setMsg] = useState(null);               // { tone, text }
   const [busy, setBusy] = useState('');
-  const [msg, setMsg] = useState(null);
-  const [confirm, setConfirm] = useState(null);
-  const [preview, setPreview] = useState(null);
-  // Set once the cover is touched, cleared by Save. Every upload and phone
-  // photo reloads the page, and that used to overwrite whatever was being typed.
-  const coverDirty = useRef(false);
+  const [dialog, setDialog] = useState(null);         // 'post' | 'merge'
+  const [editing, setEditing] = useState(false);
+  const [uploading, setUploading] = useState(0);
+  const [suggestion, setSuggestion] = useState(null);
+  const panelRef = useRef(null);
 
-  // The same page is reused when the case in the address changes, so what was
-  // picked, previewed or about to be confirmed on the last one is cleared.
-  // Answers for the case the page showed before are dropped: a reply for case
-  // A arriving after the page moved to case B painted A's cover onto B, and
-  // Save cover then wrote it there.
-  const current = useRef(id);
-  useEffect(() => { current.current = id; setView(null); setPicked([]); setPreview(null); setConfirm(null); coverDirty.current = false; }, [id]);
+  const canEdit = !!view && view.editable && view.isOwner;
+  const cover = useCover(canEdit ? id : null);
+  const coverRef = useRef(cover);
+  coverRef.current = cover;
+  // A case claimed meanwhile (here or in another tab) closes the form, so
+  // it does not come back open after a reopen.
+  useEffect(() => { if (!canEdit) setEditing(false); }, [canEdit]);
 
-  // The receipts are read after the upload answers, so the page has to come
-  // back on its own: without this, dropping ten receipts in and pressing Check
-  // them all was answered with "10 could not be, they are still being read",
-  // and the only way to find out when they were ready was to reload.
-  const refresh = useCallback(async () => {
-    const d = await api.get(`/reports/${id}`);
-    if (current.current === id) setView(d);
-  }, [id]);
-
+  // Each load is numbered and only a newer one may replace what is shown: a
+  // poll sent before a Check could answer after it and put the receipt back.
+  const seq = useRef({ asked: 0, shown: 0 });
   const load = useCallback(async () => {
+    const n = ++seq.current.asked;
+    const at = Date.now();
     const d = await api.get(`/reports/${id}`);
-    if (current.current !== id) return;
+    if (n < seq.current.shown) return;
+    seq.current.shown = n;
+    // The owner's draft is the New case page's. Someone else's (an admin
+    // looking) stays here: the New case page would only send them back.
+    if (d.report.status === 'draft' && d.isOwner) { navigate(`/reports/new?draft=${encodeURIComponent(id)}`, { replace: true }); return; }
     setView(d);
-    if (!coverDirty.current) setCover(Object.fromEntries(COVER.map(([k]) => [k, d.report[k] ?? ''])));
-    // Filing is the owner's: an admin sees the case to monitor it.
-    if (d.editable && d.isOwner) setUnfiled((await api.get('/expenses?unfiled=1&status=reviewed')).expenses);
-    else setUnfiled([]);
-  }, [id]);
-  useEffect(() => { setMsg(null); load().catch(e => setMsg({ tone: 'error', text: e.message })); }, [load]);
-  const reading = !!view?.report?.expenses?.some(e => e.status === 'reading');
-  // Not 0 when nothing is being read: the hook schedules a timeout with whatever
-  // it is given, and 0 would busy-loop against the server.
-  useVisiblePolling(refresh, () => (reading ? 2500 : 30000));
+    setLoadError(null);
+    coverRef.current.fromServer(d.report, d.report.coverAi, at);
+  }, [id, navigate]);
+  // A poll that fails keeps what is on screen, except a case that is gone.
+  const refresh = useCallback(() => load().catch(err => { if (err.status === 404) setLoadError({ status: 404, message: err.message }); }), [load]);
+  useEffect(() => { load().catch(err => setLoadError({ status: err.status, message: err.message })); }, [load]);
+  // Receipts are read after they land, so the page comes back on its own:
+  // every 2.5 s while any is being read, else every 30 s, and never in a tab
+  // nobody is looking at.
+  const reading = !!view && view.report.expenses.some(e => e.status === 'reading');
+  const pollEvery = reading ? 2500 : 30000;
   // A change applied from the assistant shows straight away.
+  useOnChanged(refresh);
+
+  const number = view && view.report.number;
+  usePageCrumbs(pathname, [{ label: 'Cases', to: '/reports' }, { label: number || 'Case' }]);
+
+  // Files still uploading are lost if the page goes, so leaving asks. The
+  // page's own moves (a tab, which is only a change of ?tab=) do not.
+  const ownMove = useRef(false);
+  const uploadingRef = useRef(0);
+  // The question stays open while the person reads it, and the upload may
+  // finish meanwhile; it then says so rather than "0 files are uploading".
+  const guard = useLeaveGuard(() => !ownMove.current && uploadingRef.current > 0, uploading > 0
+    ? `${uploading} file${uploading === 1 ? ' is' : 's are'} still uploading; leaving stops ${uploading === 1 ? 'it' : 'them'}.`
+    : 'The uploads have just finished, so nothing is lost by leaving now.');
+
+  // The tab is in the address so a link or a reload opens on it. Replaced,
+  // not pushed: Back leaves the case rather than stepping through its tabs.
+  const tab = TABS.includes(params.get('tab')) ? params.get('tab') : 'receipts';
+  const setTab = useCallback(t => {
+    ownMove.current = true;
+    try {
+      setParams(prev => { const n = new URLSearchParams(prev); if (t === 'receipts') n.delete('tab'); else n.set('tab', t); return n; }, { replace: true });
+    } finally { ownMove.current = false; }
+  }, [setParams]);
+
+  // The intake panel says when the server's side of the files moved: a read
+  // landed, a file was stored. The case is loaded again then, rather than
+  // waiting for the next poll. Its answer is the same object until something
+  // changes, so this is once per change.
+  const lastIntake = useRef(null);
+  const onIntake = useCallback(({ intake: d, uploading: n }) => {
+    uploadingRef.current = n;
+    setUploading(n);
+    if (!d || d === lastIntake.current) return;
+    const first = !lastIntake.current;
+    lastIntake.current = d;
+    setSuggestion(d.suggestion || null);
+    if (!first) refresh();
+  }, [refresh]);
+  // Files dropped while another tab is open go in all the same (the whole
+  // page takes a drop); the Receipts tab comes up so they can be seen going.
+  const wasUploading = useRef(0);
   useEffect(() => {
-    const on = () => { load().catch(() => {}); };
-    window.addEventListener('solv:changed', on);
-    return () => window.removeEventListener('solv:changed', on);
-  }, [load]);
+    if (uploading > 0 && !wasUploading.current && tab !== 'receipts') setTab('receipts');
+    wasUploading.current = uploading;
+  }, [uploading, tab, setTab]);
 
   // An action's old message goes when the next one starts: an error from a
   // failed attempt used to stay up over the success that followed it.
-  const act = async (label, fn) => { setMsg(null); setBusy(label); try { await fn(); await load(); } catch (e) { setMsg({ tone: 'error', text: e.message }); } finally { setBusy(''); } };
+  async function act(label, fn) {
+    if (busy) return;
+    setMsg(null); setBusy(label);
+    try { await fn(); await load(); }
+    catch (err) { setMsg({ tone: 'error', text: err.message }); }
+    finally { setBusy(''); }
+  }
+
   async function exportAs(format) {
     // A PDF opens in a tab of its own; a spreadsheet is a download. Opening a
     // tab for those too left an empty one behind every time, because the
@@ -138,217 +185,191 @@ export default function ReportDetail() {
     }
   }
 
-  if (!view) return <div style={{ color: 'var(--text-muted)' }}>{msg?.text || 'Loading…'}</div>;
-  const { report: r, editable, isOwner, xero } = view;
-  // Only the owner changes a case; an admin's view is for monitoring.
-  const canEdit = editable && isOwner;
-  const rates = [...new Map(r.expenses.flatMap(e => e.lines).filter(l => l.fxRate && l.fxSource !== 'base').map(l => [`${l.currency}|${l.fxRate}|${l.fxRateDate}|${l.fxSource}`, l])).values()];
-  const cats = Object.entries(r.totals.byCategory);
+  if (!view) {
+    if (loadError) {
+      return (
+        <EmptyState title={loadError.status === 404 ? 'This case is not there' : 'The case could not be loaded'}
+                    action={<Link className="btn btn-outline" to="/reports">Back to Cases</Link>}>
+          {loadError.status === 404 ? 'It may have been deleted or merged into another case.' : loadError.message}
+        </EmptyState>
+      );
+    }
+    return <div className="cs-page"><Skeleton rows={8} height={40} label="Loading the case" /></div>;
+  }
+
+  const r = view.report;
+  const { isOwner, xero } = view;
+  const posted = !!view.posted;
+  const xeroConnected = !!(xero && xero.connected);
   const isAdmin = user?.role === 'admin';
-  const mayAct = isOwner;
+  const facts = caseFacts(r);
+  const steps = caseSteps(r, { posted, xeroConnected });
+  const primary = casePrimary(r, { isOwner, posted, xeroConnected });
+  const gone = loadError && loadError.status === 404;
+
+  async function claim() {
+    // One click used to mark it claimed, which locks every receipt in it.
+    const ok = await confirm({
+      title: `Mark ${r.number} claimed?`,
+      message: 'Do this once the claim has gone through your company. Its receipts are then locked; you can reopen it until it is posted to Xero.',
+      confirmLabel: 'Mark claimed',
+    });
+    if (ok) await act('claim', () => api.post(`/reports/${id}/claimed`, {}));
+  }
+
+  async function remove() {
+    const n = r.expenses.length;
+    const ok = await confirm({
+      title: `Delete ${r.number || 'this case'}?`,
+      message: n
+        ? `The ${n} receipt${n === 1 ? '' : 's'} in it stay${n === 1 ? 's' : ''} in My receipts, outside any case; only the case goes.`
+        : 'It has no receipts in it, so only the case goes.',
+      confirmLabel: 'Delete case', danger: true,
+    });
+    if (!ok) return;
+    setMsg(null); setBusy('delete');
+    try { await api.delete(`/reports/${id}`); navigate('/reports'); }
+    catch (err) { setMsg({ tone: 'error', text: err.message }); setBusy(''); }
+  }
+
+  function runPrimary() {
+    if (!primary || busy) return;
+    if (primary.id === 'add') panelRef.current?.choose();
+    else if (primary.id === 'claim') claim();
+    else if (primary.id === 'post') setDialog('post');
+  }
+
+  // A line beside the button: why there is no button yet, or what the case
+  // is waiting on.
+  let note = '';
+  if (r.status === 'open' && isOwner) {
+    if (!facts.count) note = 'Drop the receipts in below, choose them, or send them from your phone. Each one is read for you.';
+    else if (facts.toCheck) note = 'Check every receipt, then put the claim through however your company reimburses you and mark it claimed.';
+    else if (facts.reading) note = `${facts.reading} receipt${facts.reading === 1 ? ' is' : 's are'} still being read; ${facts.reading === 1 ? 'it' : 'they'} can be checked once read.`;
+    else if (!facts.ready) note = `Not ready to claim yet: ${unpricedText(r.totals) || 'something is missing'}.`;
+    else note = 'Every receipt is checked. Mark it claimed once the claim has gone through your company.';
+  } else if (r.status === 'claimed') {
+    note = posted
+      ? `In Xero as draft bill ${r.xeroInvoiceId}${xero?.tenantName ? ` (${xero.tenantName})` : ''}. A case in Xero is final.`
+      : `Claimed ${formatDateTime(r.claimedAt, user?.timezone)}.${isOwner && !xeroConnected
+        ? (isAdmin ? ' Connect Xero in Settings to post cases as bills.' : ' Xero is not connected yet. Ask your admin if this case should go to Xero.')
+        : ''}`;
+  }
+
+  // Exports are for a case with a number; a draft has none (the server says
+  // 409), and only an admin looking at someone's draft ever sees one here.
+  const exportItems = r.status === 'draft' ? [] : [
+    { label: 'PDF', hint: 'The claim with its receipts', onSelect: () => exportAs('pdf') },
+    { label: 'Excel (XLSX)', onSelect: () => exportAs('xlsx') },
+    { label: 'CSV', onSelect: () => exportAs('csv') },
+  ];
+  const moreItems = !isOwner ? [] : [
+    ...(canEdit ? [{ label: 'Merge into another case…', hint: 'Move its receipts there and delete this one', onSelect: () => setDialog('merge') }] : []),
+    // Undoing a claim made by mistake: possible until the case is in Xero.
+    ...(r.status === 'claimed' && !posted ? [{ label: 'Reopen', hint: 'Unlock it to change or add receipts', onSelect: () => act('reopen', () => api.post(`/reports/${id}/reopen`, {})) }] : []),
+    ...(canEdit ? [{ label: 'Delete case', danger: true, onSelect: remove }] : []),
+  ];
+
+  const primaryButton = primary && (primary.to
+    ? <Link className="btn btn-primary" to={primary.to}>{primary.label} <span aria-hidden="true">→</span></Link>
+    : (
+      <button type="button" className="btn btn-primary" onClick={runPrimary} disabled={!!busy}>
+        {busy === 'claim' ? 'Marking…' : primary.label}
+      </button>
+    ));
+
+  const meta = [
+    r.periodFrom || r.periodTo ? fmtDateRange(r.periodFrom, r.periodTo) : null,
+    r.kind === 'trip' && r.destination ? r.destination : null,
+    r.number,
+  ].filter(Boolean);
+
+  const totals = <CaseTotals report={r} facts={facts} base={base} />;
+  const tabs = [
+    { id: 'receipts', label: 'Receipts', count: r.expenses.length },
+    { id: 'details', label: 'Details' },
+    { id: 'activity', label: 'Activity' },
+  ];
 
   return (
-    <div>
-      <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-        <div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><Link to="/reports" style={{ color: 'inherit' }}>← Cases</Link></div>
-          <h1 style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-muted)',
-                           border: '1px solid var(--border)', borderRadius: 100, padding: '2px 9px' }}>
-              {r.kind === 'case' ? 'Case' : r.kind === 'period' ? 'Period' : 'Trip'}
-            </span>
-            {r.number} · {r.title || 'Untitled'} <StatusBadge status={r.status} /></h1>
+    <div className="cs-page">
+      {guard}
+      <Poll key={pollEvery} fn={refresh} every={pollEvery} />
+      <PageHeader
+        title={r.title || 'Untitled case'}
+        subtitle={(
+          <span className="cs-meta">
+            <KindBadge kind={r.kind} />
+            {meta.map((m, i) => <span key={i} className={m === r.number ? 'cs-mono cs-meta-num' : undefined}>{m}</span>)}
+          </span>
+        )}
+        actions={<CaseStatus status={r.status} ready={facts.ready} />}
+      />
+
+      {gone && <div className="alert alert-error" role="alert">This case is no longer there: it was deleted or merged. <Link to="/reports">Back to Cases</Link></div>}
+      {msg && <div className={`alert alert-${msg.tone}`} role={msg.tone === 'error' ? 'alert' : 'status'}>{msg.text}</div>}
+      {r.xeroError && (
+        <div className="alert alert-warning">
+          <span className="alert-icon">!</span>
+          <span>{r.xeroError === 'posting' ? 'Being posted to Xero right now.' : `Xero: ${r.xeroError}`}</span>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-outline btn-sm" onClick={() => exportAs('pdf')}>Export PDF</button>
-          <button className="btn btn-outline btn-sm" onClick={() => exportAs('xlsx')}>XLSX</button>
-          <button className="btn btn-outline btn-sm" onClick={() => exportAs('csv')}>CSV</button>
-          {canEdit && <button className="btn btn-outline btn-sm" onClick={() => setConfirm('delete')}>Delete</button>}
+      )}
+      {/* The same rule the review page follows: an admin may correct a
+          receipt's details, and acting on the claim stays the owner's. */}
+      {!isOwner && (
+        <div className="alert alert-info cs-banner">
+          <span>
+            This is {r.ownerName || r.ownerEmail || 'someone else'}&rsquo;s case. You can read and export it
+            {view.canEditDetails ? <>, and correct a receipt&rsquo;s details in <Link to={`/reports/${id}/review`}>the review</Link>; every change is logged and they can see it</> : ''}.
+            Filing receipts, claiming and posting to Xero stay theirs.
+          </span>
         </div>
+      )}
+
+      <section className="card cs-flow" aria-label="Where this case is">
+        <Stepper steps={steps} label="Where this case is" />
+        <div className="cs-flow-row">
+          {note && <p className="cs-flow-note">{note}</p>}
+          <div className="cs-flow-actions">
+            {primaryButton}
+            {exportItems.length > 0 && <Menu label="Export" items={exportItems} align="end" />}
+            {moreItems.length > 0 && (
+              <Menu label={<><span aria-hidden="true">⋯</span><span className="sr-only">More actions</span></>}
+                    items={moreItems} align="end" disabled={!!busy} />
+            )}
+          </div>
+        </div>
+      </section>
+
+      {isMobile && totals}
+
+      <div className="cs-grid">
+        <div className="cs-main">
+          <Tabs tabs={tabs} value={tab} onChange={setTab} label="The case" idBase="case" />
+          {/* Every panel stays mounted: the receipts panel holds the uploads
+              on their way, which a switch of tab must not drop. */}
+          <div {...tabPanelProps('case', 'receipts')} hidden={tab !== 'receipts'} className="cs-panel">
+            {canEdit && <IntakePanel ref={panelRef} caseId={id} compact onChange={onIntake} />}
+            <CaseReceipts report={r} caseId={id} canEdit={canEdit} base={base} isMobile={isMobile} onChanged={refresh} />
+          </div>
+          <div {...tabPanelProps('case', 'details')} hidden={tab !== 'details'} className="cs-panel">
+            <CaseDetails report={r} cover={cover} suggestion={suggestion} canEdit={canEdit} isOwner={isOwner} base={base}
+                         editing={editing} onEdit={on => { setEditing(on); if (!on) refresh(); }} />
+          </div>
+          <div {...tabPanelProps('case', 'activity')} hidden={tab !== 'activity'} className="cs-panel">
+            <CaseActivity report={r} base={base} tz={user?.timezone} />
+          </div>
+        </div>
+        {!isMobile && <aside className="cs-side" aria-label="Totals">{totals}</aside>}
       </div>
 
-      {msg && <div className={`alert alert-${msg.tone}`}>{msg.text}</div>}
-      {r.xeroError && <div className="alert alert-warning"><span className="alert-icon">!</span><span>Xero: {r.xeroError}</span></div>}
-
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 320px', gap: 18, alignItems: 'start' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
-          {/* Receipts go in where you are standing. Anything added here is in
-              this case from the moment it lands, before anyone checks it, which
-              is the difference between working case-first and filing later. */}
-          {editable && isOwner && (
-            <div className="card">
-              <div className="card-title">Add receipts to this case</div>
-              <div className="card-subtitle">Drop the photos in, or scan the code and shoot them on your phone. Each one is read for you.</div>
-              <ReceiptUpload reportId={id} onUploaded={load} />
-            </div>
-          )}
-
-          {r.expenses.length > 0 && (
-            <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>
-                  {r.totals.unreviewed
-                    ? `${r.totals.unreviewed} of ${r.expenses.length} receipts still need checking`
-                    : `All ${r.expenses.length} receipts checked`}
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Check them in one table instead of one page each.</div>
-              </div>
-              <Link className={`btn btn-sm ${r.totals.unreviewed ? 'btn-primary' : 'btn-outline'}`} to={`/reports/${id}/check`}>
-                {r.totals.unreviewed ? `Check ${r.totals.unreviewed}` : 'Open the table'}
-              </Link>
-            </div>
-          )}
-
-          <div className="card">
-            <div className="card-title">Cover</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0 12px' }}>
-              {coverFor(r.kind).map(([k, label, type]) => (
-                <div className="form-group" key={k} style={{ gridColumn: k === 'title' || k === 'purpose' || k === 'notes' ? '1 / -1' : 'auto' }}>
-                  <label className="form-label" htmlFor={canEdit ? `c-${k}` : undefined}>{label}</label>
-                  {canEdit
-                    ? <input id={`c-${k}`} className="form-input" type={type} step={type === 'number' ? '0.01' : undefined} value={cover[k] ?? ''} onChange={e => { coverDirty.current = true; setCover({ ...cover, [k]: e.target.value }); }} />
-                    // Once it is out of your hands the cover is a finished
-                    // document. A row of disabled boxes reads as a form you are
-                    // not allowed to use; this reads as what was submitted.
-                    : <div style={{ fontSize: 13.5, padding: '6px 0', minHeight: 30, borderBottom: '1px solid var(--border)',
-                                    color: (cover[k] ?? '') === '' ? 'var(--text-muted)' : 'var(--text-primary)' }}>
-                        {(cover[k] ?? '') === '' ? '—' : String(cover[k])}
-                      </div>}
-                </div>
-              ))}
-            </div>
-            {canEdit && <button className="btn btn-outline btn-sm" disabled={!!busy} onClick={() => act('cover', async () => { await api.patch(`/reports/${id}`, cover); coverDirty.current = false; })}>{busy === 'cover' ? 'Saving…' : 'Save cover'}</button>}
-          </div>
-
-          <div className="card">
-            <div className="card-title">Receipts ({r.expenses.length})</div>
-            {!r.expenses.length ? <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Nothing filed yet.</div> : (<>
-              <div style={{ overflowX: 'auto' }}>
-                <table className="data-table check-table">
-                  <thead><tr><th>Date</th><th>Merchant</th><th style={{ textAlign: 'right' }}>Amount</th><th style={{ textAlign: 'right' }}>{base}</th><th>Lines</th><th>Status</th>{canEdit && <th></th>}</tr></thead>
-                  <tbody>{r.expenses.map(e => (
-                    <tr key={e.id}>
-                      <td style={{ whiteSpace: 'nowrap' }}>{e.receiptDate || '—'}</td>
-                      <td style={{ minWidth: 128 }}><Link to={`/expenses/${e.id}`}>{e.merchant || 'Untitled'}</Link>{e.purpose && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{e.purpose}</div>}</td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{fmtMoney(e.total, e.currency)}</td>
-                      {/* A receipt with no lines has no amount yet; calling it
-                          "rate pending" sent people looking for a missing rate. */}
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', color: e.baseTotal == null ? 'var(--warning)' : undefined }}>{e.baseTotal != null ? fmtMoney(e.baseTotal, '') : (e.lines || []).length ? 'rate pending' : 'no amount yet'}</td>
-                      <td style={{ fontSize: 12, minWidth: 112 }}>{summarise(e.lines)}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}><StatusBadge status={e.status} /></td>
-                      {canEdit && <td><button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => act('rm', () => api.delete(`/reports/${id}/expenses/${e.id}`))}>Remove</button></td>}
-                    </tr>))}</tbody>
-                </table>
-              </div>
-              {onBehalfNames(r.expenses).length > 0 && (
-                <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--text-muted)' }}>
-                  ‡ includes a cost paid on behalf of {onBehalfNames(r.expenses).join(', ')}.
-                </div>
-              )}
-            </>)}
-            {canEdit && unfiled.length > 0 && (
-              <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Checked receipts not in a case yet</div>
-                {unfiled.map(e => (
-                  <label key={e.id} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 13, padding: '4px 0' }}>
-                    <input type="checkbox" checked={picked.includes(e.id)} onChange={ev => setPicked(p => (ev.target.checked ? [...p, e.id] : p.filter(x => x !== e.id)))} />
-                    <span style={{ flex: 1 }}>{e.receiptDate || '—'} · {e.merchant || 'Untitled'}</span>
-                    <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{fmtMoney(e.total, e.currency)}</span>
-                  </label>
-                ))}
-                <button className="btn btn-primary btn-sm" style={{ marginTop: 8 }} disabled={!picked.length || !!busy} onClick={() => act('file', async () => {
-                  const r = await api.post(`/reports/${id}/expenses`, { expenseIds: picked });
-                  setPicked([]);
-                  // Anything the server refused comes back in `skipped`; saying
-                  // nothing made a refusal look like a successful filing.
-                  if ((r.skipped || []).length) setMsg({ tone: 'warning', text: `${r.skipped.length} not filed: ${r.skipped.map(x => x.why).join(', ')}.` });
-                })}>File {picked.length || ''} into this case</button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div className="card">
-            <div className="card-title">Totals</div>
-            {cats.map(([c, v]) => <div key={c} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}><span>{c}</span><span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{fmtMoney(v, base)}</span></div>)}
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0 3px', borderTop: '1px solid var(--border)', marginTop: 6 }}><span>Total</span><span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{fmtMoney(r.totals.totalBase, base)}</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}><span>Advances</span><span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>− {fmtMoney(r.advances, base)}</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, padding: '6px 0 0', color: 'var(--accent)' }}><span>Reimbursement</span><span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>{fmtMoney(r.totals.reimbursement, base)}</span></div>
-            {(unpricedCount(r.totals) > 0 || r.totals.unreviewed > 0) && (
-              <div style={{ fontSize: 12, color: 'var(--warning)', marginTop: 8 }}>
-                {r.totals.unreviewed ? `${r.totals.unreviewed} not checked yet. ` : ''}
-                {unpricedCount(r.totals) ? `Not in the total: ${unpricedText(r.totals)}.` : ''}
-              </div>
-            )}
-          </div>
-
-          <div className="card">
-            <div className="card-title">Actions</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {/* Two states, one button each way. Claiming carries the checks
-                  submitting used to: every receipt checked, every line priced. */}
-              {mayAct && r.status === 'open' && <button className="btn btn-primary" disabled={!!busy} onClick={() => setConfirm('claimed')}>{busy === 'claimed' ? 'Marking…' : 'I have claimed this'}</button>}
-              {mayAct && r.status === 'claimed' && !r.xeroInvoiceId && <button className="btn btn-outline" disabled={!!busy} onClick={() => act('reopen', () => api.post(`/reports/${id}/reopen`, {}))}>{busy === 'reopen' ? 'Reopening…' : 'Reopen'}</button>}
-              {/* Posting is part of putting the claim through, so it is the
-                  claimant's, through the connection an admin set up. */}
-              {mayAct && r.status === 'claimed' && !r.xeroInvoiceId && (
-                xero?.connected ? (
-                  <>
-                    <button className="btn btn-outline" disabled={!!busy} onClick={() => act('preview', async () => { setPreview(await api.post(`/reports/${id}/post?dryRun=1`, {})); })}>Preview Xero bill</button>
-                    <button className="btn btn-primary" disabled={!!busy} onClick={() => setConfirm('post')}>Post to Xero</button>
-                  </>
-                ) : <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{isAdmin ? 'Connect Xero in Settings to post cases as bills.' : 'Xero is not connected yet. Ask your admin if this case should go to Xero.'}</div>
-              )}
-              {r.xeroInvoiceId && <div style={{ fontSize: 12.5, color: 'var(--success)' }}>In Xero as draft bill {r.xeroInvoiceId}{xero?.tenantName ? ` (${xero.tenantName})` : ''}. A case in Xero is final.</div>}
-              {r.status === 'open' && mayAct && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Check every receipt, then put the claim through however your company reimburses you and mark it claimed.</div>}
-              {r.status === 'claimed' && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Claimed {formatDateTime(r.claimedAt, user?.timezone)}.</div>}
-              {/* The same rule the check table follows: an admin may correct a
-                  receipt's details, and acting on the claim stays the owner's.
-                  This used to say every change was theirs to make. */}
-              {!mayAct && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
-                This is {r.ownerName || r.ownerEmail || 'someone else'}&rsquo;s case. You can read and export it
-                {view.canEditDetails ? <>, and correct a receipt&rsquo;s details in <Link to={`/reports/${id}/check`}>the check table</Link>; every change is logged and they can see it</> : ''}.
-                Filing receipts, claiming and posting to Xero stay theirs.
-              </div>}
-            </div>
-            {preview && (
-              <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10, fontSize: 12 }}>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>Bill to {preview.bill.contact.name} · {preview.bill.invoice.currencyCode} {fmtMoney(preview.bill.total)} · {preview.tenantName || 'no org'}</div>
-                {preview.bill.invoice.lineItems.map((l, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '3px 0', borderTop: '1px solid var(--border)' }}>
-                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.description}</span>
-                    <span style={{ whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>{l.accountCode || '—'} · {l.taxType}</span>
-                    <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{fmtMoney(l.unitAmount)}</span>
-                  </div>))}
-                <div style={{ color: 'var(--text-muted)', marginTop: 6 }}>Attachments: {preview.bill.attachments.join(', ') || 'none'}</div>
-                <button className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setPreview(null)}>Close preview</button>
-              </div>
-            )}
-          </div>
-
-          {rates.length > 0 && (
-            <div className="card">
-              <div className="card-title">Rates used</div>
-              {rates.map(l => <div key={`${l.currency}${l.fxRate}${l.fxRateDate}`} style={{ fontSize: 12, padding: '3px 0' }}>{l.currency} → {base} <strong>{fmtRate(l.fxRate)}</strong> <span style={{ color: 'var(--text-muted)' }}>· {l.fxSource === 'manual' ? 'entered' : fxSourceName(l.fxSource)} {l.fxRateDate}{l.fxOverrideBy ? ` by ${l.fxOverrideBy}` : ''}</span></div>)}
-            </div>
-          )}
-
-          <div className="card">
-            <div className="card-title">History</div>
-            {r.events.map(ev => <div key={ev.id} style={{ fontSize: 12, padding: '3px 0', display: 'flex', justifyContent: 'space-between', gap: 8 }}><span>{ev.action}{ev.note ? ` — ${ev.note}` : ''}<span style={{ color: 'var(--text-muted)' }}> · {ev.actorName || ''}</span></span><span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{formatDateTime(ev.at, user?.timezone)}</span></div>)}
-          </div>
-        </div>
-      </div>
-
-      {/* The bill is for what is owed, after advances: the total before them
-          was what this asked about, a different figure from the one posted. */}
-      {confirm === 'post' && <ConfirmDialog title={`Post ${r.number} to Xero?`} message={`A draft bill payable to ${r.ownerName || 'the claimant'} for ${fmtMoney(r.totals.reimbursement, base)} will be created in ${xero?.tenantName || 'Xero'}, with the receipts attached. It is approved in Xero as usual.`} confirmLabel="Post to Xero"
-                                   onConfirm={() => { setConfirm(null); act('post', () => api.post(`/reports/${id}/post`, {})); }} onCancel={() => setConfirm(null)} />}
-      {/* One click used to mark it claimed, which locks every receipt in it. */}
-      {confirm === 'claimed' && <ConfirmDialog title={`Mark ${r.number} claimed?`} message="Do this once the claim has gone through your company. Its receipts are then locked; you can reopen it until it is posted to Xero." confirmLabel="Mark claimed"
-                                   onConfirm={() => { setConfirm(null); act('claimed', () => api.post(`/reports/${id}/claimed`, {})); }} onCancel={() => setConfirm(null)} />}
-      {confirm === 'delete' && <ConfirmDialog title="Delete this case?" message="The receipts in it stay in My receipts; only the case goes." confirmLabel="Delete" danger onConfirm={() => api.delete(`/reports/${id}`).then(() => navigate('/reports')).catch(e => { setConfirm(null); setMsg({ tone: 'error', text: e.message }); })} onCancel={() => setConfirm(null)} />}
+      {dialog === 'post' && (
+        <PostDialog report={r} base={base} tenantName={xero?.tenantName} onPosted={load} onClose={() => setDialog(null)} />
+      )}
+      {dialog === 'merge' && (
+        <MergeDialog report={r} onClose={() => setDialog(null)}
+                     onMerged={into => { setDialog(null); navigate(`/reports/${encodeURIComponent(into)}`); }} />
+      )}
     </div>
   );
 }

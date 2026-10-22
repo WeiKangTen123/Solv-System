@@ -6,16 +6,17 @@ const path = require('path');
 // replacement then read "4 lines · " with a separator pointing at nothing when
 // the reader had landed no category, and was blank for a single such line.
 //
-// The function is pure and lives in a page component, so it is lifted out of
-// the source rather than exported for a test that would be its only caller.
-// Renaming it fails here loudly, which is the intent.
-const SRC = path.join(__dirname, '../../ui/src/pages/ReportDetail.jsx');
+// The function is pure and lives with the case page's other decisions
+// (components/cases/case-logic.js, an ES module jest cannot import here), so
+// it is lifted out of the source. Renaming it fails here loudly, which is the
+// intent.
+const SRC = path.join(__dirname, '../../ui/src/components/cases/case-logic.js');
 
 function summariseFromSource() {
   const src = fs.readFileSync(SRC, 'utf8');
-  const fn = src.match(/^function summarise[\s\S]*?^}/m);
-  if (!fn) throw new Error('summarise() is no longer a top-level function in ReportDetail.jsx');
-  return new Function(`${fn[0]}; return summarise;`)();
+  const fn = src.match(/^export function summarise[\s\S]*?^}/m);
+  if (!fn) throw new Error('summarise() is no longer a top-level function in components/cases/case-logic.js');
+  return new Function(`${fn[0].replace(/^export /, '')}; return summarise;`)();
 }
 
 describe('the Lines cell on a report', () => {

@@ -2321,3 +2321,241 @@ a.mr-name:hover { text-decoration: underline; }
   .mr-bulk { animation: none; }
   .hm-todo-link, .hm-card-new, .hm-fold > summary::before { transition: none; }
 }
+
+/* ══ Cases (pages/Reports.jsx, pages/ReportDetail.jsx, components/cases/*) ═══
+   The Cases list and the case page: the filters over the list, a row per
+   case with its next step (a card on a phone), and the case page's progress,
+   receipts table, details, activity and totals. The rules of the UI
+   foundations section hold here too: theme tokens only, colour only for a
+   state (and never alone: every state is also in words), 44px targets under
+   .mobile-mode, rings on :focus-visible, nothing moving under
+   prefers-reduced-motion. Classes start with cs-.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.cs-case-title:focus-visible,
+.cs-merchant a:focus-visible,
+.cs-rname:focus-visible,
+.cs-loose summary:focus-visible,
+.cs-pick-item:has(input:focus-visible) {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* The cards here are surfaces to work on, not tiles: they do not lift. */
+.cs-list-page .card:hover,
+.cs-page .card:hover { transform: none; }
+
+/* Shared bits of text. */
+.cs-sub { font-size: 11.5px; line-height: 1.45; color: var(--text-muted); }
+.cs-sub.is-warn, .cs-num.is-warn, .cs-card-figs .is-warn { color: var(--warning); }
+.cs-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cs-mono { font-family: var(--font-mono); }
+.cs-none { color: var(--text-muted); }
+.cs-nowrap { white-space: nowrap; }
+.cs-right { text-align: right !important; }
+.cs-foot { margin-top: 10px; font-size: 11.5px; line-height: 1.45; color: var(--text-muted); }
+.cs-table-wrap { overflow-x: auto; }
+.cs-error { align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+
+/* ── The list ── */
+.cs-list { padding: 0; overflow: hidden; }
+.cs-filters { display: flex; flex-direction: column; gap: 12px; padding: 16px 20px 14px; border-bottom: 1px solid var(--border); }
+.cs-filter-row { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; }
+.cs-search { flex: 1 1 260px; min-width: 0; }
+.cs-select { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.cs-select .form-input { width: auto; min-width: 120px; padding: 8px 10px; font-size: 13px; }
+.cs-admin-row { padding-top: 12px; border-top: 1px dashed var(--border); }
+.cs-list-body { padding: 4px 20px 16px; }
+.cs-list-body .ui-skeleton { padding-top: 14px; }
+
+.cs-row { cursor: pointer; }
+.cs-table td { vertical-align: top; }
+.cs-case { min-width: 220px; }
+.cs-case-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cs-case-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-decoration: none;
+  border-radius: var(--radius-xs);
+}
+.cs-case-title:hover { text-decoration: underline; }
+.cs-case .cs-sub { margin-top: 3px; }
+.cs-owner { white-space: nowrap; color: var(--text-secondary); }
+.cs-act { white-space: nowrap; }
+
+/* A phone: a card per case. */
+.cs-cards { list-style: none; margin: 0; padding: 8px 0 0; display: flex; flex-direction: column; gap: 10px; }
+.cs-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  cursor: pointer;
+}
+.cs-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+.cs-card .cs-case-title { font-size: 15px; }
+.cs-card-figs { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-top: 4px; font-size: 12.5px; color: var(--text-secondary); }
+.cs-cur { font-size: 11px; color: var(--text-muted); }
+.cs-card .cs-act { align-self: stretch; justify-content: center; margin-top: 8px; }
+.mobile-mode .cs-filters { padding: 14px; }
+.mobile-mode .cs-list-body { padding: 0 14px 14px; }
+.mobile-mode .cs-list { padding: 0 !important; }
+.mobile-mode .cs-select { flex: 1 1 140px; }
+.mobile-mode .cs-select .form-input { flex: 1 1 auto; min-width: 0; min-height: 44px; }
+.mobile-mode .ui-chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+
+/* ── The case page ── */
+.cs-meta { display: inline-flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; }
+.cs-meta > span + span::before { content: '·'; margin-right: 10px; color: var(--text-muted); }
+.cs-meta > .ui-kind + span::before { content: none; }
+.cs-banner { line-height: 1.5; }
+
+.cs-flow { display: flex; flex-direction: column; gap: 16px; margin-bottom: 18px; padding: 18px 20px; }
+.cs-flow-row { display: flex; align-items: center; justify-content: flex-end; gap: 10px 16px; flex-wrap: wrap; }
+.cs-flow-note { flex: 1 1 260px; margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-muted); }
+.cs-flow-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mobile-mode .cs-flow-actions { width: 100%; }
+.mobile-mode .cs-flow-actions > .btn { flex: 1 1 100%; justify-content: center; }
+
+.cs-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
+.cs-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.cs-side { position: sticky; top: calc(var(--header-height) + 16px); display: flex; flex-direction: column; gap: 16px; }
+.cs-panel { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+/* `hidden` is a UA display:none, which the display above would undo. */
+.cs-panel[hidden] { display: none; }
+.mobile-mode .cs-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.mobile-mode .cs-page > .cs-totals { margin-bottom: 14px; }
+@media (max-width: 1000px) {
+  .cs-grid { grid-template-columns: minmax(0, 1fr); }
+  .cs-side { position: static; }
+}
+
+/* ── Receipts ── */
+.cs-receipts { padding: 6px 16px 14px; }
+.cs-msg { align-items: flex-start; justify-content: space-between; gap: 10px; margin: 10px 0 6px; }
+.cs-msg .btn-ghost { flex: 0 0 auto; padding: 0 6px; min-height: 0; }
+.cs-msg-list { margin: 6px 0 0; padding-left: 18px; }
+.cs-rtable td { vertical-align: top; }
+.cs-rtable .cs-pick { width: 32px; padding-right: 0; }
+.cs-merchant { min-width: 150px; }
+.cs-merchant a { font-weight: 600; color: var(--text-primary); text-decoration: none; border-radius: var(--radius-xs); }
+.cs-merchant a:hover { text-decoration: underline; }
+.cs-row.is-picked td, .cs-ritem.is-picked { background: var(--accent-subtle); }
+.cs-state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
+.cs-state.is-ok { color: var(--success); }
+.cs-state.is-busy { color: var(--info); }
+.cs-state.is-bad { color: var(--danger); }
+.cs-state.is-todo { color: var(--warning); }
+
+/* A phone: one line of words and one of figures per receipt. */
+.cs-rlist { list-style: none; margin: 0; padding: 0; }
+.cs-ritem { display: flex; align-items: center; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+.cs-ritem:last-child { border-bottom: none; }
+.cs-ritem-main { flex: 1 1 auto; min-width: 0; }
+.cs-rname {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.cs-ritem-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 12.5px; }
+
+/* What to do with the ticked receipts: kept in sight at the bottom of the
+   window while the list scrolls, over the bottom bar on a phone. */
+.cs-bulk {
+  position: sticky;
+  bottom: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-md);
+}
+.cs-bulk-count { margin-right: auto; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.mobile-mode .cs-bulk { bottom: calc(var(--bottom-nav-total) + 8px); }
+.mobile-mode .cs-bulk-count { flex: 1 1 100%; }
+.mobile-mode .cs-bulk .btn, .mobile-mode .cs-bulk .ui-menu-wrap { flex: 1 1 auto; }
+.mobile-mode .cs-bulk .ui-menu-wrap .btn { width: 100%; justify-content: center; }
+
+.cs-loose { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.cs-loose summary { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-radius: var(--radius-xs); }
+.cs-loose[open] summary { margin-bottom: 8px; }
+.cs-loose-list { list-style: none; margin: 0 0 10px; padding: 0; }
+.cs-loose-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 3px 0; font-size: 13px; }
+.cs-loose-name { overflow-wrap: anywhere; }
+.mobile-mode .cs-loose summary { display: flex; align-items: center; min-height: 44px; }
+
+/* ── Totals ── */
+.cs-totals { padding: 18px 20px; }
+.cs-totals-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.cs-totals-head .section-label { margin: 0; }
+.cs-totals-figure { font: 700 20px var(--font-mono); color: var(--text-primary); white-space: nowrap; }
+.cs-totals-list { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 0; }
+.cs-totals-item { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; }
+.cs-totals-item dt { color: var(--text-secondary); }
+.cs-totals-item dd { margin: 0; font-family: var(--font-mono); color: var(--text-primary); white-space: nowrap; }
+.cs-totals-item.is-strong { padding-top: 6px; border-top: 1px solid var(--border); font-size: 14px; font-weight: 700; }
+.cs-totals-item.is-strong dt { color: var(--text-primary); }
+.cs-totals-sub { margin-top: 16px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+.cs-totals-note { display: flex; flex-direction: column; gap: 2px; margin-top: 12px; font-size: 11.5px; line-height: 1.45; color: var(--warning); }
+
+/* ── Details ── */
+.cs-details-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.cs-details-head .section-label { margin: 0; }
+.cs-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px 20px; margin: 0; }
+.cs-fact { min-width: 0; }
+.cs-fact.is-wide { grid-column: 1 / -1; }
+.cs-fact dt { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+.cs-fact dd { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--text-primary); overflow-wrap: anywhere; white-space: pre-wrap; }
+.cs-details-note { margin-top: 14px; }
+.cs-extras .form-group { margin-bottom: 14px; }
+.cs-extras .cs-nights { max-width: calc(50% - 6px); }
+.mobile-mode .cs-extras .cs-nights { max-width: none; }
+.cs-extras textarea { resize: vertical; min-height: 72px; font-family: var(--font-sans); }
+.cs-details-foot { display: flex; justify-content: flex-end; padding-top: 4px; }
+
+/* ── Activity ── */
+.cs-activity { display: flex; flex-direction: column; gap: 14px; }
+.cs-events { list-style: none; margin: 0; padding: 0; }
+.cs-event { display: flex; justify-content: space-between; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.cs-event:last-child { border-bottom: none; }
+.cs-event-what { min-width: 0; color: var(--text-primary); overflow-wrap: anywhere; }
+.cs-event-when { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+.cs-rates { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+
+/* ── Dialogs ── */
+.cs-dialog-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+.cs-dialog-text { margin: 8px 0 14px; font-size: 13px; line-height: 1.5; color: var(--text-muted); }
+.cs-dialog-buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.cs-bill { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-secondary); font-size: 12.5px; }
+.cs-bill .alert { margin: 0; }
+.cs-bill-head { font-weight: 600; color: var(--text-primary); }
+.cs-bill-lines { list-style: none; margin: 0; padding: 0; }
+.cs-bill-lines li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: baseline; padding: 4px 0; border-top: 1px solid var(--border); }
+.cs-bill-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cs-pick-list { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; margin: 0; padding: 0; border: none; }
+.cs-pick-item { display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px; border: 1.5px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.cs-pick-item:hover { background: var(--bg-hover); }
+.cs-pick-item.is-on { border-color: var(--accent); }
+.cs-pick-item input { margin-top: 3px; accent-color: var(--accent); }
+.cs-pick-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.cs-pick-name { font-size: 13px; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+.mobile-mode .cs-pick-item { min-height: 44px; align-items: center; }
+.mobile-mode .cs-dialog-buttons .btn { flex: 1 1 0; }
+/* On a phone the number is in the header's trail already, and on a line of
+   its own it began with a dangling separator. */
+.mobile-mode .cs-meta-num { display: none; }
