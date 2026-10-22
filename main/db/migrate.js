@@ -91,6 +91,11 @@ function run() {
   _ensureColumn('expenses', 'city', 'city TEXT');
   _ensureColumn('expenses', 'country', 'country TEXT');
   _ensureColumn('expenses', 'doc_type', 'doc_type TEXT');
+  // Each person's forwarding address for receipts (routes/inbound.js),
+  // receipts+<token>@INBOUND_EMAIL_DOMAIN, made the first time they ask for
+  // it. Unique when set, so one address can only ever be one person's.
+  _ensureColumn('users', 'inbound_token', 'inbound_token TEXT');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_inbound_token ON users(inbound_token) WHERE inbound_token IS NOT NULL');
 
   // Steps run in ascending order, because each one stamps the database with its
   // own number and a lower number is then skipped for good.

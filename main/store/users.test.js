@@ -78,4 +78,57 @@ describe('store/users', () => {
     expect(list.find(u => u.id === e.id).totalCents).toBe(1000);
     expect(list.find(u => u.id === admin.id).totalCents).toBe(0);     // was the whole database's total
   });
+
+  describe('the forwarding address', () => {
+    afterEach(() => { delete process.env.INBOUND_EMAIL_DOMAIN; delete process.env.INBOUND_EMAIL_SECRET; });
+    const on = () => { process.env.INBOUND_EMAIL_DOMAIN = 'In.Solv.sg'; process.env.INBOUND_EMAIL_SECRET = 'secret'; };
+
+    test('there is none until the server takes mail, and nobody is given a token by asking then', async () => {
+      const u = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
+      expect(users.inboundConfigured()).toBe(false);
+      expect(users.inboundAddress(u.id)).toBeNull();
+      process.env.INBOUND_EMAIL_DOMAIN = 'in.solv.sg';               // the domain alone is not enough
+      expect(users.inboundAddress(u.id)).toBeNull();
+      expect(db.prepare('SELECT inbound_token FROM users WHERE id = ?').get(u.id).inbound_token).toBeNull();
+    });
+
+    test('made on first ask, the same after, and replaced on request; found by its token in any case', async () => {
+      on();
+      const a = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
+      const b = await users.createUser({ email: 'b@solv.sg', password: 'password123', companyId: a.companyId });
+      const first = users.inboundAddress(a.id);
+      expect(first).toMatch(/^receipts\+[a-z2-7]{12}@in\.solv\.sg$/);
+      expect(users.inboundAddress(a.id)).toBe(first);
+      expect(users.inboundAddress(b.id)).not.toBe(first);
+      const token = /\+([a-z0-9]+)@/.exec(first)[1];
+      expect(users.findByInboundToken(token)).toMatchObject({ id: a.id, email: 'a@solv.sg' });
+      expect(users.findByInboundToken(token.toUpperCase())).toMatchObject({ id: a.id });
+      expect(users.findByInboundToken(token)).not.toHaveProperty('inboundToken');   // not handed about with the person
+
+      const fresh = users.newInboundToken(a.id);
+      expect(users.inboundAddress(a.id)).toBe(`receipts+${fresh}@in.solv.sg`);
+      expect(users.findByInboundToken(token)).toBeNull();          // the old address stops working
+      for (const bad of ['', null, 'short', 'has space here', 'x'.repeat(65)]) expect(users.findByInboundToken(bad)).toBeNull();
+      expect(users.inboundAddress('nobody')).toBeNull();
+    });
+
+    test('one token is only ever one person\'s', async () => {
+      const a = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
+      const b = await users.createUser({ email: 'b@solv.sg', password: 'password123', companyId: a.companyId });
+      db.prepare("UPDATE users SET inbound_token = 'abcdefghijkl' WHERE id = ?").run(a.id);
+      expect(() => db.prepare("UPDATE users SET inbound_token = 'abcdefghijkl' WHERE id = ?").run(b.id)).toThrow(/UNIQUE/);
+      // and any number of people may have none
+      expect(db.prepare('SELECT COUNT(*) AS n FROM users WHERE inbound_token IS NULL').get().n).toBe(1);
+    });
+
+    test('the mail it took is counted over the last day', async () => {
+      const a = await users.createUser({ email: 'a@solv.sg', password: 'password123' });
+      const old = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
+      db.prepare('INSERT INTO inbound_mails (user_id, received_at) VALUES (?, ?)').run(a.id, old);
+      users.recordInboundMail(a.id);
+      users.recordInboundMail(a.id);
+      expect(users.inboundMailsLastDay(a.id)).toBe(2);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM inbound_mails WHERE user_id = ?').get(a.id).n).toBe(2);   // the old row went
+    });
+  });
 });
