@@ -153,7 +153,7 @@ A receipt still `reading` has no flags.
 | `receipts/read-receipt.js` | intake engine (`readReceipt`), AI mapping (`applyRead`) | `readReceipt(args, { deferIfUnavailable })` → `{ expenseIds }` or `{ unavailable: true }` (rows untouched, still `reading`) when nothing was read because every key was busy. `applyRead` also writes `city`, `country`, `docType`. |
 | `receipts/receipt-parser.js` | intake engine | The prompt asks for `city`, `country` (ISO-2, only when printed or plain from the address, phone code or tax name) and `docType`; `normalise` cleans them (unknown → null; country upper-case, 2 letters). |
 | `reports/cover-suggest.js` | cases | `suggestCover(expenses, { baseCurrency, today })` → `{ kind, title, periodFrom, periodTo, destination, nights, basis }` or null; `findMatch(caseId, userId)` → `{ id, number, title, periodFrom, periodTo } \| null`. Rules below. |
-| `reports/cover-auto.js` | cases | `refresh(reportId)`: draft → writes every field not in `user`; open → only `periodFrom`, `periodTo`, `destination`, `nights` not in `user`; claimed → nothing. Updates `cover_ai.auto`. No event. Wired to `read-queue.setOnDone` at integration. |
+| `reports/cover-auto.js` | cases | `refresh(reportId)`: draft → writes every field not in `user`; open → only `periodFrom`, `periodTo`, `destination`, `nights` not in `user`, and the dates widen only to a receipt within 3 days of them (a Month never widens); claimed → nothing. Updates `cover_ai.auto`. No event. Wired to `read-queue.setOnDone` at integration. (Changed after the QA pass on 2026-10-22: stretching to fit every receipt turned a reopened four-day trip into seven weeks.) |
 | `receipts/flags.js` | cases | as above |
 
 ### Cover suggestion rules

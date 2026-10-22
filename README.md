@@ -20,11 +20,15 @@ Production: `npm run build:ui` then `NODE_ENV=production npm start` (serves the 
 
 A case is a bundle of receipts that belong together: a trip, a job, a month of fuel. It is the same object as a report, so everything downstream is unchanged, and it prints as one.
 
-Every receipt lives in a case; there is no loose pile. Pick one image or ten on Home and one case is made for them, named by the day. Drop a zip and the import makes a case named after the file, reads every receipt in it and files them all in. Scan the QR code on Home and a case is made for the phone session, so every photograph taken while it is open lands there; a session that produced nothing deletes its case again. Or create a case by hand and add to it as receipts happen — by dropping files on it, importing a zip into it, or scanning its own code.
+**New case, receipts first** (`/reports/new`). The page is a drop zone beside the case's details. Drop, pick or photograph any number of receipts — JPG, PNG, PDF, iPhone HEIC/HEIF, WebP, TIFF (a multi-page TIFF becomes a PDF), GIF and AVIF, up to 15 MB each; a ZIP of receipts is unpacked into the case, and a ZIP or spreadsheet with a claim form goes through the claim import. The first file saves the case as a **draft** with no number yet. Each file gets its own row — uploading, waiting, reading, read with what it found, needs a look, failed with a reason and a way to try again — with "N of M read" and about how long is left; the person can leave the page and reading goes on. As reads land, the AI fills the details: Trip, Month or Other, a title such as "India trip, Sep 2026", the dates from the earliest and latest receipt, and the destination from where the receipts were issued. It never suggests a purpose. Any field the person types is theirs from then on and the AI leaves it alone. When a draft's receipts all fall inside an open case's dates, the page offers to move them there instead. **Create case** gives it its number and opens the review; **Discard** removes the draft and its receipts. Drafts nobody put a receipt in are removed after a day.
+
+Home and My receipts send dropped files to the same page, so no case is ever made without the person choosing it. A case takes more receipts the same way on its own page — dropped on it, a ZIP, or its own phone code (a phone link lasts 30 minutes from its last photo and takes 50) — and receipts move between a person's open cases, or two cases merge, from the case page.
+
+**Reading** ([main/receipts/read-queue.js](main/receipts/read-queue.js)). Every file is read through a queue kept in the database, so a restart loses nothing: one call per receipt, four at a time across the company and two per person, the person with the fewest running going next. When every AI key is busy the read waits and tries again after 1, 5, 15 and 60 minutes before it gives up and says so; the person can try again at once or type the fields instead. Files the reader cannot take as they are (HEIC, WebP, TIFF, GIF, AVIF) are converted to JPEG on the server first ([main/intake/convert.js](main/intake/convert.js)), and the receipt keeps a note of what it was.
 
 Unlike the bulk filing route, a receipt uploaded into a case joins it before anyone has checked it, which is the point of working case-first. Claiming still refuses until every receipt in the case has been checked and priced.
 
-Checking happens in one table at `/reports/:id/check`: a row per receipt, the fields editable in place, the receipt beside the row you are on, and one button to check them all. Anything that cannot be checked says why.
+**Checking** happens on one page, `/reports/:id/review`: the receipts still to check on the left, the receipt itself in the middle, its fields on the right with what the AI first read beside any field changed since. Each receipt carries flags ([main/receipts/flags.js](main/receipts/flags.js)), worked out when it is shown and never stored: **must fix** (no amount, merchant or date; lines that do not add up; no exchange rate) and **have a look** (a date outside the case's dates, a possible duplicate, a currency the reader assumed, GST that is not 9/109 of the total, an amount changed from what was read, a date in the future). J and K move, Enter checks, "Check all unflagged" checks every receipt with nothing that must be fixed, and the last one leads to claiming the case.
 
 ## Roles and flow
 
@@ -37,7 +41,7 @@ Two roles, like most systems: people who claim, and the person who runs it.
 
 There are no managers and nobody approves anything. Solv records claims; it does not route them.
 
-`open → claimed`, and back again with **Reopen**. A case is open while receipts go in and claimed once its owner has put it through whatever actually reimburses them; claimed closes it to filing, checking, re-reading and deleting. Claiming refuses until every receipt in the case has been checked and priced. Once a case has been posted to Xero it is final and cannot be reopened, so the app and the books never disagree.
+`draft → open → claimed`, and back from claimed to open with **Reopen**. A draft is a case still being put together on the New case page; it has no number and cannot be claimed, exported or posted. A case is open while receipts go in and claimed once its owner has put it through whatever actually reimburses them; claimed closes it to filing, checking, re-reading and deleting. Claiming refuses until every receipt in the case has been checked and priced. Once a case has been posted to Xero it is final and cannot be reopened, so the app and the books never disagree.
 
 The step belongs to the claimant. Solv does not move money, so it cannot know that anybody was paid — what it can know is that the person put the claim through, so they are the one who says so, and nobody can say it for them. A receipt can also be claimed on its own, once it is checked and priced, for a one-off put through outside any case. A receipt in a case is claimed with its case and never on its own as well, and one claimed on its own cannot then go into a case, so nothing is claimed twice.
 
@@ -64,10 +68,12 @@ main/
   index.js       mounts every /api route, serves ui/dist in production
   routes/        auth users company receipts expenses claims reports fx xero dashboard
   receipts/      read-receipt (photo / text PDF / scanned PDF, and how lines are built),
+                 read-queue (the durable, fair read queue and its retries),
                  receipt-parser (prompts + normaliser), receipt-store (files on disk),
-                 thumbnailer, pairing (phone-capture QR tokens)
-  intake/        what every document becomes on the way in: document.js (one shape),
-                 dedup.js (hash, number, near-match), categories.js (the category list)
+                 flags (must fix / have a look), thumbnailer, pairing (phone-capture links)
+  intake/        what every document becomes on the way in: convert.js (HEIC, WebP, TIFF,
+                 GIF, AVIF to JPEG or PDF), document.js (one shape), dedup.js (hash, number,
+                 near-match), categories.js (the category list)
   llm/           gemini-client (company keys, rate limit), llm-json (parsing what a model returns)
   pdf/           render.js + render-worker.mjs (pages → JPEG in a child process), pages.js (one document or many)
   store/         expenses.js (receipts, expenses, lines, cents), reports.js (reports, totals, events),
@@ -75,16 +81,19 @@ main/
                  summary.js (the dashboard's figures, aggregated in SQL and scoped by role)
   fx/            providers (Frankfurter/ECB, open.er-api), rates (cache, manual priority),
                  apply (per-line, policy, overrides)
-  reports/       workflow (state machine), expense-payload, expense-doc (pdfmake definition, CSV,
-                 workbook model), expense-export (PDF/XLSX/CSV bytes)
+  reports/       workflow (state machine), cover-suggest + cover-auto (the AI's case details),
+                 intake-view (what the New case page polls), draft-sweep, expense-payload,
+                 expense-doc (pdfmake definition, CSV, workbook model), expense-export (bytes)
   xero/          connect + oauth + oauth-state + token-cache (company-scoped), reconnect, contacts,
                  category-account, attachments, bills
   claims/        ZIP and claim-form batch import, durable job queue and worker, category suggestions
   db/            schema.sql, migrations, backups     middleware/  auth, roles, rate limit
   utils/         the generic helpers only: base64, crypto, ids, logger, paths
   scripts/       read-sample.js, fx-sample.js, demo-report.js, smoke-flow.js, jest setup
-ui/src/          pages: Login, Home, MyExpenses, ExpenseReview, Reports, ReportDetail, Settings,
-                 Capture, CaseCheck; components/Insights.jsx draws the home dashboard
+ui/src/          pages: Login, Signup, Home, MyExpenses, ExpenseReview, Reports, NewCase, ReportDetail,
+                 CaseReview, Settings, Capture; components/intake (the drop panel and its rows),
+                 components/receipt (viewer, fields, lines, rate), components/ui (shared pieces),
+                 components/Insights.jsx draws the home dashboard
 docs/            specs/, plans/, acceptance/ (+ exports/), reference/ — see docs/README.md
 samples/         receipts/ (the two Marriott folios), reads/ (the reader's saved output for each)
 ```
@@ -137,4 +146,4 @@ The rate, its date, its source and the moment it was fetched are stored on every
 ## Not yet
 
 - A live post to the real Xero organisation: the code and a dry run exist; connect the org in Settings and click Post.
-- Email intake of claims, mileage, per-diem, policy limits, multi-level approval.
+- Email intake of receipts and claims (an address to forward to, and .eml/.msg files), mileage, per-diem, admin-set policy limits, multi-level approval, and a live progress stream in place of polling. The plan they belong to is [docs/plans/2026-10-21-case-intake.md](docs/plans/2026-10-21-case-intake.md).
