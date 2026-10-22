@@ -24,6 +24,7 @@ const thumbnailer  = require('../receipts/thumbnailer');
 const pairing      = require('../receipts/pairing');
 const readQueue    = require('../receipts/read-queue');
 const { readArchive } = require('../claims/claim-archive');
+const { parseMail, receiptsFromMail, pdfName } = require('../intake/email');
 const logger       = require('../utils/logger');
 
 // A receipt FILE arrives here: dropped on the desktop, photographed on a
@@ -116,7 +117,9 @@ async function storeReceipt(user, { mime: declaredMime, data, buffer: given, fil
   const storedName = receiptStore.forUser(user.id).save(receiptId, buffer, mime);
   const src = source === 'phone' ? 'phone' : 'upload';
   const receipt = store.createReceipt({ id: receiptId, companyId: user.companyId, userId: user.id, file: storedName, mime, sizeBytes: buffer.length, sha256: hash, source: src, originalName: filename || null, convertedFrom });
-  let expense = store.createExpense({ companyId: user.companyId, userId: user.id, receiptId, source: src, status: 'reading', currency: users.getUserDefaults(user.id).currency });
+  // A file from an email is an upload as far as the receipt row's CHECK goes;
+  // the expense says where it came from.
+  let expense = store.createExpense({ companyId: user.companyId, userId: user.id, receiptId, source: source === 'email' ? 'email' : src, status: 'reading', currency: users.getUserDefaults(user.id).currency });
   // Answered as filed, so the page knows which case it is in.
   if (reportId) { require('../store/reports').addExpense(reportId, expense.id); expense = store.getExpense(expense.id); }
   logger.info('Receipt stored', { userId: user.id, receiptId, bytes: buffer.length, mime, convertedFrom, source: src });
@@ -165,6 +168,45 @@ router.post('/archive', requireAuth, bigJson, asyncHandler(async (req, res) => {
   for (const s of archive.skipped) skipped.push({ name: s.name, why: s.reason });
   logger.info('Receipt archive unpacked', { userId: me.id, reportId, archive: filename ? String(filename).slice(0, 120) : null, stored: stored.length, skipped: skipped.length });
   res.status(stored.length ? 201 : 200).json({ stored, skipped });
+}));
+
+// ── An email ────────────────────────────────────────────────────────────────
+// The receipts in one mail (intake/email.js), each stored as if it had been
+// dropped by itself: converted, checked for a duplicate and queued for
+// reading the same way. A mail with nothing attached is kept as a PDF of the
+// message. Used for an .eml or .msg dropped on a case, here, and for mail
+// forwarded to a person's address (routes/inbound.js). `mail` is parsed.
+async function storeMail(user, mail, { reportId = null } = {}) {
+  const { timezone } = users.getUserDefaults(user.id);
+  const { files, skipped: left, bodyPdf } = await receiptsFromMail(mail, { timeZone: timezone });
+  if (bodyPdf) files.push({ buffer: bodyPdf, filename: pdfName(mail.subject), declaredMime: 'application/pdf' });
+  const stored = [], skipped = [];
+  for (const f of files) {
+    const out = await storeReceipt(user, { buffer: f.buffer, mime: f.declaredMime, filename: f.filename, source: 'email', reportId });
+    if (out.status === 201) stored.push({ receipt: out.body.receipt, expense: out.body.expense, imageToken: out.body.imageToken, ...(out.body.note ? { note: out.body.note } : {}) });
+    else skipped.push({ name: f.filename || 'an unnamed attachment', why: out.body.error });
+  }
+  return { stored, skipped: [...skipped, ...left], subject: mail.subject || null, from: mail.from || null };
+}
+
+router.post('/email', requireAuth, bigJson, asyncHandler(async (req, res) => {
+  const me = users.findById(req.user.id);
+  const { data, filename, reportId } = req.body || {};
+  if (!reportId) return res.status(400).json({ error: 'Choose the case these receipts go into.' });
+  const bad = checkCase(me, reportId);
+  if (bad) return res.status(bad.status).json({ error: bad.error });
+  const raw = decodeBase64(data);
+  if (!raw) return res.status(400).json({ error: 'File data is missing or not valid base64' });
+  let mail;
+  try {
+    mail = await parseMail(raw, { filename });
+  } catch (err) {
+    if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
+  const out = await storeMail(me, mail, { reportId });
+  logger.info('Email unpacked', { userId: me.id, reportId, stored: out.stored.length, skipped: out.skipped.length });
+  res.status(out.stored.length ? 201 : 200).json(out);
 }));
 
 // ── The read of one receipt ─────────────────────────────────────────────────
@@ -332,6 +374,7 @@ router.get('/:id/image', asyncHandler(async (req, res) => {
 
 module.exports = router;
 module.exports.storeReceipt = storeReceipt;
+module.exports.storeMail = storeMail;
 module.exports.checkCase = checkCase;
 module.exports.issueImageToken = issueImageToken;
 // For tests: resolves once the read queue has nothing running and nothing due.
