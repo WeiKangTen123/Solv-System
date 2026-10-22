@@ -22,8 +22,9 @@ import { bucketOf, countRows, countsLine, fmtEta, mergeRows, pollEvery, waitingR
 // page lists the receipts already read itself).
 //
 // Files can be dropped anywhere on the page, not only on the zone (pageDrop).
-// Uploads go three at a time (useUploader); the server's side is polled
-// (useIntake) every 2 s while anything is on its way or being read.
+// Uploads go three at a time (useUploader); the server's side arrives
+// (useIntake) as it changes, over a stream the server pushes, falling back to
+// a poll every 2 s while anything is on its way or being read.
 //
 // Props:
 //   caseId      the case the files go into; null on the New case page until

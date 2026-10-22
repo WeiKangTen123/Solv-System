@@ -3,10 +3,8 @@ const router  = express.Router();
 const { requireAuth } = require('../middleware/auth-middleware');
 const { canView } = require('../middleware/roles');
 const reports = require('../store/reports');
-const users   = require('../store/users');
 const events  = require('../utils/events');
 const { intakeView } = require('../reports/intake-view');
-const { localDate } = require('../utils/zone-date');
 const logger  = require('../utils/logger');
 
 // GET /api/reports/:id/intake/stream — the case's intake (the same body as
@@ -43,12 +41,10 @@ const cfg = {
   lifeMs: 15 * 60_000,
 };
 
-// The company's currency and day, for the flags, as GET /:id/intake works
-// them out (routes/reports.js): the two must send the same body.
-function _flagOptions(companyId) {
-  const c = users.getCompany(companyId) || {};
-  return { baseCurrency: c.baseCurrency || 'SGD', today: localDate(c.timezone || 'Asia/Singapore') };
-}
+// The company's currency and day, for the flags, from GET /:id/intake's own
+// function (routes/reports.js): the two must send the same body, and a copy
+// here would drift from it.
+const _flagOptions = companyId => require('./reports').flagOptions(companyId);
 
 // The case as this person may see it, or null: gone (a discarded draft, a
 // case merged away) or not theirs to see.

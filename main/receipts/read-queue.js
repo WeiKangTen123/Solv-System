@@ -331,7 +331,9 @@ async function _readFromDisk(job, opts) {
   if (!first) throw said('The receipt has no expense to read into.');
   return require('./read-receipt').readReceipt({
     companyId: job.companyId, userId: job.userId, receiptId: receipt.id, expenseId: first.id,
-    buffer, mime: receipt.mime, source: receipt.source || 'upload',
+    // The rows a file splits into come the way the file did: the expense says
+    // 'email' or 'phone', where the receipt's own column only knows 'upload'.
+    buffer, mime: receipt.mime, source: first.source || receipt.source || 'upload',
   }, opts);
 }
 

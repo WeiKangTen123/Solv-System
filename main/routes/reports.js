@@ -410,3 +410,4 @@ router.get('/:id/export', asyncHandler(async (req, res) => {
 
 module.exports = router;
 module.exports.caseView = _view;   // routes/allowances.js answers with the same case view
+module.exports.flagOptions = _flagOptions;   // routes/intake-stream.js must send what GET /:id/intake sends

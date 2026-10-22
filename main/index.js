@@ -116,6 +116,8 @@ app.use('/api/fx',        fxRoutes);
 // Per diem and mileage on a case (routes/allowances.js), ahead of the case
 // routes so their two paths are answered there.
 app.use('/api/reports',   require('./routes/allowances'));
+// A case's intake pushed as it changes (routes/intake-stream.js).
+app.use('/api/reports',   require('./routes/intake-stream'));
 app.use('/api/reports',   reportRoutes);
 // Mail a provider forwards to someone's receipts address (routes/inbound.js).
 // Answered only when the box is set up for it; its own secret, not a session.
