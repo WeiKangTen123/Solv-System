@@ -243,6 +243,109 @@ before that deploy rather than hoping.
 - It runs on the same VM, so it cannot report the VM itself being down. Point
   a free external uptime checker at `DEPLOY_HEALTH` for that.
 
+## Receipts by email
+
+Each person can have their own forwarding address,
+`receipts+<token>@<INBOUND_EMAIL_DOMAIN>` (the token is twelve random letters
+and digits, made the first time they look at it). Mail forwarded there from
+**their own address** is opened like an `.eml` dropped on a case: each PDF or
+picture attached becomes a receipt, and a mail with nothing attached (an
+e-receipt typed into the message, as Grab and the airlines send) is kept as a
+PDF of the message and read like any typed PDF. Logos, signature pictures and
+tracking pixels are left out. A subject naming one of the person's open cases
+(`Fwd: taxi, EXP-2026-0002`) files the receipts in it; anything else lands on
+Home under "Not in a case". No case is ever made by itself.
+
+It is off until both settings are in `main/.env`:
+
+| Setting | What |
+|---|---|
+| `INBOUND_EMAIL_DOMAIN` | the part after the `@`, e.g. `in.solv.example`. A domain or subdomain that receives no other mail: Email Routing takes over its MX records |
+| `INBOUND_EMAIL_SECRET` | what the mail provider sends as `Authorization: Bearer …`. Make it on the box: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+
+Then `pm2 restart solv-expense`. `GET /api/users/me/inbound-address` (My
+profile, in the app) shows a person their address; `POST` to the same path
+makes a new one and the old one stops working at once.
+
+### Only the person's own address
+
+The address is a name, not a password: anyone who sees it in a forwarded
+thread can write to it. So Solv takes a mail only when its `From` is the
+email the person signs in with, in any capitalisation. Anything else is
+answered `202 {"dropped":"sender"}`, so the provider has nothing to retry and
+the sender learns nothing, and the log says only that a mail for that person
+was dropped. A mail from a merchant straight to the address is dropped for
+the same reason: forward it from your own mailbox instead.
+
+A forged `From` is possible where the sender's domain publishes no DMARC
+policy. The worst it can do is add receipts to that person's pile ("Not in a
+case", or an open case whose number the forger knows), each of which the
+person checks before they claim. Nothing here moves money, posts to Xero or
+sends mail anywhere. A person whose address reached the wrong people makes a
+new one.
+
+### Cloudflare Email Routing, with an Email Worker
+
+The domain's DNS must be on Cloudflare.
+
+1. **Email Routing.** In the zone, open Email → Email Routing and enable it
+   (for a subdomain, add the subdomain in Email Routing's settings).
+   Cloudflare adds the MX and SPF records it needs.
+2. **The Worker.** Workers & Pages → Create → a Worker named `solv-inbound`,
+   with this as its code:
+
+   ```js
+   // Every message routed here is posted to Solv exactly as it arrived; Solv
+   // decides what to keep, so nothing is rejected here.
+   export default {
+     async email(message, env) {
+       const raw = await new Response(message.raw).arrayBuffer();
+       const res = await fetch(`${env.SOLV_URL}?to=${encodeURIComponent(message.to)}`, {
+         method: 'POST',
+         headers: { Authorization: `Bearer ${env.INBOUND_EMAIL_SECRET}`, 'Content-Type': 'message/rfc822' },
+         body: raw,
+       });
+       // The status only: what the message says is the person's.
+       console.log(`Solv answered ${res.status}`);
+     },
+   };
+   ```
+
+   Under the Worker's Settings → Variables and Secrets add `SOLV_URL` (text),
+   `https://solv.your-domain/api/inbound/email`, and `INBOUND_EMAIL_SECRET`
+   (secret), the same value as on the box. Deploy it.
+3. **The route.** Email Routing → Routing rules → Catch-all address → action
+   "Send to a Worker", `solv-inbound`, enabled. Catch-all, because every
+   person's address is different; Solv refuses any address that is not
+   `receipts+<a token it knows>`.
+4. **Check it.** `curl -s -o /dev/null -w '%{http_code}\n' -X POST https://solv.your-domain/api/inbound/email`
+   says `401` once the box has both settings (`404` while it has not). Then
+   forward a receipt from your own mailbox to your address; it shows on Home
+   within a minute. The Worker's logs (Workers → `solv-inbound` → Logs) show
+   Solv's answer to each message.
+
+Any other provider that can POST the raw message the same way works too.
+Mailgun's routes post a message as form fields, so they need a relay like the
+Worker above.
+
+### What Solv answers, and the limits
+
+| Answer | Means |
+|---|---|
+| `202 {"stored": n, "skipped": [...], "reportId": …}` | taken; `skipped` says what was left out and why (a logo, a duplicate, a file that is not a receipt) |
+| `202 {"dropped": "sender"}` | not from the person's own address; nothing kept |
+| `401` | the bearer secret is missing or wrong |
+| `404` | not configured, or the address is nobody's (or a removed person's) |
+| `429` | that address has taken 100 mails in the last 24 hours |
+| `400` / `413` | not a mail / over 25 MB, the most Email Routing takes |
+
+A mail is counted against its person's 100 a day when it is taken; dropped
+ones are not counted. It is also counted by the app's general limit, 500
+requests a quarter-hour per address, which here is Cloudflare's. nginx's
+`client_max_body_size 30m` above already takes a 25 MB message. The log lines
+are `Inbound email taken` (person, case, how many stored and skipped) and
+`Inbound email dropped`; no subject, sender or content is logged.
+
 ## Keys
 
 - **Rotate `JWT_SECRET`:** change it in `main/.env`, `pm2 restart solv-expense`;
