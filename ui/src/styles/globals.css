@@ -1431,11 +1431,28 @@ body {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .rcpt-ai-use:focus-visible,
+.rv-row-main:focus-visible,
 .rcpt-thumb:focus-visible,
 .rcpt-history > summary:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }
+
+/* A key named in a button or a list: Enter, J, K. */
+.rv kbd,
+.rv-keys kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-xs);
+  font: 600 10.5px/16px var(--font-mono);
+  text-align: center;
+  color: inherit;
+  opacity: 0.8;
+}
+.btn-primary kbd { border-color: currentColor; opacity: 0.6; }
 
 /* ── The receipt viewer ── */
 .rcpt-viewer { display: flex; flex-direction: column; min-height: 0; height: 100%; }
@@ -1552,6 +1569,7 @@ body {
 .rcpt-rate-base { margin-top: 8px; font: 13px var(--font-mono); font-variant-numeric: tabular-nums; }
 
 /* ── The lines ── */
+.rv .rcpt-lines { padding: 12px 0; border-top: 1px solid var(--border); }
 .rcpt-lines-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .rcpt-lines-head .rcpt-section-title,
 .rcpt-lines-head .card-title { margin-bottom: 0; }
@@ -1582,6 +1600,168 @@ body {
 .rcpt-history[open] > summary::before { transform: rotate(90deg); }
 .rcpt-history-body { padding-top: 6px; }
 .mobile-mode .rcpt-history > summary { min-height: 44px; }
+
+/* ── The review page ── */
+/* A container, so a window too narrow for three panes can fold the list
+   into one box without a media query (the phone layout is the app's own
+   .mobile-mode, drawn by the page). */
+.rv { container-type: inline-size; }
+/* The cards are panes here, not tiles: they do not lift on hover. */
+.rv .card:hover { transform: none; }
+.rv .page-header { margin-bottom: 16px; }
+.rv-pos { font: 600 12.5px var(--font-mono); color: var(--text-muted); white-space: nowrap; }
+
+/* On a desktop the page is a column as tall as the window under the header,
+   and the panes take whatever the title and any message leave, scrolling on
+   their own: the picture and the Check button stay in sight while the list
+   scrolls. It stops short of the bottom by the assistant's button, which
+   would otherwise sit on top of Check. */
+.rv.is-desktop {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--header-height) - 56px - 44px);
+  min-height: 620px;
+}
+.rv.is-desktop > * { flex: none; }
+.rv-grid {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr) minmax(340px, 400px);
+  gap: 14px;
+}
+.rv.is-desktop > .rv-grid { flex: 1 1 auto; min-height: 440px; }
+.rv-pane { min-height: 0; min-width: 0; }
+.rv-grid > .rv-pane { padding: 12px; }
+.rv-pane-queue { overflow-y: auto; }
+.rv-pane-viewer { display: flex; flex-direction: column; }
+.rv-pane-fields { display: flex; flex-direction: column; overflow: hidden; }
+/* Its own padding is inside the scrolling part and the button bar, so the
+   bar runs edge to edge; on a phone too, where every card is given 16px. */
+.rv .rv-pane-fields.card { padding: 0 !important; }
+.rv-narrow-queue { display: none; margin-bottom: 10px; }
+
+@container (max-width: 1060px) {
+  .rv-grid { grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); }
+  .rv-pane-queue { display: none; }
+  .rv-narrow-queue { display: block; }
+}
+
+/* ── The queue ── */
+.rv-queue-group + .rv-queue-group { margin-top: 14px; }
+.rv-queue-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 6px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.rv-queue ul { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.rv-queue-empty { margin: 0 6px; font-size: 12.5px; color: var(--text-muted); }
+.rv-row { border-radius: var(--radius-sm); }
+.rv-row.is-on { background: var(--accent-subtle); box-shadow: inset 3px 0 0 var(--accent); }
+.rv-row-main {
+  display: grid;
+  /* The mark has a column of its own, so the names line up whether or not
+     a row has one. */
+  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-areas: "mark name" "mark meta";
+  align-items: center;
+  gap: 1px 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.rv-row:not(.is-on) .rv-row-main:hover { background: var(--bg-hover); }
+.rv-row-mark { grid-area: mark; display: flex; justify-content: center; }
+.rv-row-mark .ui-flag-pill { padding: 1px 6px; }
+.rv-row-name { grid-area: name; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+.rv-row-meta { grid-area: meta; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-muted); }
+.is-reading .rv-row-meta { white-space: normal; }
+.rv-row-amount { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.rv-done-mark { color: var(--success); font-weight: 700; }
+.rv-reading-mark { color: var(--info); font-weight: 700; letter-spacing: 1px; }
+.is-done .rv-row-name { font-weight: 500; color: var(--text-secondary); }
+.rv-row-actions { display: flex; gap: 4px; flex-wrap: wrap; padding: 0 8px 6px 42px; }
+.rv-row-actions .btn { padding: 2px 8px; font-size: 11.5px; }
+.rv-queue-select { font-size: 13px; }
+
+/* ── The fields pane ── */
+.rv-fields-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px 16px 6px; }
+.rv-fields-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.rv-fields-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+}
+.rv-fields-body > .ui-flags { margin-bottom: 14px; }
+.rv-note { margin-bottom: 12px; font-size: 12.5px; }
+.rv-hint { margin-bottom: 10px; font-size: 12px; color: var(--text-muted); }
+.rv-reading { flex-direction: column; gap: 8px; }
+.rv-reading-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.rv-pane-fields .form-group { margin-bottom: 12px; }
+.rv-pane-fields .form-label { margin-bottom: 5px; font-size: 11px; }
+.rv-pane-fields .form-input { padding: 8px 11px; font-size: 13.5px; }
+/* The buttons stay in sight however long the fields run. */
+.rv-actions { flex: none; padding: 10px 16px 12px; border-top: 1px solid var(--border); background: var(--bg-card); }
+.rv-actions-note { margin-bottom: 8px; padding: 8px 12px; font-size: 12.5px; }
+.rv-actions-row { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.rv-check { min-width: 120px; justify-content: center; gap: 8px; }
+
+/* ── The end ── */
+.rv-end {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  border-color: var(--success-border);
+}
+.rv-end-title { font-size: 16px; font-weight: 700; color: var(--success); }
+.rv-end-sub { margin-top: 2px; font-size: 13px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+/* ── Shortcuts ── */
+.rv-keys-title { margin-bottom: 12px; font-size: 16px; font-weight: 700; color: var(--text-primary); }
+.rv-keys { display: grid; grid-template-columns: auto 1fr; gap: 10px 14px; font-size: 13px; line-height: 1.45; }
+.rv-keys dt { white-space: nowrap; color: var(--text-muted); }
+.rv-keys dd { color: var(--text-primary); }
+
+/* ── On a phone ── */
+/* The list is one box, the receipt a picture to tap, the fields a page of
+   their own; the buttons stay above the bottom bar. */
+.rv.is-mobile .page-header { margin-bottom: 12px; }
+.rv-mobile { display: flex; flex-direction: column; gap: 10px; }
+.rv-mobile-receipt { display: flex; gap: 12px; align-items: flex-start; }
+.rv-mobile-meta { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+.rv-mobile .rv-pane-fields { overflow: visible; }
+.rv-mobile .rv-fields-body { overflow: visible; padding: 14px 14px 4px; }
+.rv-mobile .rv-actions {
+  position: sticky;
+  /* Held at the bottom of the page's own box, which already stops 16px
+     above the bottom bar (.mobile-mode .page-body's padding). */
+  bottom: 0;
+  z-index: 5;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  box-shadow: 0 -6px 16px rgba(0, 0, 0, 0.06);
+}
+.rv-mobile .rv-actions-row .btn { flex: 1 1 0; }
+/* The assistant's button floats at the right just above the bottom bar,
+   over the end of this one; the buttons stop short of it. */
+.rv-mobile .rv-actions-row { padding-right: 84px; }
+.mobile-mode .rv-row-actions .btn { padding: 0 12px; font-size: 13px; }
 
 @media (prefers-reduced-motion: reduce) {
   .rcpt-stage > canvas,

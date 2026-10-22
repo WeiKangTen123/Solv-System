@@ -11,5 +11,6 @@ export { default as ReceiptFields } from './ReceiptFields';
 export { default as ExchangeRatePanel } from './ExchangeRatePanel';
 export { default as LinesEditor } from './LinesEditor';
 export { default as ChangeHistory, HistoryDisclosure } from './ChangeHistory';
+export { default as ReviewQueue, arrange, receiptName, readWords } from './ReviewQueue';
 export { useReceiptForm } from './useReceiptForm';
 export { FIELD_DEFS, PAGE_FIELDS, REVIEW_FIELDS, flagsOn, flagsOff, hasRed, refusedFields, categoryOf } from './fields';
