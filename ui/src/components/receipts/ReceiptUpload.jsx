@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 // api/client prepends BASE = '/api', so paths here start at the route AFTER it.
 // Writing '/api/receipts' would request '/api/api/receipts' and 404.
 import { api } from '../../api/client';
-import { prepareReceipt, blobToBase64, humanSize, ACCEPT_ATTR } from './receipt-upload';
+import { prepareReceipt, blobToBase64, humanSize, PHOTO_ACCEPT_ATTR } from './receipt-upload';
 import PhonePairingModal from './PhonePairingModal';
 import ClaimImport from './ClaimImport';
 
@@ -13,19 +13,14 @@ import ClaimImport from './ClaimImport';
 // Nothing here talks to Xero. An uploaded receipt becomes a local record for the
 // user to review.
 // `reportId` points every upload at one case, which is what makes the case
-// screen work: the receipts go in where you are standing.
+// screen work: the receipts go in where you are standing. It is required.
 //
-// Without one — from Home or the receipts list — a case is made for whatever
-// arrives, and `onCase` is told which. There is no loose pile any more: every
-// receipt lives in a case from the moment it lands, because a receipt that
-// belongs to nothing is a receipt somebody has to come back and file.
-const caseTitle = () => {
-  const d = new Date();
-  const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `Receipts, ${d.getDate()} ${MONTH[d.getMonth()]} ${d.getFullYear()}`;
-};
-
-export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
+// It used to make a "Receipts, <date>" case for whatever arrived when it had
+// no case, which gave people a case per afternoon. Home and My receipts now
+// hand their files to the New case page instead (components/intake/handoff.js),
+// where they go into one draft that the AI fills in, so without a case this
+// renders nothing.
+export default function ReceiptUpload({ onUploaded, reportId }) {
   // An import survives closing the panel, and GET /claims/active is how you
   // find it again: without this the progress view, the reconciliation summary
   // and the Undo button were gone for good the moment the dialog was closed.
@@ -44,21 +39,15 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
     return () => { alive = false; };
   }, [importing]);
   const fileRef = useRef(null);
-  // Whether this component is still on screen. A batch that finishes after the
-  // person moved to another page used to take them to the new case anyway,
-  // and whatever they were typing there was lost.
+  // Whether this component is still on screen: a batch that finishes after
+  // the person moved on does not reload a page that is gone.
   const mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; }, []);
   const [busy, setBusy]     = useState(false);
   const [error, setError]   = useState('');
   const [note, setNote]     = useState('');
-  // `pairing` holds the case the phone session is pointed at, or the one that
-  // was already open. A session started from Home makes its case up front, so
-  // every photograph has somewhere to land; a session that produced nothing
-  // deletes it again on close, rather than leaving an empty case behind.
-  const [pairing, setPairing] = useState(null);
-
-  const newCase = async () => (await api.post('/reports', { kind: 'case', title: caseTitle() })).report;
+  // Whether the phone's code is on screen; its photos land in this case.
+  const [pairing, setPairing] = useState(false);
 
   async function handleFiles(files) {
     const list = Array.from(files || []);
@@ -70,20 +59,11 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
     const failures = [];
     let ok = 0;
 
-    // One case for everything picked together: ten images chosen at once are
-    // one claim, not ten.
-    let target = reportId;
-    let made = null;
-    if (!target) {
-      try { made = await newCase(); target = made.id; }
-      catch (err) { setBusy(false); setError(`Could not start a case: ${err.message}`); return; }
-    }
-
     for (const file of list) {
       try {
         const { blob, mime, originalBytes, bytes } = await prepareReceipt(file);
         const data = await blobToBase64(blob);
-        await api.post('/receipts', { mime, data, filename: file.name, source: 'upload', reportId: target });
+        await api.post('/receipts', { mime, data, filename: file.name, source: 'upload', reportId });
         ok++;
         // Worth saying out loud: a 9MB photo becoming 700KB is the difference
         // between Xero accepting the attachment and rejecting it.
@@ -98,46 +78,19 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
     setBusy(false);
     if (failures.length) setError(failures.join(' · '));
     if (fileRef.current) fileRef.current.value = '';  // let the same file be picked again
-    if (made && !ok) {
-      // Nothing landed, so the case it was made for is not a case. Asked as
-      // "only if empty", so a case that did get something is never lost.
-      try { await api.delete(`/reports/${made.id}?ifEmpty=1`); } catch { /* it will show as empty; not worth an error on top of the upload's */ }
-      return;
-    }
-    if (!mounted.current) return;
-    if (ok && onUploaded) onUploaded();
-    if (made && onCase) onCase(made);
+    if (ok && onUploaded && mounted.current) onUploaded();
   }
 
-  async function startPhone() {
-    setError('');
-    if (reportId) { setPairing({ id: reportId, made: false }); return; }
-    try { const c = await newCase(); setPairing({ id: c.id, made: true, arrived: 0, report: c }); }
-    catch (err) { setError(`Could not start a case: ${err.message}`); }
-  }
-
-  // `revoked` settles once the phone's link is dead, so nothing more can land.
-  // `arrived` only counts what the dialog's last poll saw: a photo taken in
-  // the three seconds before closing, or still uploading, was missed, and the
-  // case was deleted with it. The server decides instead: it deletes the case
-  // only while it is empty and answers 409 when something is in it.
-  async function endPhone({ revoked } = {}) {
-    const p = pairing;
-    setPairing(null);
-    if (!p || !p.made) return;
-    const keep = () => { if (onCase && mounted.current) onCase(p.report); };
-    if (p.arrived > 0) { keep(); return; }
-    await revoked;
-    try { await api.delete(`/reports/${p.id}?ifEmpty=1`); }
-    catch (err) { if (err.status === 409) keep(); /* otherwise an empty case is the worst outcome; not an error */ }
-  }
+  if (!reportId) return null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
       <input
         ref={fileRef}
         type="file"
-        accept={ACCEPT_ATTR}
+        // Single receipts only: a zip or a claim form goes through Import a
+        // claim beside it, which knows what to do with one.
+        accept={PHOTO_ACCEPT_ATTR}
         multiple
         style={{ display: 'none' }}
         onChange={e => handleFiles(e.target.files)}
@@ -163,7 +116,7 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
         <button
           className="btn btn-outline btn-sm"
           disabled={busy}
-          onClick={startPhone}
+          onClick={() => { setError(''); setPairing(true); }}
           style={{ whiteSpace: 'nowrap' }}
           title="Scan a code to photograph receipts with your phone"
         >
@@ -196,11 +149,7 @@ export default function ReceiptUpload({ onUploaded, onCase, reportId = null }) {
       )}
 
       {pairing && (
-        <PhonePairingModal
-          onClose={endPhone}
-          onArrived={() => { setPairing(p => (p ? { ...p, arrived: (p.arrived || 0) + 1 } : p)); if (onUploaded) onUploaded(); }}
-          reportId={pairing.id}
-        />
+        <PhonePairingModal onClose={() => setPairing(false)} onArrived={() => { if (onUploaded) onUploaded(); }} reportId={reportId} />
       )}
 
       {importing && (
