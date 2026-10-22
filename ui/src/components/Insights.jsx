@@ -75,12 +75,18 @@ const SCOPE = { own: 'your receipts', team: 'you and your team', company: 'the w
 // figures. Deliberately not tied to the home page's polling: these are SQL
 // aggregates over the company, and re-running them every twenty seconds to
 // find nothing changed is a cost with no reader.
-export default function Insights({ refresh = 0 }) {
+//
+// `heading={false}` leaves out the "Where the money goes" label, for a page
+// that already says it (Home folds the figures under a disclosure whose
+// summary is that label); whose figures they are is then said on a line of
+// its own.
+export default function Insights({ refresh = 0, heading = true }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
   useEffect(() => { api.get('/dashboard/summary').then(x => { setD(x); setErr(null); }).catch(e => setErr(e.message)); }, [refresh]);
 
-  if (err) return <div className="card"><div className="card-title">Where the money goes</div><div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Could not load the figures: {err}</div></div>;
+  const title = heading ? <div className="card-title">Where the money goes</div> : null;
+  if (err) return <div className="card">{title}<div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Could not load the figures: {err}</div></div>;
   if (!d) return null;
 
   const base = d.base;
@@ -88,7 +94,7 @@ export default function Insights({ refresh = 0 }) {
   if (!d.total) {
     return (
       <div className="card">
-        <div className="card-title">Where the money goes</div>
+        {title}
         <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
           Nothing recorded in the last {d.monthsCovered} months yet. Add a receipt and this fills in.
         </div>
@@ -105,7 +111,9 @@ export default function Insights({ refresh = 0 }) {
 
   return (
     <>
-      <div className="section-label">Where the money goes · {SCOPE[d.scope] || d.scope}</div>
+      {heading
+        ? <div className="section-label">Where the money goes · {SCOPE[d.scope] || d.scope}</div>
+        : <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Across {SCOPE[d.scope] || d.scope}.</div>}
       <div className="grid-pair" style={{ marginBottom: 20 }}>
         <div className="card">
           <div className="card-title">Last {d.monthsCovered} months</div>

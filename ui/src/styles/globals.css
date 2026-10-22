@@ -2000,3 +2000,204 @@ body {
   .in-row.is-busy .in-mark { animation: none; }
   .in-kind { transition: none; }
 }
+
+/* ══ Home, My receipts, the phone page, navigation (wave 3) ══════════════════
+   pages/Home.jsx (hm-), pages/MyExpenses.jsx (mr-), pages/Capture.jsx (cap-),
+   the sidebar's New case button (nav-) and Settings' link to a person's cases
+   (set-). The rules of the UI foundations section hold here too: theme
+   tokens only, colour only for a state and never alone (every to-do link and
+   every photo row says its state in words), 44px targets under .mobile-mode,
+   rings on :focus-visible, and nothing moves under prefers-reduced-motion.
+   The phone page is outside the app's layout, so .mobile-mode never reaches
+   it: its targets are large on their own.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.hm-todo-link:focus-visible,
+.hm-card-title:focus-visible,
+.hm-card-new:focus-visible,
+.hm-loose-row:focus-visible,
+.hm-tile:focus-visible,
+.hm-more:focus-visible,
+.hm-fold > summary:focus-visible,
+.mr-name:focus-visible,
+.mr-case a:focus-visible,
+.mr-item-main:focus-visible,
+.nav-new:focus-visible,
+.set-user-cases:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* ── Home ── */
+.hm-page { min-width: 0; }
+.hm-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hm-quiet { font-size: 12.5px; color: var(--text-muted); }
+.hm-more {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-decoration: none;
+  border-radius: var(--radius-xs);
+}
+.hm-more:hover { color: var(--text-primary); text-decoration: underline; }
+.hm-section { margin-top: 26px; }
+.hm-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.hm-section-head .section-label { margin: 0; }
+.hm-sub { margin: 16px 0 8px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+
+/* The way in: a slim drop zone with the two buttons beside it, and the
+   claim import as a quieter line under them. */
+.hm-start { display: flex; align-items: stretch; gap: 10px 12px; flex-wrap: wrap; }
+.hm-start-zone { flex: 1 1 340px; min-width: 0; display: flex; }
+.hm-start-zone .ui-dropzone { flex: 1; min-height: 58px; }
+.hm-start-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hm-start-more { display: flex; justify-content: flex-end; margin-top: 4px; }
+
+/* To do: one pill per thing waiting, a dot in the colour of its state
+   before words that say it. */
+.hm-todo { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }
+.hm-todo-wait { max-width: 420px; }
+.hm-todo-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.hm-todo-link::before { content: ''; width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--text-muted); }
+.hm-todo-link:hover { border-color: var(--text-muted); background: var(--bg-hover); }
+.hm-todo-link.is-warning { border-color: var(--warning-border); background: var(--warning-subtle); }
+.hm-todo-link.is-warning::before { background: var(--warning); }
+.hm-todo-link.is-danger { border-color: var(--danger-border); background: var(--danger-subtle); }
+.hm-todo-link.is-danger::before { background: var(--danger); }
+.hm-todo-link.is-success { border-color: var(--success-border); background: var(--success-subtle); }
+.hm-todo-link.is-success::before { background: var(--success); }
+.hm-todo-link[class*='is-']:hover { border-color: var(--text-muted); }
+
+/* Open cases as cards; the last card starts a new one. */
+.hm-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
+.hm-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-xs);
+}
+.hm-card-wait { min-height: 160px; justify-content: center; }
+.hm-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.hm-card-title {
+  min-width: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-primary);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  border-radius: var(--radius-xs);
+}
+.hm-card-title:hover { text-decoration: underline; }
+.hm-card-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; font-size: 12.5px; color: var(--text-muted); }
+.hm-card-total { margin-left: auto; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.hm-card-warn { font-size: 12px; line-height: 1.4; color: var(--warning); }
+.hm-card-progress { display: flex; align-items: center; gap: 10px; }
+.hm-card-progress .ui-progress { flex: 1; }
+.hm-card-count { font-size: 12px; color: var(--text-secondary); }
+.hm-card-empty { font-size: 12.5px; color: var(--text-muted); }
+.hm-card-foot { display: flex; margin-top: auto; padding-top: 4px; }
+.hm-card-reading { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; color: var(--info); }
+.hm-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--info); animation: pulse 1.4s ease-in-out infinite; }
+.hm-card-new {
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  border: 1.5px dashed var(--border);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+.hm-card-new:hover { border-color: var(--text-muted); background: var(--bg-hover); color: var(--text-primary); }
+.hm-card-new-mark {
+  width: 34px; height: 34px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-card);
+  font: 400 20px/1 var(--font-sans);
+}
+.hm-card-new-hint { max-width: 220px; font-size: 12px; font-weight: 400; line-height: 1.45; color: var(--text-muted); }
+
+/* A short list of rows that each open something: receipts in no case, and
+   an admin's cases claimed this month. */
+.hm-loose { list-style: none; border: 1px solid var(--border-card); border-radius: var(--radius-md); background: var(--bg-card); overflow: hidden; }
+.hm-loose li + li { border-top: 1px solid var(--border); }
+.hm-loose-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; font-size: 13px; color: var(--text-primary); text-decoration: none; }
+.hm-loose-row:hover { background: var(--bg-hover); }
+.hm-loose-row:focus-visible { outline-offset: -2px; }
+.hm-loose-day { flex: 0 0 70px; font-size: 12.5px; color: var(--text-muted); }
+.hm-loose-ref { flex: none; font-size: 12.5px; color: var(--text-muted); }
+.hm-loose-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.hm-loose-row.hm-more { justify-content: flex-end; }
+
+/* An admin's figures for the company, each a way into the cases behind it. */
+.hm-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.hm-tile { color: inherit; text-decoration: none; }
+.hm-tile:hover .stat-label { color: var(--text-primary); }
+
+/* Where the money goes, folded by default. */
+.hm-fold { margin: 28px 0 56px; padding-top: 6px; border-top: 1px solid var(--border); }
+.hm-fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  list-style: none;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+.hm-fold > summary::-webkit-details-marker { display: none; }
+.hm-fold > summary::before { content: '▸'; font-size: 12px; color: var(--text-muted); transition: transform var(--transition-fast); }
+.hm-fold[open] > summary::before { transform: rotate(90deg); }
+.hm-fold > summary .section-label { margin: 0; }
+.hm-fold > summary:hover .section-label { color: var(--text-primary); }
+.hm-fold-body { padding-top: 8px; }
+
+.mobile-mode .hm-start-actions { width: 100%; }
+.mobile-mode .hm-start-actions .btn { flex: 1 1 0; }
+.mobile-mode .hm-start-more { justify-content: center; }
+.mobile-mode .hm-todo-link { min-height: 44px; }
+.mobile-mode .hm-cards { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.mobile-mode .hm-card-new { min-height: 96px; flex-direction: row; }
+.mobile-mode .hm-card-new-hint { display: none; }
+.mobile-mode .hm-loose-row { min-height: 44px; padding: 10px 12px; }
+.mobile-mode .hm-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.mobile-mode .hm-fold > summary { min-height: 44px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hm-dot,
+  .cap-row.is-busy .cap-row-mark,
+  .mr-bulk { animation: none; }
+  .hm-todo-link, .hm-card-new, .hm-fold > summary::before { transition: none; }
+}
