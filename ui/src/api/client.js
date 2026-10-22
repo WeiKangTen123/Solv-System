@@ -41,23 +41,20 @@ async function request(path, options = {}) {
   return data;
 }
 
-// A POST whose answer is a stream of server-sent events (the assistant). Each
-// event's JSON is handed to onEvent as it arrives. Errors before the stream
-// opens throw like any other call.
-export async function streamPost(path, body, onEvent) {
-  const token = getToken();
-  const res = await fetch(`${BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    if (res.status === 401) clearSession();
-    const err = new Error(data.error || `HTTP ${res.status}`);
-    err.status = res.status;
-    throw err;
-  }
+// A stream's answer that did not open: thrown like any other failed call, and
+// a 401 still signs the page out.
+async function streamFailed(res) {
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) clearSession();
+  const err = new Error(data.error || `HTTP ${res.status}`);
+  err.status = res.status;
+  return err;
+}
+
+// Reads server-sent events off an open response until it ends, handing each
+// event's JSON to onEvent(data, name); `name` is the event's `event:` line,
+// 'message' when it has none.
+async function readEvents(res, onEvent) {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
@@ -69,10 +66,15 @@ export async function streamPost(path, body, onEvent) {
     while ((cut = buf.indexOf('\n\n')) >= 0 || (final && buf)) {
       const chunk = cut >= 0 ? buf.slice(0, cut) : buf;
       buf = cut >= 0 ? buf.slice(cut + 2) : '';
+      let name = 'message';
+      const data = [];
       for (const line of chunk.split('\n')) {
-        if (!line.startsWith('data:')) continue;   // ': keep-alive' and other comments
-        try { onEvent(JSON.parse(line.slice(5))); } catch { /* not an event of ours */ }
+        if (line.startsWith('event:')) name = line.slice(6).trim();
+        else if (line.startsWith('data:')) data.push(line.slice(5));
+        // ': keep-alive' and other comments carry nothing.
       }
+      if (!data.length) continue;
+      try { onEvent(JSON.parse(data.join('\n')), name); } catch { /* not an event of ours */ }
     }
   };
   for (;;) {
@@ -83,6 +85,36 @@ export async function streamPost(path, body, onEvent) {
   }
   buf += decoder.decode();
   events(true);
+}
+
+// A POST whose answer is a stream of server-sent events (the assistant). Each
+// event's JSON is handed to onEvent as it arrives. Errors before the stream
+// opens throw like any other call.
+export async function streamPost(path, body, onEvent) {
+  const token = getToken();
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw await streamFailed(res);
+  await readEvents(res, onEvent);
+}
+
+// A GET that stays open and sends server-sent events as something changes
+// (a case's intake). onEvent(data, name) for each; resolves when the server
+// ends the stream, and rejects when it fails or `signal` aborts it. Not
+// EventSource: that cannot send the Authorization header, and the token
+// would have to go in the address, where access logs keep it.
+export async function streamGet(path, onEvent, { signal } = {}) {
+  const token = getToken();
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { Accept: 'text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    cache: 'no-store',
+    signal,
+  });
+  if (!res.ok) throw await streamFailed(res);
+  await readEvents(res, onEvent);
 }
 
 export const api = {

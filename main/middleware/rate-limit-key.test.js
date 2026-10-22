@@ -39,4 +39,17 @@ describe('middleware/rate-limit-key', () => {
       expect(skipRateLimit(get(path))).toBe(false);
     }
   });
+
+  // The page listens on a stream instead, and opens it again every quarter
+  // of an hour (routes/intake-stream.js).
+  test('nor does the stream of a case\'s intake, and only that stream', () => {
+    const get = path => ({ method: 'GET', path });
+    expect(skipRateLimit(get('/api/reports/1760000000000abcdefgh/intake/stream'))).toBe(true);
+    expect(skipRateLimit(get('/api/reports/r1/intake/stream/'))).toBe(true);
+    expect(skipRateLimit({ method: 'POST', path: '/api/reports/r1/intake/stream' })).toBe(false);
+    for (const path of ['/api/reports/r1/stream', '/api/reports/intake/stream', '/api/reports/r1/intake/streams', '/api/reports/r1/intake/stream/x',
+      '/api/reports/r1/intake/streamx', '/api/receipts/r1/intake/stream', '/x/api/reports/r1/intake/stream', '/api/reports/a/b/intake/stream']) {
+      expect(skipRateLimit(get(path))).toBe(false);
+    }
+  });
 });

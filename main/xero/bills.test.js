@@ -8,7 +8,12 @@ jest.mock('./category-account', () => ({
   getAccounts: jest.fn().mockResolvedValue([{ code: '494', name: 'Travel - International', type: 'EXPENSE', status: 'ACTIVE' }, { code: '420', name: 'Entertainment', type: 'EXPENSE', status: 'ACTIVE' }, { code: '429', name: 'General Expenses', type: 'EXPENSE', status: 'ACTIVE' }]),
   getTaxRates: jest.fn().mockResolvedValue([{ name: 'GST on Expenses', taxType: 'INPUT', status: 'ACTIVE', displayTaxRate: 9, canApplyToExpenses: true }, { name: 'No Tax', taxType: 'NONE', status: 'ACTIVE', displayTaxRate: 0, canApplyToExpenses: true }]),
 }));
-jest.mock('./attachments', () => ({ forReceipt: jest.fn().mockResolvedValue([{ name: 'R1.pdf', mime: 'application/pdf', buffer: Buffer.from('%PDF') }]) }));
+jest.mock('./attachments', () => ({
+  forReceipt: jest.fn().mockResolvedValue([{ name: 'R1.pdf', mime: 'application/pdf', buffer: Buffer.from('%PDF') }]),
+  // The real case PDF, made from the case, unless a test says otherwise.
+  casePdfs: jest.fn((...args) => jest.requireActual('./attachments').casePdfs(...args)),
+  MAX_FILES: 10, MAX_BYTES: 3 * 1024 * 1024,
+}));
 
 const payload = {
   company: { id: 'c1', name: 'Solv Pte Ltd', baseCurrency: 'SGD', timezone: 'Asia/Singapore' },
@@ -232,6 +237,101 @@ describe('xero/bills — postReport', () => {
     expect(mockCreateInvoices.mock.calls[0][4]).toMatch(new RegExp(`^solv-${report.id}-[0-9a-f]{24}$`));
     expect(mockAttach.mock.calls[0][5]).toBe('xero-bill-2-R1.pdf');
     expect(reports.getReport(report.id).xeroError).toBeNull();
+  });
+
+  // Xero takes at most ten attachments on a bill.
+  describe('more receipt files than Xero takes', () => {
+    let att;
+    beforeEach(() => {
+      att = require('./attachments');
+      att.forReceipt.mockImplementation(async (rc, { ref }) => [{ name: `${ref}.jpg`, mime: 'image/jpeg', buffer: Buffer.from(`jpg ${ref}`) }]);
+      mockCreateInvoices.mockResolvedValue({ body: { invoices: [{ invoiceID: 'xero-bill-9' }] } });
+    });
+    // `n` more receipts in the case, one line each in the base currency.
+    function more(n) {
+      for (let i = 0; i < n; i++) {
+        const rc = store.createReceipt({ companyId: admin.companyId, userId: emp.id, file: `x${i}.jpg`, mime: 'image/jpeg', sha256: `h${i}` });
+        const e = store.createExpense({ companyId: admin.companyId, userId: emp.id, receiptId: rc.id, status: 'reviewed', merchant: `Cafe ${i + 2}`, currency: 'SGD', total: 10, receiptDate: '2026-09-05',
+          lines: [{ category: 'Meals', amount: 10, baseAmount: 10, fxRate: 1, fxRateDate: '2026-09-05', fxSource: 'frankfurter', fxFetchedAt: 'x' }] });
+        reports.addExpense(report.id, e.id);
+      }
+    }
+    const sentNames = () => mockAttach.mock.calls.map(c => c[2]);
+    const read = async stream => { const parts = []; for await (const c of stream) parts.push(Buffer.from(c)); return Buffer.concat(parts); };
+
+    test('ten go as they are, one for each receipt, and no case PDF is made', async () => {
+      more(9);
+      wf.markClaimed(report.id, emp);
+      await bills.postReport(report.id, emp);
+      expect(sentNames()).toEqual(Array.from({ length: 10 }, (_, i) => `R${i + 1}.jpg`));
+      expect(att.casePdfs).not.toHaveBeenCalled();
+      expect(reports.getReport(report.id).xeroError).toBeNull();
+    });
+
+    test('fourteen receipts go as the case PDF, the cover and every receipt, named for them', async () => {
+      more(13);
+      wf.markClaimed(report.id, emp);
+      const number = reports.getReport(report.id).number;
+      await bills.postReport(report.id, emp);
+      expect(sentNames()).toEqual([`${number} receipts 1-14.pdf`]);
+      const pdf = await read(mockAttach.mock.calls[0][3]);
+      expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+      expect(Number(/\/Type \/Pages\s+\/Count (\d+)/.exec(pdf.toString('latin1'))[1])).toBeGreaterThanOrEqual(15);   // the cover, then a page a receipt
+      expect(mockAttach.mock.calls[0][5]).toBe(`xero-bill-9-${number} receipts 1-14.pdf`);
+      // Counting stopped at the eleventh file: the rest were never prepared.
+      expect(att.forReceipt).toHaveBeenCalledTimes(11);
+      expect(reports.getReport(report.id).xeroError).toBeNull();
+    });
+
+    test('a PDF already sent a page at a time counts as its pages', async () => {
+      more(2);
+      att.forReceipt.mockImplementation(async (rc, { ref }) => (ref === 'R2'
+        ? Array.from({ length: 9 }, (_, i) => ({ name: `R2-p${i + 1}.jpg`, mime: 'image/jpeg', buffer: Buffer.from('p') }))
+        : [{ name: `${ref}.jpg`, mime: 'image/jpeg', buffer: Buffer.from('j') }]));
+      wf.markClaimed(report.id, emp);
+      const number = reports.getReport(report.id).number;
+      await bills.postReport(report.id, emp);
+      expect(sentNames()).toEqual([`${number} receipts 1-3.pdf`]);
+    });
+
+    test('what does not fit in ten files is attached as far as it goes, and the rest is noted on the case', async () => {
+      more(10);
+      const parts = Array.from({ length: 10 }, (_, i) => ({ name: `EXP receipts ${3 * i + 1}-${3 * i + 3}.pdf`, mime: 'application/pdf', buffer: Buffer.from('%PDF'), refs: [`R${3 * i + 1}`, `R${3 * i + 2}`, `R${3 * i + 3}`] }));
+      att.casePdfs.mockResolvedValueOnce({ files: parts, left: ['R31', 'R32'] });
+      wf.markClaimed(report.id, emp);
+      const out = await bills.postReport(report.id, emp);
+      expect(sentNames()).toEqual(parts.map(p => p.name));
+      expect(out.warnings).toEqual(['R31, R32: more than fits in the 10 files of 3 MB Xero takes on a bill. They are in the case\'s PDF export.']);
+      const after = reports.getReport(report.id);
+      expect(after.xeroInvoiceId).toBe('xero-bill-9');
+      expect(after.xeroError).toMatch(/^Attachments: R31, R32: more than fits/);
+    });
+
+    test('a part Xero refuses is noted by the receipts in it, and the others still go', async () => {
+      more(11);
+      att.casePdfs.mockResolvedValueOnce({ files: [
+        { name: 'A.pdf', mime: 'application/pdf', buffer: Buffer.from('%PDF'), refs: ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'] },
+        { name: 'B.pdf', mime: 'application/pdf', buffer: Buffer.from('%PDF'), refs: ['R7', 'R8', 'R9', 'R10', 'R11', 'R12'] },
+      ], left: [] });
+      mockAttach.mockRejectedValueOnce(new Error('The file is too large'));
+      wf.markClaimed(report.id, emp);
+      const out = await bills.postReport(report.id, emp);
+      expect(sentNames()).toEqual(['A.pdf', 'B.pdf']);
+      expect(out.warnings).toEqual([expect.stringMatching(/^R1-R6: .*too large/)]);
+    });
+
+    test('a receipt that cannot be prepared is noted, and the others still go', async () => {
+      more(2);
+      att.forReceipt.mockImplementation(async (rc, { ref }) => {
+        if (ref === 'R2') throw new Error('The file is unreadable');
+        return [{ name: `${ref}.jpg`, mime: 'image/jpeg', buffer: Buffer.from('j') }];
+      });
+      wf.markClaimed(report.id, emp);
+      const out = await bills.postReport(report.id, emp);
+      expect(sentNames()).toEqual(['R1.jpg', 'R3.jpg']);
+      expect(out.warnings).toEqual(['R2: The file is unreadable']);
+      expect(reports.getReport(report.id).xeroInvoiceId).toBe('xero-bill-9');
+    });
   });
 
   test('a posting marker left by a process that died is taken over after ten minutes', () => {

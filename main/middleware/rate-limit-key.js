@@ -49,9 +49,13 @@ function rateLimitKey(req) {
 // batch of fifty takes minutes: counted, the page alone spent the person's
 // whole allowance and everything else they did answered 429. It is that one
 // read of that one path, signed in like any other, and nothing else.
-const INTAKE_POLL = /^\/api\/reports\/[^/]+\/intake\/?$/;
+//
+// The page now listens instead (routes/intake-stream.js), and opens its
+// stream again every quarter of an hour, or after a fault; the poll is what
+// it falls back to. Neither is counted.
+const INTAKE_READ = /^\/api\/reports\/[^/]+\/intake(?:\/stream)?\/?$/;
 function skipRateLimit(req) {
-  return req.method === 'GET' && INTAKE_POLL.test(req.path || '');
+  return req.method === 'GET' && INTAKE_READ.test(req.path || '');
 }
 
 module.exports = { rateLimitKey, ipBucket, skipRateLimit };
