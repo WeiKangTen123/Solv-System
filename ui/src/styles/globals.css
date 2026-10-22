@@ -1419,3 +1419,172 @@ body {
   .ui-progress.is-indeterminate .ui-progress-fill { animation: none; width: 100%; opacity: 0.35; }
   .ui-tab, .ui-chip, .ui-dropzone, .ui-dropzone-mark, .ui-progress-fill { transition: none; }
 }
+
+/* ══ Receipt review (components/receipt/*, pages/CaseReview.jsx) ═════════════
+   One receipt's pieces — the viewer, the fields, the rate, the lines, the
+   history — shared by a receipt's own page and the case review, and the
+   review page's three panes: the queue, the receipt, the fields.
+   Same rules as the UI foundations above: theme tokens only, colour only for
+   a status, 44px targets under .mobile-mode, focus rings on :focus-visible,
+   still under reduced motion. Classes start with rcpt- (the pieces) and rv-
+   (the page).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.rcpt-ai-use:focus-visible,
+.rcpt-thumb:focus-visible,
+.rcpt-history > summary:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* ── The receipt viewer ── */
+.rcpt-viewer { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.rcpt-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.rcpt-caption { font-size: 12px; color: var(--text-muted); min-width: 0; }
+.rcpt-tools { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.rcpt-zoom { display: inline-flex; }
+.rcpt-zoom .btn { border-radius: 0; margin-left: -1px; }
+.rcpt-zoom .btn:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); margin-left: 0; }
+.rcpt-zoom .btn:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.rcpt-zoom-level { min-width: 52px; justify-content: center; font-family: var(--font-mono); }
+.rcpt-zoom-level:disabled { opacity: 1; color: var(--text-muted); }
+/* The picture's box. Sized by the panel, never by the picture (container
+   units need that), and it scrolls once the picture is zoomed past it. Its
+   child is centred by auto margins, not by the flex box: centred that way, a
+   zoomed picture's left and top edges could not be scrolled to. */
+.rcpt-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  overflow: auto;
+  container-type: size;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+.rcpt-stage > canvas { margin: auto; flex: none; transition: transform 0.2s ease; }
+/* Turned on its side, the picture sits in a box the shape it now has, so
+   the panel scrolls over what is seen rather than over the unturned page. */
+.rcpt-turned { position: relative; margin: auto; flex: none; }
+.rcpt-turned > canvas { position: absolute; left: 50%; top: 50%; transition: transform 0.2s ease; }
+.rcpt-stage.is-fit > canvas { flex: 0 1 auto; }
+/* A PDF is white paper whatever the theme. */
+.rcpt-stage.is-pdf { background: #fff; overflow: hidden; }
+.rcpt-stage iframe { flex: 1; width: 100%; height: 100%; border: 0; }
+.rcpt-empty { margin: auto; padding: 24px; font-size: 13px; color: var(--text-muted); text-align: center; }
+
+/* On a phone: a small picture that opens the viewer over the whole screen. */
+.rcpt-thumb {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 120px;
+  flex: none;
+  padding: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  cursor: zoom-in;
+}
+.rcpt-thumb:disabled { cursor: default; }
+.rcpt-thumb-note { font-size: 11.5px; text-align: center; }
+.rcpt-thumb-hint {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 2px 0;
+  background: var(--bg-glass);
+  font-size: 10px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+/* ── The fields ── */
+.rcpt-fields { display: grid; gap: 0 12px; }
+.rcpt-field { min-width: 0; }
+.rcpt-field.is-invalid .form-input { border-color: var(--danger); }
+.rcpt-field-flags { display: flex; flex-direction: column; gap: 2px; margin-top: 5px; list-style: none; }
+.rcpt-field-flag { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.4; }
+.rcpt-field-flag.is-red { color: var(--danger); }
+.rcpt-field-flag.is-yellow { color: var(--warning); }
+.rcpt-field-flag-mark {
+  flex: none;
+  width: 14px; height: 14px;
+  margin-top: 1px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  font: 700 9.5px/1 var(--font-sans);
+}
+.rcpt-field-flag.is-red .rcpt-field-flag-mark { background: var(--danger-subtle); }
+.rcpt-field-flag.is-yellow .rcpt-field-flag-mark { background: var(--warning-subtle); }
+.rcpt-ai { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; font-size: 11.5px; color: var(--text-muted); }
+.rcpt-ai-value { font-family: var(--font-mono); color: var(--text-secondary); }
+.rcpt-ai-use {
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: 600 11px/18px var(--font-sans);
+  cursor: pointer;
+}
+.rcpt-ai-use:hover { background: var(--bg-hover); }
+.rcpt-hint { margin-top: 2px; font-size: 11px; color: var(--text-muted); }
+.mobile-mode .rcpt-ai-use { min-height: 32px; padding: 0 12px; }
+
+/* A heading inside a pane that is already a card. */
+.rcpt-section-title { margin-bottom: 6px; font-size: 13px; font-weight: 700; color: var(--text-primary); }
+
+/* ── The rate ── */
+.rcpt-rate { padding: 12px 0; border-top: 1px solid var(--border); }
+.rcpt-rate-figure { font: 600 14px var(--font-mono); font-variant-numeric: tabular-nums; }
+.rcpt-rate-source { margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--text-muted); }
+.rcpt-rate-base { margin-top: 8px; font: 13px var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* ── The lines ── */
+.rcpt-lines-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rcpt-lines-head .rcpt-section-title,
+.rcpt-lines-head .card-title { margin-bottom: 0; }
+.rcpt-lines-note { margin: 4px 0 8px; font-size: 12px; line-height: 1.5; color: var(--text-muted); }
+.rcpt-lines.is-collapsed .rcpt-lines-note { margin-bottom: 0; }
+.rcpt-lines-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; }
+.rcpt-lines-sum { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.rcpt-lines-sum.is-ok { color: var(--success); }
+.rcpt-lines-sum.is-off { color: var(--danger); }
+.rcpt-lines.is-invalid .rcpt-lines-sum { font-weight: 700; }
+.rcpt-lines .rcpt-field-flags { margin: 0 0 8px; }
+
+/* ── The history, behind a disclosure ── */
+.rcpt-history { padding: 10px 0 4px; border-top: 1px solid var(--border); }
+.rcpt-history > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+  border-radius: var(--radius-xs);
+}
+.rcpt-history > summary::-webkit-details-marker { display: none; }
+.rcpt-history > summary::before { content: '▸'; font-size: 10px; transition: transform 0.15s ease; }
+.rcpt-history[open] > summary::before { transform: rotate(90deg); }
+.rcpt-history-body { padding-top: 6px; }
+.mobile-mode .rcpt-history > summary { min-height: 44px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rcpt-stage > canvas,
+  .rcpt-turned > canvas,
+  .rcpt-history > summary::before { transition: none; }
+}
