@@ -16,6 +16,7 @@ const Settings      = lazy(() => import('./pages/Settings'));
 const Reports       = lazy(() => import('./pages/Reports'));
 const ReportDetail  = lazy(() => import('./pages/ReportDetail'));
 const CaseCheck     = lazy(() => import('./pages/CaseCheck'));
+const CaseReview    = lazy(() => import('./pages/CaseReview'));
 
 const Loading = <div style={{ padding: 32, color: 'var(--text-muted)' }}>Loading…</div>;
 
@@ -43,6 +44,7 @@ function AppRoutes() {
           <Route path="expenses/:id" element={<ExpenseReview />} />
           <Route path="reports" element={<Reports />} />
           <Route path="reports/:id" element={<ReportDetail />} />
+          <Route path="reports/:id/review" element={<CaseReview />} />
           <Route path="reports/:id/check" element={<CaseCheck />} />
           <Route path="settings" element={<Settings />} />
         </Route>
