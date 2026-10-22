@@ -228,3 +228,79 @@ Each agent works in its own git worktree and touches only the files it owns.
 Every agent: `npm test`, `npm run lint`, and for UI work `npm run build:ui`
 before handing back; write tests for every new route and module; keep the
 existing comment style (say why, not what).
+
+## Phase 6 (2026-10-22): email, per diem, mileage, policy, live progress, Xero
+
+Approved with "proceed" on 2026-10-22; every default below was taken. Same
+working rules as the waves above.
+
+### Decisions (defaults)
+
+1. **Email in, two ways.** (a) An `.eml` or Outlook `.msg` file dropped on the
+   New case page or a case: its receipt attachments become receipts; when it
+   has none, the message itself is kept as a PDF receipt and read like a typed
+   PDF (an e-receipt from Grab or an airline). (b) A personal forwarding
+   address `receipts+<token>@<INBOUND_EMAIL_DOMAIN>`: the mail provider posts
+   the raw message to `POST /api/inbound/email`. Off until the box sets
+   `INBOUND_EMAIL_DOMAIN` and `INBOUND_EMAIL_SECRET`; the provider is the
+   company's choice (the runbook shows Cloudflare Email Routing with a small
+   Email Worker, and Mailgun routes). Only mail **from the person's own
+   address** is taken. A subject naming one of their open cases
+   (`EXP-2026-0002`) files the receipts there; otherwise they land outside any
+   case, on Home under "Not in a case" — no case is ever made by itself.
+2. **Per diem** from rates an admin keeps per country (amount a day, in any
+   currency, from a date). "Add per diem" on a Trip makes one receipt-less
+   expense: days × the destination's rate, first and last day at the
+   company's travel-day percentage (default 100%), category Meals, checked.
+   Adding it again replaces it. A Meals receipt on a per-diem day gets a
+   yellow flag.
+3. **Mileage**: an admin sets a rate per km in the base currency. "Add
+   mileage" on a case: date, from, to, km, one way or return, purpose → a
+   receipt-less expense in Fuel/Mileage, checked.
+4. **Policy** an admin sets: a limit per receipt for each category (base
+   currency), a maximum age in days, and weekend receipts flagged or not.
+   All are yellow "have a look" flags: nobody approves anything in Solv.
+5. **Live progress** over server-sent events for the intake, with polling
+   kept as the fallback.
+6. **Xero**: a case that would need more than Xero's 10 attachments per bill
+   sends the case PDF (cover plus every receipt) instead, split into as few
+   files as fit the per-file cap.
+7. `npm audit fix` for the production dependency follow-redirects.
+
+### Data
+
+- `users.inbound_token TEXT` (unique when set), via `_ensureColumn`.
+- `company_policy` (company_id PK, json TEXT, updated_by, updated_at): `{ mileageRatePerKm, travelDayPct, categoryLimits: { "<category>": amount }, maxAgeDays, flagWeekends }`.
+- `per_diem_rates` (id, company_id, country, currency, daily_cents, effective_from, created_by, created_at); the rate for a day is the latest `effective_from` on or before it.
+- Expenses made here: `source` = `email` (from a mail), `per_diem`, `mileage`; `receipt_id` NULL for the last two. A file from email is a normal receipt with `receipts.source = 'upload'` and `original_name` = the attachment's name (the receipts.source CHECK is not widened).
+
+### Server API
+
+| Call | Contract |
+|---|---|
+| `POST /api/receipts/email` | `{ data, filename, reportId }` (base64 .eml or .msg, upload body limit). Owner's editable case. → `{ stored: [{ receipt, expense }], skipped: [{ name, why }], subject, from }`. 400 when the file is not a mail. |
+| `POST /api/inbound/email` | Raw MIME body (`message/rfc822`, up to 25 MB), header `Authorization: Bearer <INBOUND_EMAIL_SECRET>`. 404 when not configured. Recipient token → person; sender must be that person's email, else 202 and dropped with a log line. → 202 `{ stored, skipped, reportId }`. Not behind the session auth or the per-user limiter; its own limit of 100 mails a day per person. |
+| `GET /api/users/me/inbound-address` | `{ address }` or `{ address: null, configured: false }`. |
+| `POST /api/users/me/inbound-address` | Makes a new token (the old address stops working) → `{ address }`. |
+| `GET /api/company/policy`, `PUT /api/company/policy` | Any signed-in person reads (the UI needs the mileage rate); admin writes. Validated: limits ≥ 0, maxAgeDays 1–3650 or null, travelDayPct 0–100. |
+| `GET /api/company/per-diem-rates`, `POST`, `DELETE /:id` | Read: anyone; write: admin. Country ISO-2, currency ISO-3, amount > 0, date. |
+| `POST /api/reports/:id/per-diem` | Owner, editable Trip with both dates. Body `{ country? }` (default: the destination's country from the receipts). 400 with a reason when no rate covers it. → the case view. |
+| `POST /api/reports/:id/mileage` | Owner, editable case. `{ date, from, to, km, returnTrip, purpose }` → the case view. 400 when the company has no mileage rate. |
+| `GET /api/reports/:id/intake/stream` | Same visibility as `/intake`. `text/event-stream`, `X-Accel-Buffering: no`; an `intake` event with the same body as `/intake` at once and whenever the case's files or receipts change (debounced 300 ms), a comment every 25 s, closed after 15 minutes (the client reopens it). Not rate limited. |
+
+### Flags added (yellow)
+
+`over-limit` (base amount over the category's limit), `too-old` (older than
+maxAgeDays on the day shown), `weekend` (when flagWeekends), `per-diem-meal`
+(a Meals receipt on a day the case's per diem covers).
+
+### Who builds what
+
+| Wave | Agent | Owns |
+|---|---|---|
+| 4a | Email (server) | `intake/email.js`, `routes/inbound.js` (new; the lead mounts it), the `/email` route in `routes/receipts.js`, `users.inbound_token` + helpers in `store/users.js`, the inbound-address routes in `routes/users.js`, RUNBOOK and `.env.example` sections, tests |
+| 4a | Allowances and policy (server) | `store/policy.js`, `routes/policy.js` (new; mounted under /api/company by the lead), `reports/allowances.js` + `routes/allowances.js` (new; mounted under /api/reports by the lead), the two tables, `receipts/flags.js`, tests |
+| 4a | Live progress and Xero | `utils/events.js` (new), emits in `receipts/read-queue.js`, `routes/intake-stream.js` (new; mounted by the lead), `ui/src/components/intake/useIntake.js` (stream with polling fallback), `xero/bills.js` + `xero/attachments.js`, tests |
+| — | Lead | `index.js` mounts, dependency installs, `npm audit fix`, merge, full run |
+| 4b | UI | Settings (Policy, Per diem rates, Mileage rate; the forwarding address in My profile), case page "Add per diem" / "Add mileage", .eml/.msg in the drop zone, receipt-less rows in the case table and the review page |
+| — | Lead | QA pass in a browser, docs, deploy |
