@@ -348,3 +348,31 @@ CREATE TABLE IF NOT EXISTS phone_pairings (
   receipt_ids TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_phone_pairings_user ON phone_pairings(user_id);
+
+-- What an admin sets for the company (store/policy.js): the mileage rate,
+-- the travel-day share of a per diem, a limit per receipt for each category,
+-- a maximum age and whether weekends are flagged. One JSON object rather than
+-- a column each, so a new setting is a key and not a migration; every key is
+-- checked on the way in.
+CREATE TABLE IF NOT EXISTS company_policy (
+  company_id  TEXT PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+  json        TEXT NOT NULL DEFAULT '{}',
+  updated_by  TEXT,
+  updated_at  TEXT
+);
+
+-- A per-diem rate: so much a day in a country, in any currency, from a date.
+-- The rate for a day is the one with the latest effective_from on or before
+-- it, so a new rate is added rather than an old one changed, and a trip
+-- worked out before the change keeps what it was worked out at.
+CREATE TABLE IF NOT EXISTS per_diem_rates (
+  id             TEXT PRIMARY KEY,
+  company_id     TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  country        TEXT NOT NULL,      -- ISO 3166-1 alpha-2
+  currency       TEXT NOT NULL,      -- ISO 4217
+  daily_cents    INTEGER NOT NULL CHECK (daily_cents > 0),
+  effective_from TEXT NOT NULL,      -- YYYY-MM-DD
+  created_by     TEXT,
+  created_at     TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_per_diem_rates_day ON per_diem_rates(company_id, country, effective_from);
