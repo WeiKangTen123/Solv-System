@@ -72,6 +72,7 @@ function enqueue({ companyId, userId, receiptId, expenseId = null }) {
   db.prepare(`INSERT INTO read_jobs (id, company_id, user_id, receipt_id, expense_id, state, attempts, next_at, created_at)
               VALUES (?, ?, ?, ?, ?, 'queued', 0, ?, ?)`).run(id, companyId, userId, receiptId, expenseId || null, at, at);
   _wake();
+  _changed(receiptId);
   return _get(id);
 }
 
@@ -120,12 +121,15 @@ function _run(row) {
     .run(_iso(cfg.now()), row.id);
   if (!claimed.changes) return null;
   const job = _get(row.id);
+  _changed(job.receiptId);
   const promise = (async () => {
     let outcome;
     try { outcome = await cfg.read(job, { deferIfUnavailable: true }); }
     catch (err) { outcome = { error: err }; }
     try { _settle(job, row.error_kind, outcome); }
     catch (err) { logger.error('A read job could not be written back', { jobId: job.id, error: err.message }); }
+    // Done, failed or put off for a retry: whichever, the page shows it.
+    _changed(job.receiptId);
   })().finally(() => { _active.delete(job.id); _wake(); });
   _active.set(job.id, { userId: job.userId, promise });
   return promise;
@@ -174,6 +178,14 @@ function _release(receiptId, note) {
   }
   const r = store.getReceipt(receiptId);
   if (r && !r.parsedAt) store.updateReceipt(receiptId, { parsedAt: _iso(cfg.now()) });
+}
+
+// The pages watching the receipt's case hear that its read moved on
+// (utils/events.js). Nothing a watcher does, and no fault in finding the case,
+// may stop a read or undo a write the queue has already made.
+function _changed(receiptId) {
+  try { require('../utils/events').receiptChanged(receiptId); }
+  catch (err) { logger.warn('Watchers of a case were not told of a read', { receiptId, error: err.message }); }
 }
 
 function _ended(id) {
@@ -286,6 +298,7 @@ function retryNow(receiptId) {
     throw new HttpError(409, 'This receipt is no longer waiting to be read. Use Re-read on it.');
   }
   _wake();
+  _changed(receiptId);
   return _get(row.id);
 }
 
@@ -297,6 +310,7 @@ function cancel(receiptId) {
   if (!row || row.state !== 'queued') throw new HttpError(409, 'Nothing is waiting to be read for this receipt.');
   db.prepare("UPDATE read_jobs SET state = 'cancelled', finished_at = ? WHERE id = ? AND state = 'queued'").run(_iso(cfg.now()), row.id);
   _release(receiptId, STOPPED_NOTE);
+  _changed(receiptId);
   return _get(row.id);
 }
 
