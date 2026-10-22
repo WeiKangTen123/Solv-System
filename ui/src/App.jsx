@@ -15,6 +15,7 @@ const ExpenseReview = lazy(() => import('./pages/ExpenseReview'));
 const Settings      = lazy(() => import('./pages/Settings'));
 const Reports       = lazy(() => import('./pages/Reports'));
 const ReportDetail  = lazy(() => import('./pages/ReportDetail'));
+const NewCase       = lazy(() => import('./pages/NewCase'));
 const CaseCheck     = lazy(() => import('./pages/CaseCheck'));
 const CaseReview    = lazy(() => import('./pages/CaseReview'));
 
@@ -43,6 +44,7 @@ function AppRoutes() {
           <Route path="expenses" element={<MyExpenses />} />
           <Route path="expenses/:id" element={<ExpenseReview />} />
           <Route path="reports" element={<Reports />} />
+          <Route path="reports/new" element={<NewCase />} />
           <Route path="reports/:id" element={<ReportDetail />} />
           <Route path="reports/:id/review" element={<CaseReview />} />
           <Route path="reports/:id/check" element={<CaseCheck />} />
