@@ -354,6 +354,66 @@ function removeGeminiKey(companyId, keyId) {
   return gone;
 }
 
+// ── The forwarding address (routes/inbound.js) ──────────────────────────────
+// receipts+<token>@<INBOUND_EMAIL_DOMAIN>. The token tells one person's mail
+// from another's. It is not a password, since mail is only taken from the
+// person's own address, but it is random, so nobody's address can be worked
+// out from their name, and a new one retires the old.
+//
+// Off until the box sets both the domain and the secret the mail provider
+// posts with: an address that cannot receive anything is not shown.
+function inboundConfigured() { return !!(process.env.INBOUND_EMAIL_DOMAIN && process.env.INBOUND_EMAIL_SECRET); }
+function inboundDomain() { return String(process.env.INBOUND_EMAIL_DOMAIN || '').trim().replace(/^@/, '').toLowerCase(); }
+
+// Twelve characters of base32, 60 random bits: lower case and digits only,
+// because some mail systems lower-case the part before the @.
+const TOKEN_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+const TOKEN_LENGTH = 12;
+function _inboundToken() { return [...crypto.randomBytes(TOKEN_LENGTH)].map(b => TOKEN_ALPHABET[b & 31]).join(''); }
+
+// A fresh token for the person; the address they had stops working.
+function newInboundToken(userId) {
+  for (let tries = 0; tries < 5; tries++) {
+    const token = _inboundToken();
+    try {
+      return db.prepare('UPDATE users SET inbound_token = ? WHERE id = ?').run(token, userId).changes ? token : null;
+    } catch (err) {
+      if (!/UNIQUE/i.test(err.message)) throw err;   // another person's token: draw again
+    }
+  }
+  throw new Error('Could not make a new forwarding address');
+}
+
+// The person's address, made the first time they ask. Null when the server
+// does not take mail.
+function inboundAddress(userId) {
+  if (!inboundConfigured()) return null;
+  const row = db.prepare('SELECT inbound_token FROM users WHERE id = ?').get(userId);
+  if (!row) return null;
+  const token = row.inbound_token || newInboundToken(userId);
+  return `receipts+${token}@${inboundDomain()}`;
+}
+
+function findByInboundToken(token) {
+  const t = String(token || '').trim().toLowerCase();
+  if (!/^[a-z0-9]{10,64}$/.test(t)) return null;
+  return sanitize(db.prepare('SELECT * FROM users WHERE inbound_token = ?').get(t));
+}
+
+// Mail the address took for a person in the last 24 hours, for its daily
+// limit, and one more of it. A day's rows are all the limit reads, so each
+// new one clears the person's rows from before yesterday.
+const DAY_MS = 24 * 60 * 60 * 1000;
+function inboundMailsLastDay(userId) {
+  const since = new Date(Date.now() - DAY_MS).toISOString();
+  return db.prepare('SELECT COUNT(*) AS n FROM inbound_mails WHERE user_id = ? AND received_at > ?').get(userId, since).n;
+}
+function recordInboundMail(userId) {
+  const now = Date.now();
+  db.prepare('INSERT INTO inbound_mails (user_id, received_at) VALUES (?, ?)').run(userId, new Date(now).toISOString());
+  db.prepare('DELETE FROM inbound_mails WHERE user_id = ? AND received_at < ?').run(userId, new Date(now - 2 * DAY_MS).toISOString());
+}
+
 // Per-user defaults the intake modules ask for (currency, timezone).
 function getUserDefaults(userId) {
   const u = userId ? findById(userId) : null;
@@ -370,4 +430,5 @@ module.exports = { findSession,
   getCompany, createCompany, updateCompany, getCompanyConfig, saveCompanyConfig, ENCRYPTED_COLUMNS,
   getUserGeminiKeys, addUserGeminiKey, removeUserGeminiKey,
   getGeminiKeys, getGeminiKeysForUser, recordKeyUse, addGeminiKey, removeGeminiKey, getUserDefaults,
+  inboundConfigured, inboundDomain, inboundAddress, newInboundToken, findByInboundToken, inboundMailsLastDay, recordInboundMail,
 };

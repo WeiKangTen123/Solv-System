@@ -168,4 +168,39 @@ describe('routes/users and routes/company', () => {
     const byAdmin = await request(serverFor(app)).patch(`/api/users/${e.id}`).set(as(token)).send({ employeeId: 'S0008', department: 'Sales' }).expect(200);
     expect(byAdmin.body.user).toMatchObject({ employeeId: 'S0008', department: 'Sales' });
   });
+
+  // The person's own address for forwarding receipts (routes/inbound.js).
+  test('the forwarding address: none while the server takes no mail, then made on first ask, and replaced on request', async () => {
+    await request(serverFor(app)).get('/api/users/me/inbound-address').expect(401);
+    let res = await request(serverFor(app)).get('/api/users/me/inbound-address').set(as(token)).expect(200);
+    expect(res.body).toEqual({ address: null, configured: false });
+    await request(serverFor(app)).post('/api/users/me/inbound-address').set(as(token)).expect(404);
+
+    process.env.INBOUND_EMAIL_DOMAIN = 'in.solv.sg';
+    process.env.INBOUND_EMAIL_SECRET = 'secret';
+    try {
+      const mine = () => request(serverFor(app)).get('/api/users/me/inbound-address').set(as(token)).expect(200);
+      res = await mine();
+      expect(res.body).toEqual({ address: expect.stringMatching(/^receipts\+[a-z2-7]{12}@in\.solv\.sg$/), configured: true });
+      const first = res.body.address;
+      expect((await mine()).body.address).toBe(first);
+
+      await request(serverFor(app)).post('/api/users').set(as(token)).send({ email: 'e@solv.sg', password: 'password123' }).expect(201);
+      const et = (await request(serverFor(app)).post('/api/auth/login').send({ email: 'e@solv.sg', password: 'password123' }).expect(200)).body.token;
+      const theirs = (await request(serverFor(app)).get('/api/users/me/inbound-address').set(as(et)).expect(200)).body.address;
+      expect(theirs).not.toBe(first);                                // each person their own
+
+      const replaced = await request(serverFor(app)).post('/api/users/me/inbound-address').set(as(token)).expect(200);
+      expect(replaced.body.address).toMatch(/^receipts\+[a-z2-7]{12}@in\.solv\.sg$/);
+      expect(replaced.body.address).not.toBe(first);
+      expect((await mine()).body.address).toBe(replaced.body.address);
+      expect((await request(serverFor(app)).get('/api/users/me/inbound-address').set(as(et)).expect(200)).body.address).toBe(theirs);
+      // the staff list carries nobody's token
+      const list = await request(serverFor(app)).get('/api/users').set(as(token)).expect(200);
+      expect(JSON.stringify(list.body)).not.toMatch(/inbound|receipts\+/);
+    } finally {
+      delete process.env.INBOUND_EMAIL_DOMAIN;
+      delete process.env.INBOUND_EMAIL_SECRET;
+    }
+  });
 });

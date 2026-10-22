@@ -76,6 +76,24 @@ router.delete('/me/gemini-keys/:id', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
+// The person's own address for forwarding receipts (routes/inbound.js). It is
+// made the first time it is asked for, so nobody holds one until they look.
+// `configured` says whether this server takes mail at all, so the page can
+// say so rather than show an address that goes nowhere.
+router.get('/me/inbound-address', requireAuth, (req, res) => {
+  const configured = users.inboundConfigured();
+  res.json({ address: configured ? users.inboundAddress(req.user.id) : null, configured });
+});
+
+// A new address, for someone whose old one reached the wrong people: it stops
+// working at once.
+router.post('/me/inbound-address', requireAuth, (req, res) => {
+  if (!users.inboundConfigured()) return res.status(404).json({ error: 'This server does not take receipts by email.' });
+  users.newInboundToken(req.user.id);
+  logger.info('Forwarding address replaced', { userId: req.user.id });
+  res.json({ address: users.inboundAddress(req.user.id) });
+});
+
 // The staff list is an admin's: a user works on their own claims and has no
 // reason to read colleagues' names and emails. It used to be open to every
 // account, and anyone can sign up.

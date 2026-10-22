@@ -25,10 +25,21 @@ CREATE TABLE IF NOT EXISTS users (
   created_at   TEXT NOT NULL,
   last_seen_at TEXT,
   disabled_at  TEXT,                                -- removed: cannot sign in, records kept
-  token_version INTEGER NOT NULL DEFAULT 0          -- bumped to end every session (sign-out, new password, removal)
+  token_version INTEGER NOT NULL DEFAULT 0,         -- bumped to end every session (sign-out, new password, removal)
+  inbound_token TEXT                                -- the forwarding address receipts+<token>@INBOUND_EMAIL_DOMAIN; unique when set (db/migrate.js)
 );
 CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id);
 CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users(lower(email));   -- sign-in looks people up this way
+
+-- One row for each mail the forwarding address took for a person
+-- (routes/inbound.js): its daily limit is counted here. No content is kept,
+-- and a person's rows older than two days go as new ones come.
+CREATE TABLE IF NOT EXISTS inbound_mails (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  received_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_inbound_mails_user ON inbound_mails(user_id, received_at);
 
 -- Company-level connections. Secrets are AES-256-GCM encrypted (utils/crypto.js).
 CREATE TABLE IF NOT EXISTS company_credentials (
