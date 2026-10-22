@@ -73,11 +73,12 @@ app.use(morgan(':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP
 // The New case page's progress poll is not counted (rate-limit-key.js).
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, keyGenerator: rateLimitKey, skip: skipRateLimit, standardHeaders: true, legacyHeaders: false,
                     message: { error: 'Too many requests — slow down' } }));
-// 100 KB of JSON is plenty for everything except a file. The four routes that
-// take one parse their own 25 MB body after checking who is asking (receipts
-// and claims routes); a body parsed here, before any route, was 25 MB for
-// anyone at all, the login form included.
-const LARGE_BODY_ROUTE = /^\/api\/(receipts\/?$|receipts\/archive\/?$|receipts\/capture\/[^/]+\/?$|claims\/import\/?$)/;
+// 100 KB of JSON is plenty for everything except a file. The routes that take
+// one parse their own 25 MB body after checking who is asking (receipts,
+// claims and inbound mail); a body parsed here, before any route, was 25 MB
+// for anyone at all, the login form included. Inbound mail is listed too so a
+// provider that labels the raw message as JSON is not cut off at 100 KB.
+const LARGE_BODY_ROUTE = /^\/api\/(receipts\/?$|receipts\/archive\/?$|receipts\/email\/?$|receipts\/capture\/[^/]+\/?$|claims\/import\/?$|inbound\/email\/?$)/;
 const smallJson = express.json({ limit: '100kb' });
 app.use((req, res, next) => (req.method === 'POST' && LARGE_BODY_ROUTE.test(req.path) ? next() : smallJson(req, res, next)));
 app.use(express.urlencoded({ extended: false, limit: '100kb' }));
@@ -116,6 +117,9 @@ app.use('/api/fx',        fxRoutes);
 // routes so their two paths are answered there.
 app.use('/api/reports',   require('./routes/allowances'));
 app.use('/api/reports',   reportRoutes);
+// Mail a provider forwards to someone's receipts address (routes/inbound.js).
+// Answered only when the box is set up for it; its own secret, not a session.
+app.use('/api/inbound',   require('./routes/inbound'));
 app.use('/api/xero',      xeroRoutes);
 app.use('/api/dashboard', dashRoutes);
 app.use('/api/assistant', assistantRoutes);

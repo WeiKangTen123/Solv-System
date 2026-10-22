@@ -65,6 +65,17 @@ test('a body over 100 KB, and one that is not JSON, are named as such', async ()
   expect((await res.json()).error).toBe('That request is not valid JSON.');
 });
 
+// A mail is a file: a real .eml is far over 100 KB, so the two routes that
+// take one must reach their own checks (who is asking) rather than be cut
+// off by the small parser in front of everything else.
+test('a large mail reaches its own route, not the 100 KB limit', async () => {
+  const big = JSON.stringify({ data: 'a'.repeat(200 * 1024), filename: 'x.eml' });
+  let res = await fetch(`${base}/api/receipts/email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: big });
+  expect(res.status).toBe(401);
+  res = await fetch(`${base}/api/inbound/email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: big });
+  expect(res.status).toBe(404);   // the box takes no mail until it is set up for it
+});
+
 test('SIGTERM shuts it down cleanly', async () => {
   const exited = new Promise(resolve => child.once('exit', code => resolve(code)));
   child.kill('SIGTERM');
