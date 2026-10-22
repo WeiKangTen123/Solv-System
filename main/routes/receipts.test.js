@@ -120,6 +120,15 @@ describe('routes/receipts', () => {
   });
 
   // The read is a job (receipts/read-queue.js), not a promise in the request.
+  test('a JPEG the browser made from another kind keeps what it was; any other claim is ignored', async () => {
+    const webp = await upload({ mime: 'image/jpeg', data: jpeg(), filename: 'grab.webp', convertedFrom: 'image/webp' }).expect(201);
+    expect(webp.body.receipt.convertedFrom).toBe('image/webp');
+    const made = await upload({ mime: 'image/jpeg', data: jpeg(), filename: 'x.jpg', convertedFrom: 'text/html' }).expect(201);
+    expect(made.body.receipt.convertedFrom).toBeNull();
+    const plain = await upload({ mime: 'image/jpeg', data: jpeg(), filename: 'y.jpg' }).expect(201);
+    expect(plain.body.receipt.convertedFrom).toBeNull();
+  });
+
   test('the read is queued, and a busy AI is waited out rather than failed', async () => {
     const readQueue = require('../receipts/read-queue');
     parser.parseReceiptImage.mockResolvedValueOnce({ receipts: [], split: false, unavailable: true })

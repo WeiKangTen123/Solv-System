@@ -1987,8 +1987,12 @@ body {
   flex-wrap: wrap;
   margin: 20px 0 56px;
   padding-top: 16px;
+  /* Clear of the assistant's Ask button, fixed in the bottom-right corner:
+     scrolled to the end, Create sat under it and a click went to Ask. */
+  padding-right: 112px;
   border-top: 1px solid var(--border);
 }
+.mobile-mode .nc-foot { padding-right: 0; }
 .nc-foot-hint { font-size: 12.5px; color: var(--text-muted); }
 @media (max-width: 1000px) {
   .nc-grid { grid-template-columns: minmax(0, 1fr); }
@@ -2406,7 +2410,10 @@ a.mr-name:hover { text-decoration: underline; }
 .mobile-mode .cs-list { padding: 0 !important; }
 .mobile-mode .cs-select { flex: 1 1 140px; }
 .mobile-mode .cs-select .form-input { flex: 1 1 auto; min-width: 0; min-height: 44px; }
-.mobile-mode .ui-chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+/* One scrolling line of chips on a phone. Capped at its container: as a flex
+   item it otherwise kept its full width (457px of chips), widened the page
+   past the screen, and carried the bottom nav and the Ask button off it. */
+.mobile-mode .ui-chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; min-width: 0; max-width: 100%; }
 
 /* ── The case page ── */
 .cs-meta { display: inline-flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; }

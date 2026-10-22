@@ -71,11 +71,13 @@ export default function Header() {
 
         {!isMobile && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Solv</span>}
         {crumbs.map((c, i) => (
+          // One crumb never breaks inside itself: a case number wrapped at its
+          // hyphen on a phone ("EXP-2026-" over "0001").
           <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {!isMobile && <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>›</span>}
             {c.to
-              ? <Link to={c.to} style={{ fontSize: isMobile ? 14 : 13, fontWeight: 500, color: 'var(--text-muted)', textDecoration: 'none' }}>{c.label}</Link>
-              : <span style={{ fontSize: isMobile ? 15 : 13, fontWeight: 600, color: 'var(--text-primary)' }}>{c.label}</span>
+              ? <Link to={c.to} style={{ fontSize: isMobile ? 14 : 13, fontWeight: 500, color: 'var(--text-muted)', textDecoration: 'none', whiteSpace: 'nowrap' }}>{c.label}</Link>
+              : <span style={{ fontSize: isMobile ? 15 : 13, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>{c.label}</span>
             }
           </span>
         ))}

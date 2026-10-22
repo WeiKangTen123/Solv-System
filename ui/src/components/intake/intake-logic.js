@@ -77,7 +77,10 @@ export function planDrop(files) {
 // leaves the total at 0 with the server's no-amount flag on it, and "SGD
 // 0.00" beside it read as a receipt for nothing.
 export function hasAmount(e) {
-  if (!e || e.total === null || e.total === undefined) return false;
+  // A receipt still being read carries the store's 0 and the person's default
+  // currency, and no flags yet: counted, two unread rupee folios read as
+  // "Paid in: SGD ×2, SGD 0.00".
+  if (!e || e.status === 'reading' || e.total === null || e.total === undefined) return false;
   return !(e.flags || []).some(f => f.code === 'no-amount');
 }
 
@@ -153,13 +156,14 @@ export function countRows(rows, now) {
   return c;
 }
 
-// "15 files: 11 read, 2 reading, 2 need you". Empty groups are left out.
+// "15 files: 11 read, 2 to be read, 2 need you". Empty groups are left out;
+// "to be read" holds the queued as well as the ones being read now.
 export function countsLine(c) {
   if (!c || !c.files) return '';
   const parts = [
     c.read ? `${c.read} read` : '',
     c.uploading ? `${c.uploading} uploading` : '',
-    c.reading ? `${c.reading} reading` : '',
+    c.reading ? `${c.reading} to be read` : '',
     c.waiting ? `${c.waiting} waiting for the AI` : '',
     c.needYou ? `${c.needYou} need${c.needYou === 1 ? 's' : ''} you` : '',
   ].filter(Boolean);

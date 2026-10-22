@@ -126,7 +126,7 @@ async function decode(file) {
   }
 }
 
-// Returns { blob, mime, originalBytes, bytes, raw? } or throws with a message
+// Returns { blob, mime, originalBytes, bytes, raw?, convertedFrom? } or throws with a message
 // that says what the user should do next, and `kind` 'too-big' or
 // 'unsupported'. `raw` is set when the file goes as it is.
 export async function prepareReceipt(file) {
@@ -172,7 +172,10 @@ export async function prepareReceipt(file) {
   for (const quality of QUALITY_STEPS) {
     const blob = await canvasToBlob(canvas, quality);
     if (blob && blob.size <= MAX_BYTES) {
-      return { blob, mime: 'image/jpeg', originalBytes, bytes: blob.size };
+      // What it was, when that was not already a JPEG or PNG, so the receipt
+      // says "converted from WebP" as one the server converted does.
+      const convertedFrom = mime && mime !== 'image/jpeg' && mime !== 'image/png' ? mime : null;
+      return { blob, mime: 'image/jpeg', originalBytes, bytes: blob.size, convertedFrom };
     }
   }
   throw refusal('too-big', `This image is still over ${humanSize(MAX_BYTES)} after compression. Try photographing just the receipt, closer in.`);

@@ -10,8 +10,13 @@ const { localDate } = require('../utils/zone-date');
 //   draft    every cover field the owner has not set: it is the AI's draft
 //            until they say otherwise.
 //   open     only the dates, the destination and the nights. The owner chose
-//            the kind and the title when they created it; the dates still
-//            follow a receipt that arrives late.
+//            the kind and the title when they created it. The dates take in
+//            a receipt that lands just beside them (a folio read after
+//            Create, the taxi home the next morning), up to WIDEN_DAYS either
+//            side, and nothing further: a receipt weeks away is flagged as
+//            outside the case instead. Stretching to fit everything turned a
+//            reopened four-day trip into seven weeks, which every local
+//            receipt then "fitted". A month never widens.
 //   claimed  nothing. What was claimed stays as it was claimed.
 //
 // A field the owner set (cover_ai.user) is never written. On an open case a
@@ -25,7 +30,28 @@ const { localDate } = require('../utils/zone-date');
 // that could not be refreshed is logged and the next read tries again.
 const DRAFT_FIELDS = ['kind', 'title', 'periodFrom', 'periodTo', 'destination', 'nights'];
 const OPEN_FIELDS = ['periodFrom', 'periodTo', 'destination', 'nights'];
+const WIDEN_DAYS = 3;
 const _filled = v => v !== null && v !== undefined && v !== '';
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+const _day = d => Date.parse(`${d}T00:00:00Z`) / 86400000;
+
+// What an open case's own fields should become: its dates widened only to
+// receipts beside them, and the nights counted from those dates rather than
+// from every receipt the suggestion saw.
+function _openTarget(r, s, today) {
+  const dates = r.expenses
+    .filter(e => !['reading', 'duplicate', 'rejected'].includes(e.status) && ISO.test(String(e.receiptDate || '')) && e.receiptDate <= today)
+    .map(e => e.receiptDate);
+  let from = _filled(r.periodFrom) ? r.periodFrom : s.periodFrom;
+  let to = _filled(r.periodTo) ? r.periodTo : s.periodTo;
+  if (r.kind !== 'period' && _filled(r.periodFrom) && _filled(r.periodTo)) {
+    const near = dates.filter(d => _day(d) >= _day(r.periodFrom) - WIDEN_DAYS && _day(d) <= _day(r.periodTo) + WIDEN_DAYS);
+    from = [r.periodFrom, ...near].sort()[0];
+    to = [r.periodTo, ...near].sort().pop();
+  }
+  const nights = r.kind === 'trip' && from && to ? Math.max(0, _day(to) - _day(from)) : s.nights;
+  return { periodFrom: from || null, periodTo: to || null, destination: s.destination, nights: nights ?? null };
+}
 
 // Returns { changed: [fields] } when it wrote something, else null.
 function refresh(reportId) {
@@ -33,16 +59,18 @@ function refresh(reportId) {
     const r = reportId ? reports.getReport(reportId) : null;
     if (!r || (r.status !== 'draft' && r.status !== 'open')) return null;
     const company = users.getCompany(r.companyId) || {};
-    const s = suggestCover(r.expenses, { baseCurrency: company.baseCurrency || 'SGD', today: localDate(company.timezone || 'Asia/Singapore') });
+    const today = localDate(company.timezone || 'Asia/Singapore');
+    const s = suggestCover(r.expenses, { baseCurrency: company.baseCurrency || 'SGD', today });
     // Nothing read and dated yet: nothing to say, so nothing is unsaid either.
     if (!s) return null;
+    const target = r.status === 'open' ? _openTarget(r, s, today) : s;
     const { auto, user } = r.coverAi;
     const patch = {};
     let nextAuto = auto.filter(f => !user.includes(f));
     for (const f of r.status === 'draft' ? DRAFT_FIELDS : OPEN_FIELDS) {
       if (user.includes(f)) continue;
       if (r.status === 'open' && _filled(r[f]) && !auto.includes(f)) continue;
-      const v = _filled(s[f]) ? s[f] : null;
+      const v = _filled(target[f]) ? target[f] : null;
       if ((r[f] ?? null) !== v) patch[f] = v;
       // A field the AI emptied is nobody's again, and carries no marker.
       nextAuto = nextAuto.filter(x => x !== f);
@@ -72,4 +100,4 @@ function refreshForReceipt(receiptId) {
   }
 }
 
-module.exports = { refresh, refreshForReceipt, DRAFT_FIELDS, OPEN_FIELDS };
+module.exports = { refresh, refreshForReceipt, DRAFT_FIELDS, OPEN_FIELDS, WIDEN_DAYS };

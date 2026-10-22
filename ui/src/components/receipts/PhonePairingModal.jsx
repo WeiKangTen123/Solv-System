@@ -42,7 +42,13 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
   useEffect(() => {
     let active = true;
     api.post('/receipts/pair', reportId ? { reportId } : {})
-      .then(res => { if (active) { setPair(res); setSecs(Math.round(res.expiresInMs / 1000)); } })
+      .then(res => {
+        if (active) { setPair(res); setSecs(Math.round(res.expiresInMs / 1000)); return; }
+        // The dialog went before its code arrived (closed at once, or React
+        // mounting it twice in development): nobody will ever close this one,
+        // so it is ended here rather than left live for half an hour.
+        api.delete(`/receipts/pair/${res.token}`).catch(() => { /* it expires anyway */ });
+      })
       .catch(err => { if (active) setError(err.message || 'Could not create a pairing code'); });
     return () => { active = false; };
     // One code per opening, for the case it was opened on.
@@ -83,7 +89,7 @@ export default function PhonePairingModal({ onClose, onArrived, reportId = null 
   useVisiblePolling(poll, 3000);
 
   // Revoke on close so a code that was on screen dies immediately rather than
-  // lingering for the rest of its ten minutes. The parent is handed the
+  // lingering for the rest of its thirty minutes. The parent is handed the
   // revocation: it may delete the case this session made, and only once the
   // link is dead can it know nothing more is on its way.
   function close() {

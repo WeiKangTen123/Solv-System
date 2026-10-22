@@ -14,6 +14,9 @@ import { fmtDateRange } from '../../utils/format';
 //   suggestion the AI's current cover from the intake poll, or null.
 //   base       the company's currency, for the advance.
 //   disabled   nothing can be typed (the page is busy creating the case).
+//   aiPicksKind  a new draft: until the AI or the person has chosen a kind,
+//              none is shown as chosen. The draft's stored default (Other)
+//              looked like a choice somebody had made.
 const AI_TIP = 'Filled from your receipts; type to change it';
 
 function AiMark() {
@@ -42,7 +45,7 @@ function Suggest({ text, onUse }) {
   );
 }
 
-export default function CoverForm({ cover, suggestion, base, disabled = false }) {
+export default function CoverForm({ cover, suggestion, base, disabled = false, aiPicksKind = false }) {
   const uid = useId().replace(/:/g, '');
   const id = f => `${uid}-${f}`;
   const v = cover.values;
@@ -60,7 +63,8 @@ export default function CoverForm({ cover, suggestion, base, disabled = false })
     onFocus: () => cover.focus(f), onBlur: () => cover.blur(f),
     onChange: e => cover.change({ [f]: e.target.value }),
   });
-  const month = v.kind === 'period';
+  const kind = aiPicksKind && !ai.has('kind') && !mine.has('kind') ? '' : v.kind;
+  const month = kind === 'period';
   const backwards = v.periodFrom && v.periodTo && v.periodFrom > v.periodTo;
   const notWhole = month && v.periodFrom && (() => { const w = wholeMonth(v.periodFrom.slice(0, 7)); return !w || w.periodFrom !== v.periodFrom || w.periodTo !== v.periodTo; })();
 
@@ -75,8 +79,8 @@ export default function CoverForm({ cover, suggestion, base, disabled = false })
         <legend className="form-label">Kind {isAi('kind') && <AiMark />}</legend>
         <div className="in-kind-row">
           {KINDS.map(k => (
-            <label key={k} className={`in-kind${v.kind === k ? ' is-on' : ''}`}>
-              <input type="radio" name={id('kind')} value={k} checked={v.kind === k}
+            <label key={k} className={`in-kind${kind === k ? ' is-on' : ''}`}>
+              <input type="radio" name={id('kind')} value={k} checked={kind === k}
                      onFocus={() => cover.focus('kind')} onBlur={() => cover.blur('kind')}
                      onChange={() => cover.change({ kind: k })} />
               <span className="in-kind-glyph" aria-hidden="true">{KIND_GLYPH[k]}</span>
@@ -84,13 +88,13 @@ export default function CoverForm({ cover, suggestion, base, disabled = false })
             </label>
           ))}
         </div>
-        <div className="in-field-hint">{v.kind ? KIND_HINT[v.kind] : 'The AI picks one from your receipts; choose one to decide yourself.'}</div>
+        <div className="in-field-hint">{kind ? KIND_HINT[kind] : 'The AI picks one from your receipts; choose one to decide yourself.'}</div>
         {differs('kind') && <Suggest text={KIND_LABEL[sug.kind] || sug.kind} onUse={() => cover.change({ kind: sug.kind })} />}
       </fieldset>
 
       <div className="form-group">
         <label className="form-label" htmlFor={id('title')}>Title {isAi('title') && <AiMark />}</label>
-        <input className="form-input" placeholder="India trip, Sep 2026" maxLength={200} {...field('title')} />
+        <input className="form-input" placeholder="e.g. India trip, Sep 2026" maxLength={200} {...field('title')} />
         {differs('title') && <Suggest text={sug.title} onUse={() => cover.change({ title: sug.title })} />}
       </div>
 
@@ -119,10 +123,10 @@ export default function CoverForm({ cover, suggestion, base, disabled = false })
         <Suggest text={fmtDateRange(sug.periodFrom, sug.periodTo)} onUse={() => cover.change({ periodFrom: sug.periodFrom || '', periodTo: sug.periodTo || '' })} />
       )}
 
-      {v.kind === 'trip' && (
+      {kind === 'trip' && (
         <div className="form-group">
           <label className="form-label" htmlFor={id('destination')}>Where {isAi('destination') && <AiMark />}</label>
-          <input className="form-input" placeholder="Mumbai, Pune, India" maxLength={120} {...field('destination')} />
+          <input className="form-input" placeholder="e.g. Mumbai, Pune, India" maxLength={120} {...field('destination')} />
           {differs('destination') && <Suggest text={sug.destination} onUse={() => cover.change({ destination: sug.destination })} />}
         </div>
       )}
@@ -130,7 +134,7 @@ export default function CoverForm({ cover, suggestion, base, disabled = false })
       <div className="in-dates">
         <div className="form-group">
           <label className="form-label" htmlFor={id('purpose')}>Purpose</label>
-          <input className="form-input" placeholder="Client site visits" maxLength={500} {...field('purpose')} />
+          <input className="form-input" placeholder="e.g. Client site visits" maxLength={500} {...field('purpose')} />
         </div>
         <div className="form-group">
           <label className="form-label" htmlFor={id('advances')}>Advance {base}</label>

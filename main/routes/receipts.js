@@ -62,7 +62,12 @@ function checkCase(user, reportId) {
 // Stores one file for `user`, into `reportId` when given, and queues its read.
 // The file is `data` (base64, from a browser) or `buffer` (from a zip).
 // Answers { status, body } for everything the person sent, a refusal included.
-async function storeReceipt(user, { mime: declaredMime, data, buffer: given, filename, source, reportId }) {
+// The browser turns what it can open itself (WebP, GIF, BMP, and HEIC in
+// Safari) into JPEG before sending, and says what the file was. That is kept
+// like a conversion made here, but only on a JPEG and only from these names.
+const BROWSER_CONVERTED = new Set(['image/webp', 'image/gif', 'image/bmp', 'image/heic', 'image/heif', 'image/avif', 'image/tiff']);
+
+async function storeReceipt(user, { mime: declaredMime, data, buffer: given, filename, source, reportId, convertedFrom: claimedFrom }) {
   const noCase = checkCase(user, reportId);
   if (noCase) return { status: noCase.status, body: { error: noCase.error } };
   const raw = Buffer.isBuffer(given) ? given : decodeBase64(data);
@@ -83,7 +88,8 @@ async function storeReceipt(user, { mime: declaredMime, data, buffer: given, fil
     if (err instanceof HttpError) return { status: err.status, body: { error: err.message } };
     throw err;
   }
-  const { buffer, mime, convertedFrom, note } = kept;
+  const { buffer, mime, note } = kept;
+  const convertedFrom = kept.convertedFrom || (mime === 'image/jpeg' && BROWSER_CONVERTED.has(claimedFrom) ? claimedFrom : null);
   // Converting takes a moment, and the case may have been claimed in it.
   const stillOpen = checkCase(user, reportId);
   if (stillOpen) return { status: stillOpen.status, body: { error: stillOpen.error } };

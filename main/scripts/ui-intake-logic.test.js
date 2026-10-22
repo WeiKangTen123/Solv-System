@@ -88,6 +88,8 @@ describe('hasAmount', () => {
     expect(L.hasAmount({ total: null, flags: [] })).toBe(false);
     expect(L.hasAmount({ total: 12.5, flags: [{ code: 'no-date', level: 'red' }] })).toBe(true);
     expect(L.hasAmount({ total: 0, flags: [] })).toBe(true);
+    // Still being read: the 0 and the currency are placeholders, not a read.
+    expect(L.hasAmount({ status: 'reading', total: 0, currency: 'SGD', flags: [] })).toBe(false);
   });
 });
 
@@ -154,7 +156,7 @@ describe('what a row counts as', () => {
     expect(L.isDoneClaim(rows[5])).toBe(true);
     const c = L.countRows(rows, NOW);
     expect(c).toEqual({ files: 5, uploading: 1, reading: 1, waiting: 0, read: 2, needYou: 1 });
-    expect(L.countsLine(c)).toBe('5 files: 2 read, 1 uploading, 1 reading, 1 needs you');
+    expect(L.countsLine(c)).toBe('5 files: 2 read, 1 uploading, 1 to be read, 1 needs you');
     expect(L.countsLine({ files: 1, read: 1 })).toBe('1 file: 1 read');
     expect(L.countsLine({ files: 0 })).toBe('');
   });

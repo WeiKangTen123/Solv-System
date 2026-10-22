@@ -236,7 +236,7 @@ function NewCaseForm({ draftId, onMade }) {
   const hint = uploading ? `Waiting for ${uploading} upload${uploading === 1 ? '' : 's'} to finish.`
     : !caseId && !titled ? 'Drop the receipts, or give the case a title.'
     : pending ? 'Reading carries on after the case is created.' : '';
-  const form = <CoverForm cover={cover} suggestion={intake && intake.suggestion} base={base} disabled={busy === 'create' || busy === 'discard'} />;
+  const form = <CoverForm cover={cover} suggestion={intake && intake.suggestion} base={base} disabled={busy === 'create' || busy === 'discard'} aiPicksKind />;
 
   return (
     <div className="nc-page">

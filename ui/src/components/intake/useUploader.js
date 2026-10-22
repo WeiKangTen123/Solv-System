@@ -157,7 +157,7 @@ function makeUploader(publishRows, cbs) {
     const note = prep.bytes < prep.originalBytes ? `${humanSize(prep.originalBytes)} → ${humanSize(prep.bytes)}` : '';
     patch(r.id, { state: 'uploading', progress: 0, note });
     const data = await blobToBase64(prep.blob);
-    const res = await send('/receipts', { mime: prep.mime, data, filename: file.name, source: 'upload', reportId: caseId });
+    const res = await send('/receipts', { mime: prep.mime, data, filename: file.name, source: 'upload', reportId: caseId, ...(prep.convertedFrom ? { convertedFrom: prep.convertedFrom } : {}) });
     if (!res) return;
     if (res.status === 201) stored(r.id, res.body);
     else refused(r.id, 'receipt', res);

@@ -60,6 +60,38 @@ describe('reports/cover-auto', () => {
     expect(cover(old.id)).toMatchObject({ periodFrom: '2026-08-30', periodTo: '2026-09-01', destination: 'India', kind: 'case', title: null });
   });
 
+  // The QA pass: a reopened India trip took a Singapore receipt from seven
+  // weeks later, its dates stretched to fit, and every October draft was then
+  // offered the trip as its home.
+  test('an open trip takes in a receipt beside its dates, not one weeks away; a month never widens', () => {
+    const d = draft();
+    put(d, '2026-09-01', { currency: 'INR', country: 'IN', city: 'Mumbai', docType: 'hotel' });
+    put(d, '2026-09-04', { currency: 'INR', country: 'IN', city: 'Pune', docType: 'hotel' });
+    auto.refresh(d.id);
+    reports.openDraft(d.id, {}, u.id);
+    expect(cover(d.id)).toMatchObject({ kind: 'trip', periodFrom: '2026-09-01', periodTo: '2026-09-04', nights: 3 });
+
+    put(d, '2026-10-21', { currency: 'SGD', country: 'SG', city: 'Singapore', docType: 'meal' });
+    auto.refresh(d.id);
+    expect(cover(d.id)).toMatchObject({ periodFrom: '2026-09-01', periodTo: '2026-09-04', nights: 3, destination: 'Mumbai, Pune, India' });
+    const late = reports.getReport(d.id).expenses.find(e => e.receiptDate === '2026-10-21');
+    const { flagsFor } = require('../receipts/flags');
+    expect(flagsFor(late, reports.getReport(d.id), { baseCurrency: 'SGD', today: '2026-10-22' }).map(f => f.code)).toContain('outside-case');
+
+    put(d, '2026-09-06', { currency: 'INR', country: 'IN', city: 'Mumbai', docType: 'ride' });     // the taxi two days after
+    auto.refresh(d.id);
+    expect(cover(d.id)).toMatchObject({ periodFrom: '2026-09-01', periodTo: '2026-09-06', nights: 5 });
+
+    const m = draft();
+    put(m, '2026-09-02'); put(m, '2026-09-20');
+    auto.refresh(m.id);
+    reports.openDraft(m.id, {}, u.id);
+    expect(cover(m.id)).toMatchObject({ kind: 'period', periodFrom: '2026-09-01', periodTo: '2026-09-30' });
+    put(m, '2026-10-01');                                                 // the next day, but the next month
+    auto.refresh(m.id);
+    expect(cover(m.id)).toMatchObject({ periodFrom: '2026-09-01', periodTo: '2026-09-30' });
+  });
+
   test('a claimed case is left as it was claimed', () => {
     const c = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'T' });
     put(c, '2026-09-01', { currency: 'INR' });
