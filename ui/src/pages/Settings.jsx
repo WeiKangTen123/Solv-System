@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { formatDate, formatDateTime, formatRelative, TIMEZONE_OPTIONS } from '../utils/formatDate';
 import { fmtMoney } from '../utils/format';
@@ -402,10 +402,16 @@ export default function Settings() {
                       {u.assistantQuestions30d || 0}
                     </td>
                     <td style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
-                      <span style={{ fontWeight: 600, color: (u.claimedCaseCount || 0) > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                        {u.claimedCaseCount || 0}
-                      </span>
-                      <span style={{ color: 'var(--text-muted)' }}> / {u.caseCount || 0}</span>
+                      {/* Their cases, in the Cases list as an admin sees
+                          everyone's, narrowed to this person. */}
+                      <Link to={`/reports?scope=all&owner=${encodeURIComponent(u.id)}`} className="set-user-cases"
+                            aria-label={`${u.name || u.email}'s cases: ${u.claimedCaseCount || 0} claimed of ${u.caseCount || 0}`}>
+                        <span style={{ fontWeight: 600, color: (u.claimedCaseCount || 0) > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                          {u.claimedCaseCount || 0}
+                        </span>
+                        <span style={{ color: 'var(--text-muted)' }}> / {u.caseCount || 0}</span>
+                        <span aria-hidden="true" style={{ color: 'var(--text-muted)' }}> →</span>
+                      </Link>
                     </td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono)' }}>
                       {fmtMoney((u.claimedCents || 0) / 100, company.baseCurrency)}

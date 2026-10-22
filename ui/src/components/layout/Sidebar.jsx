@@ -1,13 +1,15 @@
-import { NavLink } from 'react-router-dom';
+import { Link, NavLink } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useViewMode } from '../../context/ViewModeContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { hasUnsavedEdits } from '../../utils/useLeaveGuard';
 
+// The same four names as the bottom nav, in the same order, so a person who
+// moves between a phone and a computer finds the same place by the same word.
 const NAV = [
-  { to: '/',         label: 'Home',        desc: 'Your cases and where the money goes', end: true },
-  { to: '/reports',  label: 'Cases',       desc: 'Open, claim, export' },
-  { to: '/expenses', label: 'My receipts', desc: 'Every receipt you recorded' },
+  { to: '/',         label: 'Home',        desc: 'What needs you, and your open cases', end: true },
+  { to: '/reports',  label: 'Cases',       desc: 'Drafts, open and claimed' },
+  { to: '/expenses', label: 'My receipts', desc: 'Every receipt you added' },
   { to: '/settings', label: 'Settings',    desc: 'Profile, preferences & controls' },
 ];
 
@@ -59,6 +61,9 @@ export default function Sidebar() {
         {isMobile && <button onClick={() => setMobileDrawerOpen(false)} aria-label="Close menu" style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18 }}>✕</button>}
       </div>
       <nav style={{ flex: 1, padding: '0 8px', overflow: 'auto' }}>
+        {/* Starting a case is the app's first job, so it is a button that is
+            always in reach rather than an item to find among the others. */}
+        <Link to="/reports/new" className="btn btn-primary nav-new" onClick={close}>+ New case</Link>
         {NAV.map(i => <Item key={i.to} {...i} onClick={close} />)}
       </nav>
       <div style={{ margin: '8px 8px 12px', padding: '12px 14px', borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
