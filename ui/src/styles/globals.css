@@ -2195,6 +2195,76 @@ body {
 .mobile-mode .hm-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .mobile-mode .hm-fold > summary { min-height: 44px; }
 
+/* ── My receipts ── */
+.mr-tools { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.mr-search { flex: 1 1 260px; max-width: 360px; min-width: 0; }
+.mr-card { padding: 4px 8px 12px; }
+.mr-card .ui-pager { padding: 12px 8px 0; }
+.mr-table-wrap { overflow-x: auto; }
+.mr-table th.mr-pick, .mr-table td.mr-pick { width: 36px; padding-right: 0; }
+.mr-table td { padding-top: 10px; padding-bottom: 10px; }
+.mr-right { text-align: right !important; }
+.mr-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mr-num.is-wait { font-family: var(--font-sans); font-size: 12px; color: var(--warning); }
+.mr-row { cursor: pointer; }
+.mr-row.is-picked td { background: var(--accent-subtle); }
+.mr-day { white-space: nowrap; color: var(--text-secondary); }
+.mr-merchant { min-width: 160px; }
+.mr-name { font-weight: 600; color: var(--text-primary); text-decoration: none; border-radius: var(--radius-xs); }
+a.mr-name:hover { text-decoration: underline; }
+.mr-note { max-width: 340px; margin-top: 2px; font-size: 11.5px; line-height: 1.4; color: var(--text-muted); }
+.mr-case { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mr-case a { font-size: 12.5px; color: var(--text-secondary); text-decoration: none; border-radius: var(--radius-xs); }
+.mr-case a:hover { color: var(--text-primary); text-decoration: underline; }
+.mr-quiet { font-size: 12.5px; color: var(--text-muted); }
+.mr-status { white-space: nowrap; }
+.mr-status .ui-flag-pill { margin-left: 6px; }
+
+/* What can be done to the ticked rows, kept in sight at the bottom of the
+   screen while the list scrolls. */
+.mr-bulk {
+  position: sticky;
+  bottom: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-md);
+  animation: fadeIn 0.15s ease;
+}
+.mr-bulk-head { display: flex; align-items: center; gap: 6px; }
+.mr-bulk-count { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.mr-bulk-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* A phone: one row per receipt, its box beside the words. */
+.mr-pickall { padding: 2px 6px; border-bottom: 1px solid var(--border); }
+.mr-list { list-style: none; }
+.mr-item { display: flex; align-items: flex-start; gap: 2px; border-bottom: 1px solid var(--border); }
+.mr-item:last-child { border-bottom: none; }
+.mr-item.is-picked { background: var(--accent-subtle); }
+.mr-item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 10px 8px 10px 2px; color: inherit; text-decoration: none; }
+.mr-item-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.mr-item-top .mr-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mr-item-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-muted); }
+.mr-item-tags { display: flex; align-items: center; gap: 6px; }
+.mobile-mode .mr-card { padding: 4px 4px 10px !important; }
+.mobile-mode .mr-search { flex-basis: 100%; max-width: none; }
+/* A sticky bar stays inside the scroller's padding, and on a phone the page's
+   bottom padding is already the bottom nav's height. The rest lifts it over
+   the assistant's button, which sits just above the nav and would cover the
+   last action. */
+.mobile-mode .mr-bulk { bottom: 54px; padding: 8px 10px; }
+.mobile-mode .mr-bulk-head { width: 100%; justify-content: space-between; }
+.mobile-mode .mr-bulk-actions { width: 100%; }
+.mobile-mode .mr-bulk-actions > .btn, .mobile-mode .mr-bulk-actions > .ui-menu-wrap { flex: 1 1 auto; }
+.mobile-mode .mr-bulk-actions .ui-menu-wrap > .btn { width: 100%; }
+
 @media (prefers-reduced-motion: reduce) {
   .hm-dot,
   .cap-row.is-busy .cap-row-mark,
