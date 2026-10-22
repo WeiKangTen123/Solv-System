@@ -19,5 +19,6 @@ const { readOne, buildLines } = require('../receipts/read-receipt');
   const lines = buildLines(r, 'Other');
   console.log(JSON.stringify({ file, seconds: (Date.now() - t0) / 1000, merchant: r.merchant, date: r.date, time: r.time, invoiceNumber: r.invoiceNumber,
     currency: r.currency, total: r.total, tax: r.tax, subTotal: r.subTotal, category: r.category, confidence: r.confidence, description: r.description,
+    city: r.city, country: r.country, docType: r.docType,
     lineItems: r.lineItems, lines }, null, 2));
 })().catch(err => { console.error(err); process.exit(1); });
