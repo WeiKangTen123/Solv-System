@@ -169,9 +169,10 @@ export default function Home() {
         <div className="hm-start-actions">
           <Link to="/reports/new" className="btn btn-primary">+ New case</Link>
           {/* The code is shown on the New case page, beside the draft the
-              photos go into: a code made here had no case to send them to. */}
+              photos go into: a code made here had no case to send them to.
+              ?phone=1 opens it there straight away. */}
           {!isMobile && (
-            <Link to="/reports/new" className="btn btn-outline" title="Opens New case; press Phone QR there for the code to scan">
+            <Link to="/reports/new?phone=1" className="btn btn-outline" title="Opens New case with a code to scan with your phone">
               Use my phone
             </Link>
           )}

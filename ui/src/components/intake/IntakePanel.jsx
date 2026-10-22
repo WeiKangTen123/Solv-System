@@ -38,9 +38,10 @@ import { bucketOf, countRows, countsLine, fmtEta, mergeRows, pollEvery, waitingR
 //               reads `uploading` for it.
 //   pageDrop    take files dropped anywhere on the page (default true).
 //
-// A ref gets { add(files), stop(), uploading(), refresh(), choose() }: files
-// handed over from elsewhere, stopping every upload (a discarded draft), the
-// count still on its way right now, a fresh poll, and the file picker.
+// A ref gets { add(files), stop(), uploading(), refresh(), choose(), phone() }:
+// files handed over from elsewhere, stopping every upload (a discarded draft),
+// the count still on its way right now, a fresh poll, the file picker, and the
+// phone code (Home's "Use my phone" lands on New case with it open).
 const IntakePanel = forwardRef(function IntakePanel({ caseId, ensureCase, compact = false, onChange, pageDrop = true }, ref) {
   const { user } = useAuth();
   const base = (user && user.baseCurrency) || 'SGD';
@@ -83,9 +84,13 @@ const IntakePanel = forwardRef(function IntakePanel({ caseId, ensureCase, compac
     changeRef.current && changeRef.current({ intake: intake.data, at: intake.at, uploading, error: intake.error });
   }, [intake.data, intake.at, intake.error, uploading]);
 
+  // Through a ref, so the handle does not change on every render while
+  // still calling the phone() of the latest one.
+  const phoneRef = useRef(null);
   useImperativeHandle(ref, () => ({
     add: up.add, stop: up.stop, uploading: up.busy, refresh: intake.refresh,
     choose: () => (isMobile ? pickRef.current && pickRef.current.click() : zoneRef.current && zoneRef.current.open()),
+    phone: () => phoneRef.current && phoneRef.current(),
   }), [up.add, up.stop, up.busy, intake.refresh, isMobile]);
 
   const drop = useWindowDrop(files => up.add(files), { enabled: pageDrop && !pairing && !details, label: 'Drop to add them to this case' });
@@ -140,6 +145,7 @@ const IntakePanel = forwardRef(function IntakePanel({ caseId, ensureCase, compac
       setPairing(id);
     } catch (err) { setNotice(`The phone link could not be made: ${err.message}`); }
   }
+  phoneRef.current = phone;
 
   const shown = compact ? rows.filter(r => (r.local && r.local.kind === 'claim') || bucketOf(r, now) !== 'read') : rows;
   const settled = counts.read + counts.needYou;

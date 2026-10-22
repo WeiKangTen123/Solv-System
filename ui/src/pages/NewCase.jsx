@@ -145,6 +145,9 @@ function NewCaseForm({ draftId, onMade }) {
     took.current = true;
     const files = takePendingFiles();
     if (files.length && panelRef.current) panelRef.current.add(files);
+    // ?phone=1 is Home's "Use my phone": the code opens at once, on the draft
+    // its photos will land in. Read here, once, like the handed-over files.
+    if (new URLSearchParams(window.location.search).get('phone') === '1' && panelRef.current) panelRef.current.phone();
   }, [loading]);
 
   const onIntake = useCallback(({ intake: d, at, uploading: n }) => {
