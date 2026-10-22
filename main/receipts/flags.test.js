@@ -99,4 +99,112 @@ describe('receipts/flags', () => {
     const f = flagsFor(good({ merchant: null, duplicateOf: 'x', receiptDate: '2026-12-01' }), { periodFrom: '2026-09-01', periodTo: '2026-09-30' }, opts);
     expect(f.map(x => [x.level, x.code])).toEqual([['red', 'no-merchant'], ['yellow', 'outside-case'], ['yellow', 'possible-duplicate'], ['yellow', 'future-date']]);
   });
+
+  // This file's database has no tables: the policy cannot be read, and the
+  // receipt still shows with every other flag.
+  test('a policy that cannot be read leaves the other flags as they were', () => {
+    expect(codes(good({ companyId: 'c1', merchant: null }))).toEqual(['no-merchant']);
+  });
+});
+
+describe('receipts/flags, from the company policy', () => {
+  let flags, policy, users, companyId;
+  beforeEach(async () => {
+    jest.resetModules(); require('../db/migrate').run();
+    users = require('../store/users'); policy = require('../store/policy'); flags = require('./flags');
+    companyId = (await users.createUser({ email: 'a@solv.sg', password: 'password123' })).companyId;
+  });
+  const set = patch => policy.setPolicy(companyId, patch, null);
+  const mine = extra => good({ companyId, category: 'Meals', lines: [{ category: 'Meals', amount: 10.9, baseAmount: 10.9 }], ...extra });
+  const pcodes = (e, report = null, o = opts) => flags.flagsFor(e, report, o).map(f => f.code);
+  // A hotel folio: the room, and a dinner charged to it.
+  const folio = (room, dinner) => mine({ category: 'Lodging', total: room + dinner, tax: null, aiRead: null,
+    lines: [{ category: 'Lodging', amount: room, baseAmount: room }, { category: 'Meals', amount: dinner, baseAmount: dinner }] });
+
+  test('a policy with nothing set says nothing', () => {
+    expect(pcodes(mine({ receiptDate: '2020-09-05' }), { periodFrom: null, periodTo: null, expenses: [{ id: 'p', source: 'per_diem' }] }, { ...opts, today: '2026-10-21' })).toEqual([]);
+  });
+
+  test('over a category\'s limit: the receipt\'s amount in the base currency', () => {
+    set({ categoryLimits: { Meals: 10 } });
+    expect(flags.flagsFor(mine(), null, opts)).toEqual([{ code: 'over-limit', level: 'yellow', text: 'SGD 10.90 is over the Meals limit of SGD 10.00 a receipt.', field: 'total' }]);
+    set({ categoryLimits: { Meals: 10.9 } });
+    expect(pcodes(mine())).toEqual([]);                                             // at the limit is within it
+    // a foreign receipt is held to what it comes to in SGD, not its own figure
+    const inr = mine({ currency: 'INR', total: 1000, tax: null, aiRead: null, lines: [{ category: 'Meals', amount: 1000, baseAmount: 16.41 }] });
+    set({ categoryLimits: { Meals: 20 } });
+    expect(pcodes(inr)).toEqual([]);
+    set({ categoryLimits: { Meals: 16 } });
+    expect(pcodes(inr)).toEqual(['over-limit']);
+    // a line with no category is the receipt's; one not priced yet has its own red flag
+    expect(pcodes(mine({ lines: [{ amount: 10.9, baseAmount: 10.9 }] }))).toEqual([]);
+    expect(pcodes(mine({ category: 'Meals', total: 30, tax: null, aiRead: null, lines: [{ amount: 30, baseAmount: 30 }] }))).toEqual(['over-limit']);
+    expect(pcodes(mine({ currency: 'INR', total: 5000, tax: null, aiRead: null, fxPending: true, lines: [{ category: 'Meals', amount: 5000, baseAmount: null }] }))).toEqual(['no-rate']);
+    // a category with no limit is not limited
+    expect(pcodes(mine({ category: 'Phone', total: 900, tax: null, aiRead: null, lines: [{ category: 'Phone', amount: 900, baseAmount: 900 }] }))).toEqual([]);
+  });
+
+  test('a receipt in several categories: each part to its own limit, said together', () => {
+    set({ categoryLimits: { Meals: 50, Lodging: 500 } });
+    expect(flags.flagsFor(folio(480, 100), null, opts)).toEqual([{ code: 'over-limit', level: 'yellow', text: 'Over the limit a receipt: Meals SGD 100.00 (limit 50.00).', field: 'lines' }]);
+    expect(flags.flagsFor(folio(520, 60), null, opts)[0].text).toBe('Over the limit a receipt: Lodging SGD 520.00 (limit 500.00); Meals SGD 60.00 (limit 50.00).');
+    expect(pcodes(folio(500, 50))).toEqual([]);
+  });
+
+  test('too old: further back than the maximum age on the day it is shown', () => {
+    set({ maxAgeDays: 30 });
+    // 21 October less 30 days is 21 September
+    expect(pcodes(mine({ receiptDate: '2026-09-21' }))).toEqual([]);
+    expect(flags.flagsFor(mine({ receiptDate: '2026-09-20' }), null, opts)).toEqual([{ code: 'too-old', level: 'yellow', text: 'It is more than 30 days old; the company\'s policy is 30 days.', field: 'receiptDate' }]);
+    expect(pcodes(mine({ receiptDate: '2026-09-20' }), null, { baseCurrency: 'SGD' })).toEqual([]);   // no day given, nothing to compare
+    set({ maxAgeDays: 1 });
+    expect(flags.flagsFor(mine({ receiptDate: '2026-10-19' }), null, opts)[0].text).toBe('It is more than 1 day old; the company\'s policy is 1 day.');
+  });
+
+  test('a weekend, when the company asks', () => {
+    expect(pcodes(mine({ receiptDate: '2026-09-05' }))).toEqual([]);
+    set({ flagWeekends: true });
+    expect(flags.flagsFor(mine({ receiptDate: '2026-09-05' }), null, opts)).toEqual([{ code: 'weekend', level: 'yellow', text: 'It is dated on a Saturday.', field: 'receiptDate' }]);
+    expect(flags.flagsFor(mine({ receiptDate: '2026-09-06' }), null, opts)[0].text).toBe('It is dated on a Sunday.');
+    expect(pcodes(mine({ receiptDate: '2026-09-04' }))).toEqual([]);                // a Friday
+  });
+
+  test('a meal on a day the case\'s per diem pays for', () => {
+    const trip = { periodFrom: '2026-09-01', periodTo: '2026-09-04', expenses: [{ id: 'pd', source: 'per_diem' }] };
+    expect(flags.flagsFor(mine({ receiptDate: '2026-09-02' }), trip, opts)).toEqual([{ code: 'per-diem-meal', level: 'yellow', text: 'The case\'s per diem already pays for meals on this day.', field: 'category' }]);
+    expect(pcodes(mine({ receiptDate: '2026-09-01' }), trip)).toEqual(['per-diem-meal']);
+    expect(pcodes(mine({ receiptDate: '2026-09-05' }), trip)).toEqual(['outside-case']);
+    expect(pcodes(folio(100, 30), trip)).toEqual(['per-diem-meal']);                 // a dinner on the hotel bill is a meal too
+    expect(pcodes(mine({ category: 'Air & Transport', lines: [{ category: 'Air & Transport', amount: 10.9, baseAmount: 10.9 }] }), trip)).toEqual([]);
+    expect(pcodes(mine(), { ...trip, expenses: [] })).toEqual([]);                   // no per diem, nothing to overlap
+    expect(pcodes(mine({ id: 'pd', source: 'per_diem' }), trip)).toEqual([]);        // never on the per diem itself
+    expect(pcodes(mine(), { ...trip, periodTo: null })).toEqual([]);
+  });
+
+  test('a list that has only the case\'s dates asks the database whether it holds a per diem', () => {
+    const store = require('../store/expenses');
+    const reports = require('../store/reports');
+    const owner = require('../db').prepare('SELECT id FROM users LIMIT 1').get().id;
+    const r = reports.createReport({ companyId, userId: owner, kind: 'trip', periodFrom: '2026-09-01', periodTo: '2026-09-04' });
+    const meal = store.createExpense({ companyId, userId: owner, reportId: r.id, status: 'reviewed', merchant: 'Toast Box', category: 'Meals', currency: 'SGD', total: 10.9, receiptDate: '2026-09-02',
+      lines: [{ category: 'Meals', amount: 10.9, baseAmount: 10.9 }] });
+    const dates = { periodFrom: '2026-09-01', periodTo: '2026-09-04' };
+    expect(pcodes(meal, dates)).toEqual([]);
+    store.createExpense({ companyId, userId: owner, reportId: r.id, source: 'per_diem', status: 'reviewed', merchant: 'Per diem', category: 'Meals', currency: 'SGD', total: 200, receiptDate: '2026-09-01',
+      lines: [{ category: 'Meals', amount: 200, baseAmount: 200 }] });
+    expect(pcodes(meal, dates)).toEqual(['per-diem-meal']);
+  });
+
+  test('a per diem and a mileage claim carry none of the reader\'s flags; a per diem no limit or weekend either', () => {
+    set({ categoryLimits: { Meals: 10, 'Fuel/Mileage': 10 }, flagWeekends: true, maxAgeDays: 30 });
+    const note = require('./read-receipt').currencyNote('INR');
+    const pd = mine({ source: 'per_diem', receiptId: null, merchant: 'Per diem', currency: 'INR', total: 14000, tax: 9, receiptDate: '2026-09-05', errorMsg: note, aiRead: { total: 1 },
+      lines: [{ category: 'Meals', amount: 14000, baseAmount: 229.74 }] });
+    expect(pcodes(pd)).toEqual(['too-old']);
+    const km = mine({ source: 'mileage', receiptId: null, merchant: 'Mileage', category: 'Fuel/Mileage', currency: 'SGD', total: 107, tax: 7, receiptDate: '2026-09-05', errorMsg: null, aiRead: { total: 1 },
+      lines: [{ category: 'Fuel/Mileage', amount: 107, baseAmount: 107 }] });
+    expect(pcodes(km)).toEqual(['over-limit', 'too-old', 'weekend']);
+    // the same as a receipt says all of it
+    expect(pcodes({ ...km, source: 'upload' })).toEqual(['gst-mismatch', 'edited-amount', 'over-limit', 'too-old', 'weekend']);
+  });
 });
