@@ -105,10 +105,16 @@ const assistantRoutes = require('./routes/assistant');
 app.use('/api/auth',      authRoutes);
 app.use('/api/users',     userRoutes);
 app.use('/api/company',   companyRoutes);
+// The policy an admin sets, and per-diem rates (routes/policy.js); its paths
+// do not overlap the company routes'.
+app.use('/api/company',   require('./routes/policy'));
 app.use('/api/receipts',  receiptRoutes);
 app.use('/api/expenses',  expenseRoutes);
 app.use('/api/claims',    claimRoutes);
 app.use('/api/fx',        fxRoutes);
+// Per diem and mileage on a case (routes/allowances.js), ahead of the case
+// routes so their two paths are answered there.
+app.use('/api/reports',   require('./routes/allowances'));
 app.use('/api/reports',   reportRoutes);
 app.use('/api/xero',      xeroRoutes);
 app.use('/api/dashboard', dashRoutes);
