@@ -2310,6 +2310,11 @@ a.mr-name:hover { text-decoration: underline; }
 .cap-retry { flex-shrink: 0; min-height: 44px; }
 .cap-foot { margin: 10px auto 0; text-align: center; }
 
+/* ── Navigation and Settings ── */
+.nav-new { display: flex; width: 100%; margin: 0 0 10px; }
+.set-user-cases { padding: 2px 6px; border-radius: var(--radius-xs); color: inherit; text-decoration: none; white-space: nowrap; }
+.set-user-cases:hover { background: var(--bg-hover); text-decoration: underline; }
+
 @media (prefers-reduced-motion: reduce) {
   .hm-dot,
   .cap-row.is-busy .cap-row-mark,

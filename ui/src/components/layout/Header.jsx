@@ -3,12 +3,18 @@ import { useViewMode } from '../../context/ViewModeContext';
 import { useLocation, Link } from 'react-router-dom';
 import { usePageCrumbsFor } from '../../utils/crumbs';
 
+// The trail worked out from the address alone, for a page that has not set a
+// better one (utils/crumbs.js): the New case page and the review set their
+// own, naming the case, and this is what shows until they have it.
 function getBreadcrumbs(pathname) {
   if (pathname === '/')          return [{ label: 'Home' }];
   if (pathname === '/expenses')  return [{ label: 'My receipts' }];
-  if (pathname.startsWith('/expenses/')) return [{ label: 'My receipts', to: '/expenses' }, { label: 'Check' }];
+  if (pathname.startsWith('/expenses/')) return [{ label: 'My receipts', to: '/expenses' }, { label: 'Receipt' }];
   if (pathname === '/reports')   return [{ label: 'Cases' }];
-  if (/^\/reports\/[^/]+\/check$/.test(pathname)) return [{ label: 'Cases', to: '/reports' }, { label: 'Case', to: pathname.replace(/\/check$/, '') }, { label: 'Check all' }];
+  if (pathname === '/reports/new') return [{ label: 'Cases', to: '/reports' }, { label: 'New case' }];
+  // /check is the old address of the review, which it now redirects to.
+  const review = /^\/reports\/([^/]+)\/(review|check)$/.exec(pathname);
+  if (review) return [{ label: 'Cases', to: '/reports' }, { label: 'Case', to: `/reports/${review[1]}` }, { label: 'Review' }];
   if (pathname.startsWith('/reports/')) return [{ label: 'Cases', to: '/reports' }, { label: 'Case' }];
   if (pathname === '/settings')  return [{ label: 'Settings' }];
   return [];

@@ -3,11 +3,15 @@ import { NavLink } from 'react-router-dom';
 // The same four tabs for everyone, Settings included: every person has a
 // profile, a password and their preferences there (the route is open to all),
 // and an admin finds the company's controls behind the same tab.
+//
+// Named as the sidebar names them. "My receipts" fits a quarter of a 320px
+// screen at this size, so it is not shortened to a word the sidebar does not
+// use.
 const ALL = [
-  { to: '/',         label: 'Home',      icon: '▦', end: true },
-  { to: '/reports',  label: 'Cases',     icon: '▤' },
-  { to: '/expenses', label: 'Receipts',  icon: '◧' },
-  { to: '/settings', label: 'Settings',  icon: '◈' },
+  { to: '/',         label: 'Home',        icon: '▦', end: true },
+  { to: '/reports',  label: 'Cases',       icon: '▤' },
+  { to: '/expenses', label: 'My receipts', icon: '◧' },
+  { to: '/settings', label: 'Settings',    icon: '◈' },
 ];
 
 export default function BottomNav() {
@@ -26,7 +30,7 @@ export default function BottomNav() {
           {({ isActive }) => (
             <>
               <span style={{ fontSize: 19, lineHeight: 1, marginBottom: 3, transform: isActive ? 'scale(1.1)' : 'scale(1)', transition: 'transform 0.15s ease' }}>{item.icon}</span>
-              <span style={{ fontSize: 10, fontWeight: isActive ? 700 : 500, letterSpacing: '-0.01em' }}>{item.label}</span>
+              <span style={{ fontSize: 10, fontWeight: isActive ? 700 : 500, letterSpacing: '-0.01em', whiteSpace: 'nowrap' }}>{item.label}</span>
               {isActive && <span style={{ position: 'absolute', top: 0, width: 24, height: 3, borderRadius: '0 0 3px 3px', background: 'var(--accent)' }} />}
             </>
           )}
