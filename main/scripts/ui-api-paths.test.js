@@ -132,9 +132,13 @@ function serverRoutes() {
   const files  = {};
   for (const m of index.matchAll(/const\s+(\w+)\s*=\s*require\('\.\/routes\/([\w-]+)'\)/g)) files[m[1]] = m[2];
   const routes = [];
-  for (const m of index.matchAll(/app\.use\('(\/api\/[\w-]+)',\s*(\w+)\)/g)) {
-    const [, mount, variable] = m;
-    const file = files[variable];
+  // Mounted through a variable (app.use('/api/users', userRoutes)) or straight
+  // from its require (app.use('/api/company', require('./routes/policy'))):
+  // the routes added in phase 6 are mounted the second way, and the scan
+  // used to skip them, so every call to them read as a path that did not exist.
+  for (const m of index.matchAll(/app\.use\('(\/api\/[\w-]+)',\s*(?:(\w+)|require\('\.\/routes\/([\w-]+)'\))\)/g)) {
+    const [, mount, variable, inline] = m;
+    const file = inline || files[variable];
     if (!file) continue;
     const src = fs.readFileSync(path.join(MAIN, 'routes', `${file}.js`), 'utf8');
     for (const r of src.matchAll(/router\.(get|post|patch|put|delete|all)\(\s*'([^']*)'/g)) {

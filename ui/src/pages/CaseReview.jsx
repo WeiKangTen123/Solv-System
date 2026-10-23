@@ -15,9 +15,10 @@ import StatusBadge from '../components/StatusBadge';
 import Modal from '../components/Modal';
 import { PageHeader, FlagList, EmptyState, Skeleton, Menu } from '../components/ui';
 import {
-  ReceiptViewer, ReceiptFields, ExchangeRatePanel, LinesEditor, HistoryDisclosure, ReviewQueue,
+  ReceiptViewer, AllowanceCard, ReceiptFields, ExchangeRatePanel, LinesEditor, HistoryDisclosure, ReviewQueue,
   arrange, receiptName, readWords, useReceiptForm, REVIEW_FIELDS, flagsOn, flagsOff, hasRed, refusedFields,
 } from '../components/receipt';
+import { allowanceOf, nameCaseFlags } from '../utils/allowances';
 
 // Checking a case, one receipt at a time, without leaving the page: the
 // receipts on the left in the order they need the person, the receipt itself
@@ -142,9 +143,10 @@ export default function CaseReview() {
     seq.current.shown = n;
     // A draft is still being put together on the New case page.
     if (d.report.status === 'draft') { navigate(`/reports/new?draft=${encodeURIComponent(asked)}`, { replace: true }); return null; }
-    viewRef.current = d;
-    setView(d);
-    return d;
+    const v = nameCaseFlags(d);
+    viewRef.current = v;
+    setView(v);
+    return v;
   }, [id, navigate]);
 
   // How far each file's read has got (GET /reports/:id/intake), for the rows
@@ -264,7 +266,10 @@ export default function CaseReview() {
   // until the case is in Xero (the server's canEditDetails).
   const canAct = !!view.isOwner && !!view.editable;
   const canEditDetails = !!view.canEditDetails;
-  const locked = !canEditDetails || !sel || sel.status === 'duplicate' || sel.status === 'reading' || LOCKING.has(busy);
+  // A per diem or mileage is the company's rate times the trip's days or the
+  // km driven, worked out by the server; its boxes are shown, not typed in.
+  const allowance = sel ? allowanceOf(sel) : null;
+  const locked = !canEditDetails || !sel || sel.status === 'duplicate' || sel.status === 'reading' || !!allowance || LOCKING.has(busy);
   const unflagged = arranged.check.filter(e => e.status === 'review-needed' && !hasRed(e));
   const allDone = n > 0 && !arranged.check.length && !arranged.reading.length;
   const read = sel && sel.receiptId ? reads.get(sel.receiptId) : null;
@@ -539,6 +544,12 @@ export default function CaseReview() {
           </div>
         )}
         {sel.status === 'duplicate' && canAct && <div className="rv-hint">A duplicate cannot be checked. Delete it from More, or ask an admin if it is not a duplicate.</div>}
+        {allowance && (
+          <div className="rv-hint">
+            {allowance === 'per_diem' ? 'A per diem' : 'Mileage'} is worked out from your company&rsquo;s rate and went in already checked, so there is nothing to type here.
+            {canAct ? ` To change it, add it again on the case page${allowance === 'per_diem' ? ', which replaces this one' : ' and delete this one from More'}.` : ''}
+          </div>
+        )}
         <FlagList flags={flagsOff(sel.flags, [...shown, 'lines'])} />
         <ReceiptFields fields={shown} form={rf.form} onChange={rf.set} expense={sel} disabled={locked}
                        categories={categories} currencies={currencies} invalid={invalid} idPrefix="rv"
@@ -643,14 +654,19 @@ export default function CaseReview() {
         <div className="rv-mobile">
           <ReviewQueue {...queueProps} variant="select" />
           {sel && (
-            <div className="rv-mobile-receipt">
-              <ReceiptViewer key={sel.id} variant="thumb" receipt={sel.receipt} page={sel.page} box={sel.box} />
-              <div className="rv-mobile-meta">
-                <div>{fmtDay(sel.receiptDate)}{Number(sel.total) > 0 ? ` · ${fmtMoney(sel.total, sel.currency)}` : ''}</div>
-                {viewerCaption && <div className="rv-hint">{viewerCaption}</div>}
-                {rereadButton}
+            allowance ? (
+              // The card says the date and the amount itself.
+              <AllowanceCard compact expense={sel} base={base} caseDates={{ from: r.periodFrom, to: r.periodTo }} />
+            ) : (
+              <div className="rv-mobile-receipt">
+                <ReceiptViewer key={sel.id} variant="thumb" receipt={sel.receipt} page={sel.page} box={sel.box} />
+                <div className="rv-mobile-meta">
+                  <div>{fmtDay(sel.receiptDate)}{Number(sel.total) > 0 ? ` · ${fmtMoney(sel.total, sel.currency)}` : ''}</div>
+                  {viewerCaption && <div className="rv-hint">{viewerCaption}</div>}
+                  {rereadButton}
+                </div>
               </div>
-            </div>
+            )
           )}
           <div className="card rv-pane rv-pane-fields">{fieldsPanel}</div>
         </div>
@@ -661,8 +677,10 @@ export default function CaseReview() {
           <div className="rv-grid">
             <div className="card rv-pane rv-pane-queue"><ReviewQueue {...queueProps} /></div>
             <div className="card rv-pane rv-pane-viewer">
-              {sel ? <ReceiptViewer key={sel.id} receipt={sel.receipt} page={sel.page} box={sel.box} tools={rereadButton} caption={viewerCaption} />
-                : <EmptyState compact title="No receipt picked" />}
+              {!sel ? <EmptyState compact title="No receipt picked" />
+                // No file to load: what it is and how it was worked out instead.
+                : allowance ? <AllowanceCard expense={sel} base={base} caseDates={{ from: r.periodFrom, to: r.periodTo }} />
+                : <ReceiptViewer key={sel.id} receipt={sel.receipt} page={sel.page} box={sel.box} tools={rereadButton} caption={viewerCaption} />}
             </div>
             <div className="card rv-pane rv-pane-fields">{fieldsPanel}</div>
           </div>

@@ -15,6 +15,7 @@ import CaseDetails from '../components/cases/CaseDetails';
 import CaseActivity from '../components/cases/CaseActivity';
 import PostDialog from '../components/cases/PostDialog';
 import MergeDialog from '../components/cases/MergeDialog';
+import { AllowanceBar, PerDiemDialog, MileageDialog } from '../components/cases/Allowances';
 import Poll from '../components/cases/Poll';
 import { caseFacts, caseSteps, casePrimary } from '../components/cases/case-logic';
 import { usePageCrumbs } from '../utils/crumbs';
@@ -23,6 +24,7 @@ import { useOnChanged } from '../utils/useOnChanged';
 import { fmtDateRange } from '../utils/format';
 import { formatDateTime } from '../utils/formatDate';
 import { unpricedText } from '../utils/caseTotals';
+import { nameCaseFlags } from '../utils/allowances';
 
 // One case: where it is on its way (Receipts → Check → Claim → Xero) and the
 // one button for its next step, its receipts (with more dropped straight in),
@@ -53,7 +55,7 @@ function CasePage({ id }) {
   const [loadError, setLoadError] = useState(null);   // { status, message } while nothing is shown
   const [msg, setMsg] = useState(null);               // { tone, text }
   const [busy, setBusy] = useState('');
-  const [dialog, setDialog] = useState(null);         // 'post' | 'merge'
+  const [dialog, setDialog] = useState(null);         // 'post' | 'merge' | 'perDiem' | 'mileage'
   const [editing, setEditing] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [suggestion, setSuggestion] = useState(null);
@@ -79,10 +81,20 @@ function CasePage({ id }) {
     // The owner's draft is the New case page's. Someone else's (an admin
     // looking) stays here: the New case page would only send them back.
     if (d.report.status === 'draft' && d.isOwner) { navigate(`/reports/new?draft=${encodeURIComponent(id)}`, { replace: true }); return; }
-    setView(d);
+    setView(nameCaseFlags(d));
     setLoadError(null);
     coverRef.current.fromServer(d.report, d.report.coverAi, at);
   }, [id, navigate]);
+  // A case view handed back by an action (per diem, mileage) is shown as it
+  // is, numbered like a load so a poll already on its way cannot put the
+  // case back as it was before.
+  const adopt = useCallback(d => {
+    const at = Date.now();
+    seq.current.shown = ++seq.current.asked;
+    setView(nameCaseFlags(d));
+    setLoadError(null);
+    coverRef.current.fromServer(d.report, d.report.coverAi, at);
+  }, []);
   // A poll that fails keeps what is on screen, except a case that is gone.
   const refresh = useCallback(() => load().catch(err => { if (err.status === 404) setLoadError({ status: 404, message: err.message }); }), [load]);
   useEffect(() => { load().catch(err => setLoadError({ status: err.status, message: err.message })); }, [load]);
@@ -350,6 +362,13 @@ function CasePage({ id }) {
               on their way, which a switch of tab must not drop. */}
           <div {...tabPanelProps('case', 'receipts')} hidden={tab !== 'receipts'} className="cs-panel">
             {canEdit && <IntakePanel ref={panelRef} caseId={id} compact onChange={onIntake} />}
+            {/* Beside the drop line rather than in the ⋯ menu: a per diem or a
+                drive is added to the case the way a receipt is, and belongs
+                where receipts are added. */}
+            {canEdit && (
+              <AllowanceBar report={r} onPerDiem={() => { setMsg(null); setDialog('perDiem'); }}
+                            onMileage={() => { setMsg(null); setDialog('mileage'); }} onDetails={() => setTab('details')} />
+            )}
             <CaseReceipts report={r} caseId={id} canEdit={canEdit} base={base} isMobile={isMobile} onChanged={refresh} />
           </div>
           <div {...tabPanelProps('case', 'details')} hidden={tab !== 'details'} className="cs-panel">
@@ -365,6 +384,14 @@ function CasePage({ id }) {
 
       {dialog === 'post' && (
         <PostDialog report={r} base={base} tenantName={xero?.tenantName} onPosted={load} onClose={() => setDialog(null)} />
+      )}
+      {dialog === 'perDiem' && canEdit && (
+        <PerDiemDialog report={r} base={base} onClose={() => setDialog(null)}
+                       onAdded={(d, text) => { adopt(d); setDialog(null); setMsg({ tone: 'success', text }); }} />
+      )}
+      {dialog === 'mileage' && canEdit && (
+        <MileageDialog report={r} base={base} onClose={() => setDialog(null)}
+                       onAdded={(d, text) => { adopt(d); setDialog(null); setMsg({ tone: 'success', text }); }} />
       )}
       {dialog === 'merge' && (
         <MergeDialog report={r} onClose={() => setDialog(null)}

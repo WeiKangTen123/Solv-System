@@ -28,7 +28,8 @@ function describe({ local, file }, now, nameOf) {
     if (s === 'preparing') return { tone: 'busy', mark: MARK.send, words: 'Preparing…', actions: ['cancel'] };
     if (s === 'uploading') {
       const pct = Math.round((local.progress || 0) * 100);
-      const words = pct < 100 ? `Uploading ${pct}%` : local.kind === 'zip' ? 'Unpacking the zip…' : local.kind === 'claim' ? 'Starting the import…' : 'Saving…';
+      const words = pct < 100 ? `Uploading ${pct}%`
+        : local.kind === 'zip' ? 'Unpacking the zip…' : local.kind === 'mail' ? 'Opening the email…' : local.kind === 'claim' ? 'Starting the import…' : 'Saving…';
       return { tone: 'busy', mark: MARK.send, words, actions: ['cancel'], progress: local.progress || 0 };
     }
     if (s === 'stored') return { tone: 'busy', mark: MARK.busy, words: 'Waiting to be read' };
@@ -37,7 +38,9 @@ function describe({ local, file }, now, nameOf) {
       return { tone: 'warn', mark: MARK.dup, words: same ? `Same file as ${same}, already in this case` : local.message, actions: ['dismiss'] };
     }
     if (s === 'failed') return { tone: 'bad', mark: MARK.bad, words: local.message, actions: local.retryable ? ['retry', 'dismiss'] : ['dismiss'] };
-    return { tone: 'bad', mark: MARK.no, words: local.message, actions: ['dismiss'] };
+    // What an email held besides its receipts: said, and nothing to do.
+    if (s === 'skipped') return { tone: 'idle', mark: MARK.idle, words: local.message, actions: ['dismiss'], left: local.skipped };
+    return { tone: 'bad', mark: MARK.no, words: local.message, actions: ['dismiss'], left: local.skipped };
   }
 
   const read = file.read;
@@ -97,6 +100,8 @@ export default function FileRow({ row, now, base, nameOf, act, working = false }
   const ex = (row.file && row.file.expenses) || [];
   const flag = v.one && (v.one.flags || [])[0];
   const listId = `in-list-${row.key.replace(/[^a-z0-9-]/gi, '')}`;
+  // An email's left-out parts, when there were several to list.
+  const left = Array.isArray(v.left) && v.left.length > 0;
 
   return (
     <li className={`in-row is-${v.tone}`}>
@@ -123,15 +128,24 @@ export default function FileRow({ row, now, base, nameOf, act, working = false }
             ))}
           </ul>
         )}
+        {left && open && (
+          <ul id={listId} className="in-sublist">
+            {v.left.map((x, i) => (
+              <li key={`${x.name}-${i}`} className="in-subrow">
+                <span className="in-subrow-words"><span className="in-subrow-name">{x.name}</span>: {x.why}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
       <div className="in-row-side">
         {v.one && readable(v.one) && <Figures e={v.one} base={base} />}
         {v.one && <FlagList flags={v.one.flags} compact />}
-        {v.many && (
+        {(v.many || left) && (
           <button type="button" className="btn btn-ghost btn-sm in-row-toggle" aria-expanded={open} aria-controls={open ? listId : undefined}
                   onClick={() => setOpen(o => !o)}>
             {open ? 'Hide' : 'Show'} <span aria-hidden="true">{open ? '▴' : '▾'}</span>
-            <span className="sr-only"> the receipts in {name}</span>
+            <span className="sr-only"> {left ? `what was left out of ${name}` : `the receipts in ${name}`}</span>
           </button>
         )}
         {(v.actions || []).map(a => (

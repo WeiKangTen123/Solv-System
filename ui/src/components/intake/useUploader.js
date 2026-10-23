@@ -18,11 +18,14 @@ import { planDrop } from './intake-logic';
 //                server refused for a reason a retry will not fix
 //   claim        handed to the claim import as one job (`jobId`, `job`)
 //
-// A row is { id, kind: 'receipt' | 'zip' | 'claim', name, size, state,
-// progress, message, note, receiptId, expenseIds, storedAt, dupOf, retryable,
-// jobId, job }. The files themselves are held aside (not in React state) and
-// let go once a file is stored or refused for good; a failed one keeps its
-// file so Retry can send it again.
+//   skipped      what an email held besides its receipts, left out by the
+//                server (`skipped`: [{ name, why }]); nothing to do about it
+//
+// A row is { id, kind: 'receipt' | 'zip' | 'mail' | 'claim', name, size,
+// state, progress, message, note, receiptId, expenseIds, storedAt, dupOf,
+// retryable, jobId, job, skipped }. The files themselves are held aside (not
+// in React state) and let go once a file is stored or refused for good; a
+// failed one keeps its file so Retry can send it again.
 //
 // `ensureCase()` is awaited before anything is sent and answers the case id:
 // on the New case page that is the moment the draft is made. `onStored` is
@@ -51,6 +54,7 @@ function makeUploader(publishRows, cbs) {
     const fresh = [];
     for (const f of plan.receipts) { const r = row({ name: f.name, size: f.size, state: 'queued' }); s.payload.set(r.id, f); fresh.push(r); }
     for (const f of plan.zips) { const r = row({ kind: 'zip', name: f.name, size: f.size, state: 'queued' }); s.payload.set(r.id, f); fresh.push(r); }
+    for (const f of plan.mails) { const r = row({ kind: 'mail', name: f.name, size: f.size, state: 'queued' }); s.payload.set(r.id, f); fresh.push(r); }
     if (plan.claim) {
       const { archives, forms } = plan.claim;
       const others = archives.length ? ` and ${archives.length} zip${archives.length === 1 ? '' : 's'}` : '';
@@ -111,6 +115,7 @@ function makeUploader(publishRows, cbs) {
     try {
       if (r.kind === 'receipt') await sendReceipt(r, caseId, send);
       else if (r.kind === 'zip') await sendZip(r, caseId, send);
+      else if (r.kind === 'mail') await sendMail(r, caseId, send);
       else await sendClaim(r, caseId, send);
     } catch (err) {
       // Ours, not the server's: the file could not be read from the disk.
@@ -187,6 +192,49 @@ function makeUploader(publishRows, cbs) {
     s.rows = s.rows.flatMap(x => (x.id === r.id ? rows : [x]));
     publish();
     if (res.body.stored && res.body.stored.length) cbs.current.onStored?.();
+  }
+
+  // An email is opened by the server: each receipt attached to it is stored
+  // as if dropped by itself, and a mail with none is kept as a PDF of the
+  // message (an e-receipt). Its row gives way to one row per receipt stored,
+  // like a zip's; an attachment already in the case is a duplicate row, and
+  // what was left out (a logo, a signature) is one quiet row that lists each
+  // with why. A file that is not an email comes back a 400 with the
+  // server's reason, said on the row.
+  async function sendMail(r, caseId, send) {
+    const file = s.payload.get(r.id);
+    const data = await blobToBase64(file);
+    const res = await send('/receipts/email', { data, filename: file.name, reportId: caseId });
+    if (!res) return;
+    if (res.status !== 200 && res.status !== 201) { refused(r.id, 'mail', res); return; }
+    const at = Date.now();
+    const stored = res.body.stored || [];
+    const skipped = res.body.skipped || [];
+    const dupes = skipped.filter(x => /already uploaded/i.test(x.why || ''));
+    const left = skipped.filter(x => !dupes.includes(x));
+    const rows = [
+      ...stored.map(x => row({ name: x.receipt.originalName || file.name, size: x.receipt.sizeBytes, state: 'stored', receiptId: x.receipt.id, expenseIds: x.expense ? [x.expense.id] : [], storedAt: at, progress: 1, message: x.note || '' })),
+      ...dupes.map(x => row({ name: `${file.name} › ${base(x.name)}`, state: 'duplicate', message: sentence(x.why) })),
+    ];
+    if (left.length) {
+      // Nothing kept at all is the person's to know about; a logo left out
+      // beside the receipt that was kept is not.
+      const none = !stored.length && !dupes.length;
+      const one = left.length === 1 ? left[0] : null;
+      const message = none
+        ? (one ? `Nothing in this email could be kept as a receipt: ${one.why}.` : 'Nothing in this email could be kept as a receipt.')
+        : (one ? `Left out ${base(one.name)}: ${one.why}.` : `${left.length} parts of it were left out.`);
+      rows.push(row({
+        kind: 'mail', name: file.name, size: file.size, state: none ? 'unsupported' : 'skipped', message,
+        // Listed one by one only when there are several: one is said in full.
+        skipped: one ? null : left.map(x => ({ name: base(x.name), why: x.why })),
+      }));
+    }
+    if (!rows.length) rows.push(row({ kind: 'mail', name: file.name, size: file.size, state: 'unsupported', message: 'Nothing in this email could be kept as a receipt.' }));
+    s.payload.delete(r.id);
+    s.rows = s.rows.flatMap(x => (x.id === r.id ? rows : [x]));
+    publish();
+    if (stored.length) cbs.current.onStored?.();
   }
 
   // A claim form and its zips go to the claim import as one job; its row

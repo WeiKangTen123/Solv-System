@@ -9,6 +9,9 @@ import { useConfirm } from '../context/ConfirmContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
 import ExchangeRates from '../components/settings/ExchangeRates';
+import PolicySettings from '../components/settings/PolicySettings';
+import PerDiemRates from '../components/settings/PerDiemRates';
+import InboundAddress from '../components/settings/InboundAddress';
 import Tabs, { tabPanelProps } from '../components/ui/Tabs';
 import { forgetCompany } from '../utils/useCompany';
 
@@ -460,6 +463,7 @@ export default function Settings() {
 
       {/* Admin Tab 2: Company & Policy */}
       {isAdmin && adminTab === 'company' && (
+        <div className="pol-stack">
         <form className="card" onSubmit={saveCompany}>
           <div className="card-title">Company & Policy Settings</div>
           <div className="card-subtitle">The base currency every case totals in, and how foreign amounts are converted.</div>
@@ -508,6 +512,11 @@ export default function Settings() {
           </div>
           <button className="btn btn-primary" type="submit" style={{ marginTop: 4 }}>Save company settings</button>
         </form>
+        {/* Each saves on its own and says so beside its own button: one
+            message at the top of the tab was out of sight from either. */}
+        <PolicySettings tz={user?.timezone} />
+        <PerDiemRates currencies={currencies} />
+        </div>
       )}
 
       {/* Admin Tab 3: Xero Integration */}
@@ -671,6 +680,10 @@ function PersonalSettings({ user, company, theme, toggleTheme, onOpenPassword, n
           </div>
         </form>
       </div>
+
+      {/* Where to forward e-receipts. Everyone's, so it is here and not
+          under the company's settings. */}
+      <InboundAddress email={user?.email} />
 
       {/* 2. Personal Google Gemini API Keys */}
       <UserGeminiSection onNotify={onNotify} />

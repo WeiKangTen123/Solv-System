@@ -2566,3 +2566,223 @@ a.mr-name:hover { text-decoration: underline; }
 /* On a phone the number is in the header's trail already, and on a line of
    its own it began with a dangling separator. */
 .mobile-mode .cs-meta-num { display: none; }
+
+/* ══ Policy, per diem, mileage, email in (phase 6, wave 4b) ═════════════════
+   Settings: the company's policy, the per-diem rates and the person's
+   forwarding address (components/settings/PolicySettings, PerDiemRates,
+   InboundAddress). The case page: the bar under the drop line and the per
+   diem and mileage dialogs (components/cases/Allowances). A receipt-less row
+   in the case table and its card where the receipt would be on the review
+   page (components/receipt/AllowanceCard). The rules of the sections above
+   hold: theme tokens only, so light and dark follow; colour only for a
+   state and never alone; 44px targets under .mobile-mode; rings on
+   :focus-visible. Classes start with pol- (settings) and al- (allowances).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.al-link:focus-visible,
+.al-legs .cs-pick-item:has(input:focus-visible) {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* ── Settings ── */
+.pol-stack { display: flex; flex-direction: column; gap: 16px; }
+.pol-stack .card:hover, .pol-card:hover { transform: none; }
+.pol-muted { font-size: 12.5px; line-height: 1.5; color: var(--text-muted); }
+.pol-sub { margin-bottom: 12px; }
+.pol-hint { margin-top: 5px; font-size: 11.5px; line-height: 1.45; color: var(--text-muted); }
+.pol-err { margin-top: 5px; font-size: 12px; line-height: 1.45; font-weight: 600; color: var(--danger); }
+.pol-err::before { content: '! '; }
+.pol-card .is-invalid .form-input,
+.al-fields .is-invalid .form-input,
+.pol-limit.is-invalid .form-input { border-color: var(--danger); }
+.pol-alert { margin: 12px 0 0; }
+.pol-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 16px; }
+
+/* A box with its unit beside it: "SGD [0.60]", "[75] %". */
+.pol-affix { display: flex; align-items: stretch; }
+.pol-affix .form-input { flex: 1 1 auto; min-width: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.pol-affix.is-after .form-input { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.pol-affix-text {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  font: 600 12px var(--font-mono);
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1.5px solid var(--border);
+  border-right: none;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+.pol-affix.is-after .pol-affix-text { border-right: 1.5px solid var(--border); border-left: none; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.pol-weekend .ui-check { min-height: 42px; }
+
+.pol-limits { margin: 4px 0 0; padding: 14px 0 0; border: none; border-top: 1px solid var(--border); min-width: 0; }
+.pol-limits > legend { float: left; width: 100%; margin-bottom: 2px; padding: 0; }
+.pol-limits > .pol-hint { clear: both; margin: 0 0 10px; }
+.pol-limit-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 16px; }
+.pol-limit { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pol-limit-name { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); }
+.pol-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin-top: 16px; }
+
+.pol-empty {
+  padding: 12px 14px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+.pol-rates td { vertical-align: top; }
+.pol-rates tr.is-past td { color: var(--text-muted); }
+.pol-country { font-weight: 600; color: var(--text-primary); }
+.pol-rates tr.is-past .pol-country { font-weight: 500; color: var(--text-secondary); }
+.pol-code { font: 11px var(--font-mono); color: var(--text-muted); }
+.pol-danger { color: var(--danger); }
+.pol-rate-list { list-style: none; margin: 0; padding: 0; }
+.pol-rate-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.pol-rate-item:last-child { border-bottom: none; }
+.pol-rate-item.is-past { color: var(--text-muted); }
+.pol-rate-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pol-add { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.pol-add-title { margin-bottom: 10px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.pol-add-grid { display: grid; grid-template-columns: minmax(180px, 2fr) repeat(3, minmax(120px, 1fr)); gap: 0 12px; }
+.pol-add-grid .form-group { margin-bottom: 0; }
+@media (max-width: 760px) { .pol-add-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; } }
+.mobile-mode .pol-add-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+
+/* The forwarding address: long, so it wraps anywhere rather than widening
+   the card past a phone's screen. */
+.pol-inbound { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.pol-address {
+  flex: 1 1 260px;
+  min-width: 0;
+  padding: 9px 12px;
+  font: 600 13px var(--font-mono);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.pol-inbound-actions { display: inline-flex; gap: 6px; }
+.pol-copied { color: var(--success); }
+.pol-rules { margin: 12px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.55; color: var(--text-secondary); }
+.pol-rules strong { color: var(--text-primary); overflow-wrap: anywhere; }
+.mobile-mode .pol-inbound-actions { width: 100%; }
+.mobile-mode .pol-inbound-actions .btn { flex: 1 1 0; }
+
+/* ── The case page ── */
+.al-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 8px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.al-bar-text { font-weight: 600; color: var(--text-secondary); }
+.al-bar-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.al-bar-note { flex: 1 1 100%; line-height: 1.45; }
+.al-link {
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent-text);
+  text-decoration: underline;
+  background: none;
+  border: none;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+.mobile-mode .al-bar-actions { width: 100%; }
+.mobile-mode .al-bar-actions .btn { flex: 1 1 0; }
+
+/* A receipt-less row in the case table: what it is, said in words. */
+.al-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  vertical-align: 1px;
+}
+.al-row-words { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── The dialogs ── */
+.al-hint { margin-top: 5px; font-size: 11.5px; line-height: 1.45; color: var(--text-muted); }
+.al-replace { margin-top: 10px; }
+.al-error { margin: 12px 0 0; }
+.al-sum {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  font-size: 13px;
+}
+.al-sum-row { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.al-sum-row dt { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+.al-sum-row dd { margin: 0; color: var(--text-primary); }
+.al-sum-row.is-total { padding-top: 6px; border-top: 1px solid var(--border); font-size: 15px; font-weight: 700; }
+.al-sum-line { display: block; margin-top: 4px; color: var(--text-secondary); }
+.al-sum-line strong { color: var(--text-primary); }
+.al-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; margin: 0; padding: 0; border: none; min-width: 0; }
+.al-fields .form-group { margin-bottom: 12px; }
+.al-fields .al-wide { grid-column: 1 / -1; }
+.al-fields:disabled { opacity: 0.6; }
+.al-legs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.al-legs .cs-pick-item { align-items: center; }
+.al-optional { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-muted); }
+.mobile-mode .al-fields, .mobile-mode .al-legs { grid-template-columns: minmax(0, 1fr); }
+
+/* ── Where the receipt would be ── */
+.al-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  min-height: 260px;
+  padding: 22px 22px 18px;
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+.al-card.is-compact { min-height: 0; height: auto; padding: 14px 16px; gap: 10px; }
+.al-card-head { display: flex; align-items: flex-start; gap: 12px; }
+.al-card-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  font-size: 20px;
+  color: var(--accent-text);
+  background: var(--accent-subtle);
+  border-radius: var(--radius-sm);
+}
+.al-card-kind { font-size: 17px; font-weight: 700; color: var(--text-primary); }
+.al-card-no { margin-top: 2px; font-size: 12.5px; line-height: 1.45; color: var(--text-muted); }
+.al-card-facts { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.al-card-fact { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; align-items: baseline; font-size: 13.5px; }
+.al-card-fact dt { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+.al-card-fact dd { margin: 0; line-height: 1.5; color: var(--text-primary); overflow-wrap: anywhere; }
+.al-card-fact.is-total { padding-top: 8px; border-top: 1px solid var(--border); font-size: 15px; font-weight: 700; }
+.al-card-base { display: block; font-size: 12px; font-weight: 500; color: var(--text-muted); }
+.al-card-foot { margin: auto 0 0; font-size: 12px; line-height: 1.5; color: var(--text-muted); }
+.mobile-mode .al-card-fact { grid-template-columns: 84px minmax(0, 1fr); }
+
+/* An email's left-out parts, named. */
+.in-subrow-name { font-weight: 600; color: var(--text-primary); }

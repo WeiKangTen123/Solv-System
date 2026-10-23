@@ -19,7 +19,7 @@ function loadModule(file, names) {
   return new Function(`${body}\nreturn { ${names.join(', ')} };`)();
 }
 
-const L = loadModule('intake/intake-logic.js', ['kindOf', 'planDrop', 'fmtClock', 'fmtEta', 'waitingRetry', 'bucketOf', 'countRows', 'countsLine', 'mergeRows', 'pollEvery', 'isDoneClaim', 'hasAmount', 'ZIP_MAX_BYTES']);
+const L = loadModule('intake/intake-logic.js', ['kindOf', 'planDrop', 'fmtClock', 'fmtEta', 'waitingRetry', 'bucketOf', 'countRows', 'countsLine', 'mergeRows', 'pollEvery', 'isDoneClaim', 'isLeftOut', 'hasAmount', 'ZIP_MAX_BYTES', 'MAIL_MAX_BYTES']);
 const U = loadModule('receipts/receipt-upload.js', ['declaredMime', 'serverConverts', 'ACCEPT_ATTR', 'PHOTO_ACCEPT_ATTR']);
 
 const MB = 1024 * 1024;
@@ -43,10 +43,19 @@ describe('what a dropped file is', () => {
     expect(L.kindOf(file('claim.xlsx')).kind).toBe('form');
   });
 
+  test('a saved email is a mail, by its extension or its type, and goes to the email route', () => {
+    for (const n of ['receipt.eml', 'Grab.EML', 'Booking.msg', 'x.MSG']) expect(L.kindOf(file(n)).kind).toBe('mail');
+    expect(L.kindOf(file('forwarded', { type: 'message/rfc822' })).kind).toBe('mail');
+    expect(L.kindOf(file('outlook item', { type: 'application/vnd.ms-outlook' })).kind).toBe('mail');
+    // An empty one is still refused as empty, before anything is sent.
+    expect(L.kindOf(file('mail.eml', { size: 0 })).why).toMatch(/empty/);
+  });
+
   test('what cannot be a receipt is refused here, saying why', () => {
     expect(L.kindOf(file('claim.xls'))).toEqual({ kind: 'refused', why: expect.stringMatching(/save it as \.xlsx/) });
-    expect(L.kindOf(file('mail.eml')).why).toMatch(/Emails are not read yet/);
-    expect(L.kindOf(file('notes.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })).why).toMatch(/^Not a receipt file\. Accepted:/);
+    const docx = L.kindOf(file('notes.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })).why;
+    expect(docx).toMatch(/^Not a receipt file\. Accepted:/);
+    expect(docx).toMatch(/an email \(\.eml or \.msg\)/);
     expect(L.kindOf(file('empty.jpg', { size: 0 })).why).toMatch(/empty/);
   });
 });
@@ -79,6 +88,23 @@ describe('planDrop: where each file of a drop goes', () => {
     const claim = L.planDrop([file('big.zip', { size: 12 * MB }), file('claim.xlsx', { size: 7 * MB })]);
     expect(claim.claim).toBeNull();
     expect(claim.refused.map(r => r.state)).toEqual(['too-big', 'too-big']);
+  });
+
+  test('emails go each on their own, beside receipts and zips, and beside a claim too', () => {
+    const p = L.planDrop([file('a.jpg'), file('grab.eml'), file('r.zip'), file('hotel.msg')]);
+    expect(p.mails.map(f => f.name)).toEqual(['grab.eml', 'hotel.msg']);
+    expect(p.receipts.map(f => f.name)).toEqual(['a.jpg']);
+    expect(p.zips.map(f => f.name)).toEqual(['r.zip']);
+    // A claim form takes the zips, not the emails: those are receipts of their own.
+    const c = L.planDrop([file('claim.xlsx'), file('r.zip'), file('grab.eml')]);
+    expect(c.claim.archives.map(f => f.name)).toEqual(['r.zip']);
+    expect(c.mails.map(f => f.name)).toEqual(['grab.eml']);
+  });
+
+  test('an email over the limit is refused before it is sent', () => {
+    const p = L.planDrop([file('huge.eml', { size: L.MAIL_MAX_BYTES + 1 }), file('ok.eml', { size: 2 * MB })]);
+    expect(p.mails.map(f => f.name)).toEqual(['ok.eml']);
+    expect(p.refused).toEqual([expect.objectContaining({ state: 'too-big', why: expect.stringMatching(/an email can be up to 18\.0 MB/) })]);
   });
 });
 
@@ -144,6 +170,19 @@ describe('what a row counts as', () => {
     for (const s of ['duplicate', 'unsupported', 'too-big', 'failed']) expect(L.bucketOf(local(s), NOW)).toBe('needYou');
     expect(L.bucketOf(local('claim', { kind: 'claim', job: { stage: 'reading receipts' } }), NOW)).toBe('reading');
     expect(L.bucketOf(local('claim', { kind: 'claim', job: { stage: 'failed' } }), NOW)).toBe('needYou');
+    // What an email had besides its receipts is done with, and asks nothing.
+    expect(L.bucketOf(local('skipped', { kind: 'mail' }), NOW)).toBe('read');
+  });
+
+  test('an email\'s left-out parts are not a file of the drop, so they are not counted', () => {
+    const rows = [
+      served(read('done')),
+      { local: { id: 'm1', kind: 'mail', state: 'skipped', skipped: [{ name: 'logo.png', why: 'too small' }] }, file: null },
+      { local: { id: 'm2', kind: 'mail', state: 'unsupported', message: 'Nothing in this email could be kept as a receipt.' }, file: null },
+    ];
+    expect(L.isLeftOut(rows[1])).toBe(true);
+    expect(L.isLeftOut(rows[2])).toBe(false);
+    expect(L.countRows(rows, NOW)).toEqual({ files: 2, uploading: 0, reading: 0, waiting: 0, read: 1, needYou: 1 });
   });
 
   test('the counts line leaves out what is empty, and a finished claim import is not counted twice', () => {
@@ -212,10 +251,11 @@ describe('receipt-upload: what a file is sent as', () => {
     for (const n of ['a.jpg', 'a.webp', 'a.bmp', 'a.pdf']) expect(U.serverConverts(file(n))).toBe(false);
   });
 
-  test('the picker offers the formats by extension too, and a zip and a claim form; the phone\'s does not', () => {
-    for (const x of ['.heic', '.heif', '.tif', '.tiff', '.avif', '.webp', '.gif', '.bmp', '.pdf', '.zip', '.xlsx', 'image/*']) {
+  test('the picker offers the formats by extension too, and a zip, an email and a claim form; the phone\'s does not', () => {
+    for (const x of ['.heic', '.heif', '.tif', '.tiff', '.avif', '.webp', '.gif', '.bmp', '.pdf', '.zip', '.xlsx', '.eml', '.msg',
+      'image/*', 'message/rfc822', 'application/vnd.ms-outlook']) {
       expect(U.ACCEPT_ATTR.split(',')).toContain(x);
     }
-    expect(U.PHOTO_ACCEPT_ATTR).not.toMatch(/zip|xlsx/);
+    expect(U.PHOTO_ACCEPT_ATTR).not.toMatch(/zip|xlsx|eml|msg|rfc822/);
   });
 });

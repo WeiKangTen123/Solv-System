@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import FlagList from '../ui/FlagList';
 import { fmtDay, fmtMoney } from '../../utils/format';
 import { hasRed } from './fields';
+import { ALLOWANCE_LABEL, allowanceOf } from '../../utils/allowances';
 
 // The receipts of a case in the order they are worth checking, for the left
 // of the review page: what still needs the person, what the reader is still
@@ -32,7 +33,9 @@ export function arrange(expenses = []) {
   return { check, reading, done, all: [...check, ...reading, ...done] };
 }
 
-export const receiptName = e => e.merchant || (e.receipt && e.receipt.originalName) || 'Receipt';
+// A per diem or mileage is called what it is: it has no file, and its
+// merchant is only the server's word for the same thing.
+export const receiptName = e => ALLOWANCE_LABEL[allowanceOf(e)] || e.merchant || (e.receipt && e.receipt.originalName) || 'Receipt';
 const amount = e => (Number(e.total) > 0 ? fmtMoney(e.total, e.currency) : '');
 
 // How far one file's read has got, in words (receipts/read-queue.js states).
