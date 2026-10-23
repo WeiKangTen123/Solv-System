@@ -286,7 +286,7 @@ working rules as the waves above.
 | `GET /api/company/per-diem-rates`, `POST`, `DELETE /:id` | Read: anyone; write: admin. Country ISO-2, currency ISO-3, amount > 0, date. |
 | `POST /api/reports/:id/per-diem` | Owner, editable Trip with both dates. Body `{ country? }` (default: the destination's country from the receipts). 400 with a reason when no rate covers it. → the case view. |
 | `POST /api/reports/:id/mileage` | Owner, editable case. `{ date, from, to, km, returnTrip, purpose }` → the case view. 400 when the company has no mileage rate. |
-| `GET /api/reports/:id/intake/stream` | Same visibility as `/intake`. `text/event-stream`, `X-Accel-Buffering: no`; an `intake` event with the same body as `/intake` at once and whenever the case's files or receipts change (debounced 300 ms), a comment every 25 s, closed after 15 minutes (the client reopens it). Not rate limited. |
+| `GET /api/reports/:id/intake/stream` | Same visibility as `/intake`. `text/event-stream`, `X-Accel-Buffering: no`; an `intake` event with the same body as `/intake` at once and whenever the case's files or receipts change (debounced 300 ms), a comment every 25 s, closed after 15 minutes (the client reopens it). Not rate limited. As built: an `end` event `{ reason: 'time' | 'gone' }` before a planned close, so the page tells a 15-minute end (reopen at once) and a case deleted or merged away from a fault (fall back to polling, retry after 30 s, 60 s, doubling to 5 min). |
 
 ### Flags added (yellow)
 
