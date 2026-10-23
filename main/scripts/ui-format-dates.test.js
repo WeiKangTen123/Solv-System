@@ -126,3 +126,19 @@ describe('kinds: what the screen calls trip, period and case', () => {
     for (const k of KINDS) expect(KIND_HINT[k].length).toBeGreaterThan(20);
   });
 });
+
+describe('fmtMoney', () => {
+  const { fmtMoney } = loadModule('format.js', ['fmtMoney']);
+  // toLocaleString(undefined) follows the machine's locale for the separators;
+  // only the number of decimal places is asserted, on amounts under a
+  // thousand so no grouping separator can be taken for a decimal one.
+  const places = s => (/[.,](\d+)$/.exec(s.replace(/^[A-Z]{3} /, '')) || [, ''])[1].length;
+
+  test('each currency to its own minor unit: none for yen, two for dollars, three for dinars', () => {
+    expect(places(fmtMoney(900, 'JPY'))).toBe(0);
+    expect(places(fmtMoney(776.61, 'SGD'))).toBe(2);
+    expect(places(fmtMoney(1.5, 'KWD'))).toBe(3);
+    expect(places(fmtMoney(12, ''))).toBe(2);           // no currency: two places, as before
+    expect(fmtMoney(9000, 'JPY').startsWith('JPY ')).toBe(true);
+  });
+});

@@ -91,7 +91,8 @@ function Figures({ e, base }) {
   );
 }
 
-const LABEL = { retry: 'Retry', dismiss: 'Remove', cancel: 'Stop', tryNow: 'Try now', typeIt: 'Type it myself', remove: 'Remove' };
+// 'dismiss' only takes the row off this page; 'remove' deletes the receipt.
+const LABEL = { retry: 'Retry', dismiss: 'Dismiss', cancel: 'Stop', tryNow: 'Try now', typeIt: 'Type it myself', remove: 'Remove' };
 
 export default function FileRow({ row, now, base, nameOf, act, working = false }) {
   const [open, setOpen] = useState(false);

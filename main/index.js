@@ -81,7 +81,11 @@ app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, keyGenerator: rateLimitK
 const LARGE_BODY_ROUTE = /^\/api\/(receipts\/?$|receipts\/archive\/?$|receipts\/email\/?$|receipts\/capture\/[^/]+\/?$|claims\/import\/?$|inbound\/email\/?$)/;
 const smallJson = express.json({ limit: '100kb' });
 app.use((req, res, next) => (req.method === 'POST' && LARGE_BODY_ROUTE.test(req.path) ? next() : smallJson(req, res, next)));
-app.use(express.urlencoded({ extended: false, limit: '100kb' }));
+// The form parser stands aside for the same routes: a mail posted with curl's
+// default type (a form) was read here, and inbound mail then found its body
+// empty.
+const smallForm = express.urlencoded({ extended: false, limit: '100kb' });
+app.use((req, res, next) => (req.method === 'POST' && LARGE_BODY_ROUTE.test(req.path) ? next() : smallForm(req, res, next)));
 // One plain value per query parameter. The parser turns ?from=a&from=b into an
 // array and ?a[b]=1 into an object, and the stores bind query values straight
 // into SQL, where either became "Too many parameter values" and a 500.

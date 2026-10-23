@@ -254,10 +254,12 @@ function Base({ e }) {
 }
 
 // Checked, being read, a duplicate, or read and waiting with what the server
-// noticed about it (receipts/flags.js).
+// noticed about it (receipts/flags.js). A checked receipt keeps its flags in
+// view: the policy's "have a look" flags are for whoever looks over the case
+// afterwards, and they used to vanish behind the tick.
 function CheckCell({ e }) {
   const state = receiptState(e);
-  if (state === 'checked') return <span className="cs-state is-ok"><span aria-hidden="true">✓</span> checked</span>;
+  if (state === 'checked') return <span className="cs-state is-ok"><span aria-hidden="true">✓</span> checked<FlagList compact flags={e.flags} /></span>;
   if (state === 'reading') return <span className="cs-state is-busy">reading</span>;
   if (state === 'duplicate') return <span className="cs-state is-bad">duplicate</span>;
   return (

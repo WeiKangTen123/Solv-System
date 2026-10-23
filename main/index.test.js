@@ -17,7 +17,8 @@ beforeAll(async () => {
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [path.join(__dirname, 'index.js')], {
-    env: { ...process.env, NODE_ENV: 'test', PORT: String(port), HOST: '127.0.0.1', JWT_SECRET: 'x'.repeat(48) },
+    env: { ...process.env, NODE_ENV: 'test', PORT: String(port), HOST: '127.0.0.1', JWT_SECRET: 'x'.repeat(48),
+           INBOUND_EMAIL_DOMAIN: 'example.test', INBOUND_EMAIL_SECRET: 'test-secret' },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   let stderr = '';
@@ -73,7 +74,16 @@ test('a large mail reaches its own route, not the 100 KB limit', async () => {
   let res = await fetch(`${base}/api/receipts/email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: big });
   expect(res.status).toBe(401);
   res = await fetch(`${base}/api/inbound/email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: big });
-  expect(res.status).toBe(404);   // the box takes no mail until it is set up for it
+  expect(res.status).toBe(401);   // past the size check, to the provider's secret
+});
+
+// curl --data-binary sends a form type; the form parser used to read the mail
+// first and the route then found it empty (400). Reaching the recipient check
+// (an address nobody has, 404) proves the route read the message itself.
+test('a mail posted as a form still reaches the inbound route whole', async () => {
+  const mail = ['From: someone@example.com', 'To: receipts+nobody00000@example.test', 'Subject: Taxi', 'Content-Type: text/plain', '', 'Fare 12.00'].join('\r\n');
+  const res = await fetch(`${base}/api/inbound/email`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: 'Bearer test-secret' }, body: mail });
+  expect(res.status).toBe(404);
 });
 
 test('SIGTERM shuts it down cleanly', async () => {

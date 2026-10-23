@@ -39,7 +39,7 @@ describe('routes/allowances', () => {
       const row = res.body.report.expenses.find(e => e.source === 'per_diem');
       expect(res.body.expenseId).toBe(row.id);
       expect(row).toMatchObject({ merchant: 'Per diem', category: 'Meals', currency: 'INR', total: 14000, receiptDate: '2026-09-01', status: 'reviewed', country: 'IN', receiptId: null,
-        description: 'Per diem, India: 4 days (first and last at 75%) × INR 4,000', baseTotal: 229.74, flags: [] });
+        description: 'India: 4 days (first and last at 75%) × INR 4,000', baseTotal: 229.74, flags: [] });
       expect(row.lines).toEqual([expect.objectContaining({ category: 'Meals', amount: 14000, currency: 'INR', fxRate: 0.01641, baseAmount: 229.74 })]);
       expect(res.body).toMatchObject({ editable: true, isOwner: true });
       expect(res.body.report.events.at(-1)).toMatchObject({ action: 'edited', note: 'Per diem added: India: 4 days (first and last at 75%) × INR 4,000' });
@@ -93,7 +93,7 @@ describe('routes/allowances', () => {
       const draft = reports.createReport({ companyId: admin.companyId, userId: emp.id, draft: true, kind: 'trip', periodFrom: '2026-09-01', periodTo: '2026-09-01' });
       const res = await http().post(`/api/reports/${draft.id}/per-diem`).set(as(emp)).send({ country: 'IN' }).expect(200);
       expect(res.body.report.status).toBe('draft');
-      expect(res.body.report.expenses[0]).toMatchObject({ total: 3000, description: 'Per diem, India: 1 day at 75% × INR 4,000' });
+      expect(res.body.report.expenses[0]).toMatchObject({ total: 3000, description: 'India: 1 day at 75% × INR 4,000' });
     });
   });
 
@@ -158,7 +158,7 @@ describe('routes/allowances', () => {
       const text = Buffer.from(out.body).toString(format === 'csv' ? 'utf8' : 'latin1');
       expect(text.startsWith(magic)).toBe(true);
       if (format === 'csv') {
-        expect(text).toContain('Per diem,"Per diem, India: 4 days (first and last at 75%) × INR 4,000"');
+        expect(text).toContain('Per diem,"India: 4 days (first and last at 75%) × INR 4,000"');
         expect(text).toContain('Mileage,"From Office to Changi Airport and back, 2 × 12.4 km × SGD 0.60",Airport run');
       }
     }

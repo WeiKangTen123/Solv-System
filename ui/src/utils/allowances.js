@@ -19,8 +19,8 @@ export function allowanceOf(e) {
 }
 
 // What a receipt-less row says under its label: the server's description
-// without the label it starts with ("Per diem, India: 4 days × INR 4,000"
-// reads "India: 4 days × INR 4,000" under "Per diem").
+// ("India: 4 days × INR 4,000" under "Per diem"). Its first rows began with
+// the label as well ("Per diem, India: …"), which is still taken off.
 export function allowanceWords(e) {
   const d = String((e && e.description) || '').trim();
   return d.replace(/^Per diem,\s*/i, '');

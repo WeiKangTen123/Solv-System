@@ -92,6 +92,24 @@ describe('reports/cover-auto', () => {
     expect(cover(m.id)).toMatchObject({ periodFrom: '2026-09-01', periodTo: '2026-09-30' });
   });
 
+  // The phase 6 QA pass: mileage on an undated trip dated it 1-31 Oct and
+  // offered a 31-day per diem; a receipt the day after typed dates made the
+  // nights one more than the dates said.
+  test('mileage and per diem date nothing, and the nights follow the dates the case has', () => {
+    const t = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'Undated', kind: 'trip' });
+    put(t, '2026-10-01', { source: 'mileage', status: 'reviewed', merchant: 'Mileage' });
+    auto.refresh(t.id);
+    expect(cover(t.id)).toMatchObject({ periodFrom: null, periodTo: null, nights: null });
+    put(t, '2026-10-03', { currency: 'INR' });                         // a real receipt does date it, to itself
+    auto.refresh(t.id);
+    expect(cover(t.id)).toMatchObject({ periodFrom: '2026-10-03', periodTo: '2026-10-03', nights: 0 });
+
+    const typed = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'Pune', kind: 'trip', periodFrom: '2026-09-01', periodTo: '2026-09-04' });
+    put(typed, '2026-09-02', { currency: 'INR' }); put(typed, '2026-09-05', { currency: 'INR' });
+    auto.refresh(typed.id);
+    expect(cover(typed.id)).toMatchObject({ periodFrom: '2026-09-01', periodTo: '2026-09-04', nights: 3 });
+  });
+
   test('a claimed case is left as it was claimed', () => {
     const c = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'T' });
     put(c, '2026-09-01', { currency: 'INR' });

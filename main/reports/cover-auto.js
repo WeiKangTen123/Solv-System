@@ -31,6 +31,7 @@ const { localDate } = require('../utils/zone-date');
 const DRAFT_FIELDS = ['kind', 'title', 'periodFrom', 'periodTo', 'destination', 'nights'];
 const OPEN_FIELDS = ['periodFrom', 'periodTo', 'destination', 'nights'];
 const WIDEN_DAYS = 3;
+const ALLOWANCES = new Set(['per_diem', 'mileage']);
 const _filled = v => v !== null && v !== undefined && v !== '';
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const _day = d => Date.parse(`${d}T00:00:00Z`) / 86400000;
@@ -38,16 +39,31 @@ const _day = d => Date.parse(`${d}T00:00:00Z`) / 86400000;
 // What an open case's own fields should become: its dates widened only to
 // receipts beside them, and the nights counted from those dates rather than
 // from every receipt the suggestion saw.
+//
+// Only an end the AI wrote widens: an end the person typed stays where they
+// put it, and the nights are counted from the dates the case really has (a
+// receipt the day after a typed 1-4 Sep made it "4 nights"). Empty ends of a
+// trip or a job take the receipts' own first and last day, not the whole
+// month a suggestion would make of them; only a Month fills as a month.
+// Per diem and mileage rows are not evidence of dates (cover-suggest.js).
 function _openTarget(r, s, today) {
   const dates = r.expenses
-    .filter(e => !['reading', 'duplicate', 'rejected'].includes(e.status) && ISO.test(String(e.receiptDate || '')) && e.receiptDate <= today)
-    .map(e => e.receiptDate);
-  let from = _filled(r.periodFrom) ? r.periodFrom : s.periodFrom;
-  let to = _filled(r.periodTo) ? r.periodTo : s.periodTo;
-  if (r.kind !== 'period' && _filled(r.periodFrom) && _filled(r.periodTo)) {
-    const near = dates.filter(d => _day(d) >= _day(r.periodFrom) - WIDEN_DAYS && _day(d) <= _day(r.periodTo) + WIDEN_DAYS);
-    from = [r.periodFrom, ...near].sort()[0];
-    to = [r.periodTo, ...near].sort().pop();
+    .filter(e => !['reading', 'duplicate', 'rejected'].includes(e.status) && !ALLOWANCES.has(e.source)
+      && ISO.test(String(e.receiptDate || '')) && e.receiptDate <= today)
+    .map(e => e.receiptDate).sort();
+  const aiOwns = f => (r.coverAi.auto || []).includes(f);
+  let from = r.periodFrom, to = r.periodTo;
+  if (r.kind === 'period') {
+    from = _filled(from) ? from : s.periodFrom;
+    to = _filled(to) ? to : s.periodTo;
+  } else {
+    if (!_filled(from)) from = dates[0] || null;
+    if (!_filled(to)) to = dates[dates.length - 1] || null;
+    if (_filled(r.periodFrom) && _filled(r.periodTo)) {
+      const near = dates.filter(d => _day(d) >= _day(r.periodFrom) - WIDEN_DAYS && _day(d) <= _day(r.periodTo) + WIDEN_DAYS);
+      if (aiOwns('periodFrom')) from = [r.periodFrom, ...near].sort()[0];
+      if (aiOwns('periodTo')) to = [r.periodTo, ...near].sort().pop();
+    }
   }
   const nights = r.kind === 'trip' && from && to ? Math.max(0, _day(to) - _day(from)) : s.nights;
   return { periodFrom: from || null, periodTo: to || null, destination: s.destination, nights: nights ?? null };

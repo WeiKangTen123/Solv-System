@@ -139,7 +139,7 @@ function perDiemPlan({ companyId, country, from, to, travelDayPct = 100 }) {
     : `${count} days${travelDayPct === 100 ? '' : ` (first and last at ${_pct(travelDayPct)})`}`;
   const rates = runs.length === 1 ? `${currency} ${_amount(runs[0].amount)}`
     : `${currency} ${runs.map(x => `${_amount(x.amount)} (${dayRange(x.from, x.to)})`).join(', ')}`;
-  return { country, countryName: name, currency, total: totalCents / 100, days: count, description: `Per diem, ${name}: ${span} × ${rates}` };
+  return { country, countryName: name, currency, total: totalCents / 100, days: count, description: `${name}: ${span} × ${rates}` };
 }
 
 // "Add per diem" on a Trip: one expense for the trip's days at the
@@ -173,7 +173,7 @@ async function addPerDiem(reportId, actor, body = {}) {
       status: 'reviewed', lines: [{ category: 'Meals', description: plan.description, amount: plan.total, currency: plan.currency }],
     });
   })();
-  reports.addEvent(r.id, actor.id, 'edited', `${old.length ? 'Per diem replaced' : 'Per diem added'}: ${plan.description.replace(/^Per diem, /, '')}`);
+  reports.addEvent(r.id, actor.id, 'edited', `${old.length ? 'Per diem replaced' : 'Per diem added'}: ${plan.description}`);
   await _price(expense.id);
   coverAuto.refresh(r.id);
   logger.info('Per diem added', { reportId: r.id, expenseId: expense.id, country, days: plan.days, currency: plan.currency, total: plan.total, replaced: old.length, by: actor.id });

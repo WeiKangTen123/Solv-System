@@ -609,7 +609,7 @@ export default function CaseReview() {
             {canAct && (
               <button type="button" className="btn btn-outline btn-sm" disabled={!!busy || !unflagged.length} onClick={checkUnflagged}
                       title="Check every receipt still to check that has nothing red on it">
-                {busy === 'bulk' && bulk ? `Checking ${bulk.done} of ${bulk.of}…` : `Check all unflagged (${unflagged.length})`}
+                {busy === 'bulk' && bulk ? `Checking ${bulk.done} of ${bulk.of}…` : `Check all with nothing to fix (${unflagged.length})`}
               </button>
             )}
             {!isMobile && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowKeys(true)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">?</button>}

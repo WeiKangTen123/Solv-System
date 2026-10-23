@@ -50,8 +50,13 @@ const _ccy = c => String(c || '').trim().toUpperCase() || null;
 // already counted. One dated after today is a misread year far more often
 // than a receipt from the future, and would stretch a three-day trip to a
 // year; it carries a flag of its own (receipts/flags.js).
+//
+// Per diem and mileage are not receipts of where anybody went: a per diem is
+// dated from the trip's own dates, and one mileage claim on an undated trip
+// made it "1-31 Oct" and offered a 31-day per diem.
+const ALLOWANCES = new Set(['per_diem', 'mileage']);
 function _usable(expenses, today) {
-  return (expenses || []).filter(e => e && !['reading', 'duplicate', 'rejected'].includes(e.status)
+  return (expenses || []).filter(e => e && !['reading', 'duplicate', 'rejected'].includes(e.status) && !ALLOWANCES.has(e.source)
     && ISO.test(String(e.receiptDate || '')) && !(today && e.receiptDate > today));
 }
 
@@ -147,7 +152,8 @@ function suggestCover(expenses, { baseCurrency = 'SGD', today = null } = {}) {
 function findMatch(caseId, userId) {
   if (!caseId || !userId) return null;
   const dates = db.prepare(`SELECT receipt_date AS d FROM expenses
-                            WHERE report_id = ? AND status NOT IN ('reading', 'duplicate', 'rejected') AND receipt_date IS NOT NULL`)
+                            WHERE report_id = ? AND status NOT IN ('reading', 'duplicate', 'rejected') AND receipt_date IS NOT NULL
+                              AND COALESCE(source, '') NOT IN ('per_diem', 'mileage')`)
     .all(caseId).map(r => r.d).filter(d => ISO.test(String(d))).sort();
   if (!dates.length) return null;
   const row = db.prepare(`SELECT id, number, title, period_from, period_to FROM expense_reports

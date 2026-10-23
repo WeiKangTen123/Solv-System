@@ -2,9 +2,22 @@
 // Overview and Revenue panels format identically to the tabs that predate them —
 // two copies of "how we render a negative" is how reports start disagreeing.
 
+// Each currency to its own minor unit: JPY 9,000, not JPY 9,000.00 (and
+// three places for the dinars). Anything Intl does not know gets two.
+const _digits = new Map();
+function minorDigits(currency) {
+  if (!currency || !/^[A-Z]{3}$/.test(currency)) return 2;
+  if (!_digits.has(currency)) {
+    let d = 2;
+    try { d = new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits; } catch { /* not a currency Intl knows */ }
+    _digits.set(currency, d);
+  }
+  return _digits.get(currency);
+}
 export function fmtMoney(n, currency) {
   const v = Number(n || 0);
-  return `${currency ? currency + ' ' : ''}${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const d = minorDigits(currency);
+  return `${currency ? currency + ' ' : ''}${v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })}`;
 }
 
 // Compact form for chart labels and tiles, where two decimals are noise.

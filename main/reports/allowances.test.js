@@ -13,8 +13,8 @@ describe('reports/allowances', () => {
   describe('perDiemPlan', () => {
     test('days × the rate, the first and last day at the travel-day share', () => {
       expect(plan('2026-09-01', '2026-09-04', 75)).toEqual({ country: 'IN', countryName: 'India', currency: 'INR', total: 14000, days: 4,
-        description: 'Per diem, India: 4 days (first and last at 75%) × INR 4,000' });
-      expect(plan('2026-09-01', '2026-09-04')).toMatchObject({ total: 16000, description: 'Per diem, India: 4 days × INR 4,000' });
+        description: 'India: 4 days (first and last at 75%) × INR 4,000' });
+      expect(plan('2026-09-01', '2026-09-04')).toMatchObject({ total: 16000, description: 'India: 4 days × INR 4,000' });
       // two days are both travel days; three leave one whole day between
       expect(plan('2026-09-01', '2026-09-02', 50).total).toBe(4000);
       expect(plan('2026-09-01', '2026-09-03', 0).total).toBe(4000);
@@ -22,15 +22,15 @@ describe('reports/allowances', () => {
     });
 
     test('a one-day trip is that day at the share, once', () => {
-      expect(plan('2026-09-01', '2026-09-01', 75)).toMatchObject({ total: 3000, days: 1, description: 'Per diem, India: 1 day at 75% × INR 4,000' });
-      expect(plan('2026-09-01', '2026-09-01')).toMatchObject({ total: 4000, description: 'Per diem, India: 1 day × INR 4,000' });
+      expect(plan('2026-09-01', '2026-09-01', 75)).toMatchObject({ total: 3000, days: 1, description: 'India: 1 day at 75% × INR 4,000' });
+      expect(plan('2026-09-01', '2026-09-01')).toMatchObject({ total: 4000, description: 'India: 1 day × INR 4,000' });
     });
 
     test('a rate that changes mid-trip prices each day at its own rate, and says so', () => {
       policy.addRate({ companyId: company.id, country: 'IN', currency: 'INR', dailyAmount: 4500, effectiveFrom: '2026-09-03' });
       // 4,000 × 0.75 + 4,000 + 4,500 + 4,500 × 0.75
       expect(plan('2026-09-01', '2026-09-04', 75)).toMatchObject({ total: 14875,
-        description: 'Per diem, India: 4 days (first and last at 75%) × INR 4,000 (1–2 Sep 2026), 4,500 (3–4 Sep 2026)' });
+        description: 'India: 4 days (first and last at 75%) × INR 4,000 (1–2 Sep 2026), 4,500 (3–4 Sep 2026)' });
     });
 
     test('says why when it cannot: no rate, a trip that starts before the first, two currencies, nothing to pay, dates the wrong way', () => {
