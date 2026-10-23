@@ -6,6 +6,7 @@ import { useConfirm } from '../../context/ConfirmContext';
 import { Checkbox, EmptyState, FlagList, Menu, useSelection } from '../ui';
 import { fmtDateRange, fmtDay, fmtMoney } from '../../utils/format';
 import { onBehalfNames, receiptState, summarise } from './case-logic';
+import { ALLOWANCE_LABEL, allowanceOf, allowanceWords } from '../../utils/allowances';
 
 // The receipts of a case, one row each: its date, merchant, amount, what it
 // comes to in the company's currency, and whether it has been checked. A row
@@ -20,7 +21,10 @@ import { onBehalfNames, receiptState, summarise } from './case-logic';
 //   base       the company's currency.
 //   isMobile   rows become a list a thumb can use.
 //   onChanged  async fn(): the page loads the case again.
-const nameOf = e => e.merchant || (e.receipt && e.receipt.originalName) || 'Untitled';
+// A per diem or mileage has no file to be named by: it is called what it is,
+// and its description says how it was worked out.
+const nameOf = e => ALLOWANCE_LABEL[allowanceOf(e)] || e.merchant || (e.receipt && e.receipt.originalName) || 'Untitled';
+const subOf = e => (allowanceOf(e) ? allowanceWords(e) || 'No receipt' : e.status === 'reading' ? 'Being read…' : summarise(e.lines));
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 // A refusal's reason, as a clause after a name: the server says sentences.
 const clause = s => String(s || '').trim().replace(/\.$/, '').replace(/^./, c => c.toLowerCase());
@@ -178,6 +182,7 @@ export default function CaseReceipts({ report, caseId, canEdit, base, isMobile, 
               <div className="cs-ritem-main">
                 <Link to={reviewHref(e)} className="cs-rname" onClick={ev => ev.stopPropagation()}>{nameOf(e)}</Link>
                 <div className="cs-sub">{fmtDay(e.receiptDate)}{Number(e.total) > 0 ? ` · ${fmtMoney(e.total, e.currency)}` : ''}</div>
+                {allowanceOf(e) && <div className="cs-sub al-row-words">{subOf(e)}</div>}
               </div>
               <div className="cs-ritem-side">
                 <Base e={e} />
@@ -207,7 +212,8 @@ export default function CaseReceipts({ report, caseId, canEdit, base, isMobile, 
                   <td className="cs-nowrap">{fmtDay(e.receiptDate)}</td>
                   <td className="cs-merchant">
                     <Link to={reviewHref(e)}>{nameOf(e)}</Link>
-                    <div className="cs-sub">{e.status === 'reading' ? 'Being read…' : summarise(e.lines)}</div>
+                    {allowanceOf(e) && <span className="al-tag">no receipt</span>}
+                    <div className="cs-sub">{subOf(e)}</div>
                   </td>
                   <td className="cs-right cs-num cs-nowrap">{Number(e.total) > 0 ? fmtMoney(e.total, e.currency) : <span className="cs-none">—</span>}</td>
                   <td className="cs-right cs-nowrap"><Base e={e} /></td>

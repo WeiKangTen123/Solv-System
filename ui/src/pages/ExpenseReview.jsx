@@ -11,9 +11,10 @@ import { getCompany } from '../utils/useCompany';
 import { useLeaveGuard } from '../utils/useLeaveGuard';
 import { usePageCrumbs } from '../utils/crumbs';
 import {
-  ReceiptViewer, ReceiptFields, ExchangeRatePanel, LinesEditor, ChangeHistory, useReceiptForm,
+  ReceiptViewer, AllowanceCard, ReceiptFields, ExchangeRatePanel, LinesEditor, ChangeHistory, useReceiptForm,
   PAGE_FIELDS, flagsOn, flagsOff, refusedFields,
 } from '../components/receipt';
+import { allowanceOf } from '../utils/allowances';
 
 // Image on the left, fields on the right, so a figure is checked against the
 // receipt without switching context. Below the fields, the split into report
@@ -192,7 +193,10 @@ export default function ExpenseReview() {
   const viewOnly = !perm.isOwner;
   // Locked while a save runs too: what was typed during it was overwritten
   // by the reload that followed.
-  const detailsLocked = !perm.canEditDetails || exp.status === 'duplicate' || busy === 'save';
+  // A per diem or mileage is worked out by the server from the company's
+  // rate; nothing on it is typed in.
+  const allowance = allowanceOf(exp);
+  const detailsLocked = !perm.canEditDetails || exp.status === 'duplicate' || !!allowance || busy === 'save';
   const actionsLocked = !perm.canAct;
   const idx = group?.siblings?.findIndex(s => s.id === id) ?? -1;
   const prev = idx > 0 ? group.siblings[idx - 1] : null;
@@ -245,20 +249,22 @@ export default function ExpenseReview() {
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 460px', gap: 20, alignItems: 'start' }}>
         {/* Receipt */}
         <div className="card" style={{ padding: 14 }}>
-          <ReceiptViewer key={id} receipt={exp.receipt} page={exp.page} box={exp.box} token={imageToken} height={isMobile ? 520 : 800}
+          {allowance ? <AllowanceCard expense={exp} base={baseCurrency} /> : <ReceiptViewer key={id} receipt={exp.receipt} page={exp.page} box={exp.box} token={imageToken} height={isMobile ? 520 : 800}
                          caption={exp.aiReadAt ? `read by AI, ${exp.aiConfidence || 'low'} confidence` : ''}
                          tools={(
                            <button className="btn btn-outline btn-sm" disabled={busy === 'reread' || !exp.receipt || actionsLocked} title={viewOnly ? 'Only the claimant can re-read it' : ''} onClick={reread}>
                              {busy === 'reread' ? 'Reading…' : 'Re-read'}
                            </button>
-                         )} />
+                         )} />}
         </div>
 
         {/* Fields */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="card">
             <div className="card-title">Receipt details</div>
-            <div className="card-subtitle">Read from the receipt. Check each one, then say what it was for.</div>
+            <div className="card-subtitle">
+              {allowance ? 'Worked out from your company’s rate, so there is nothing to type here.' : 'Read from the receipt. Check each one, then say what it was for.'}
+            </div>
             {looseFlags.length > 0 && <div style={{ marginBottom: 14 }}><FlagList flags={looseFlags} /></div>}
             <ReceiptFields fields={PAGE_FIELDS} form={rf.form} onChange={rf.set} expense={exp} disabled={detailsLocked}
                            categories={categories} currencies={currencies} invalid={invalid} idPrefix="f" />
@@ -270,7 +276,7 @@ export default function ExpenseReview() {
                 {caseOptions.map(r => <option key={r.id} value={r.id}>{r.number} {r.title || ''}</option>)}
               </select>
             </div>
-            {exp.description && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Reader's note: {exp.description}</div>}
+            {exp.description && !allowance && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Reader's note: {exp.description}</div>}
           </div>
 
           <ExchangeRatePanel expense={exp} baseCurrency={baseCurrency} tz={user?.timezone} busy={busy} disabled={detailsLocked}

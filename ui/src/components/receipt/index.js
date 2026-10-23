@@ -7,6 +7,7 @@
 //
 // Their styles are the "Receipt review" section at the end of styles/globals.css.
 export { default as ReceiptViewer, useReceiptLink, openReceipt } from './ReceiptViewer';
+export { default as AllowanceCard } from './AllowanceCard';
 export { default as ReceiptFields } from './ReceiptFields';
 export { default as ExchangeRatePanel } from './ExchangeRatePanel';
 export { default as LinesEditor } from './LinesEditor';
