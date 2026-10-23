@@ -25,15 +25,17 @@ export const MAX_RAW_BYTES = 15 * 1024 * 1024;
 export const ACCEPTED  = ['image/jpeg', 'image/png', 'application/pdf'];
 // What the FILE PICKER offers. Wider than what Xero accepts on purpose: every
 // image here ends up a JPEG, re-encoded here or converted on the server, so
-// Xero only ever sees a format it takes. A zip of receipts and an .xlsx claim
-// form are offered too, for the New case page, which sends them on to the zip
-// and claim-import routes. Extensions as well as types, because Windows gives
-// a .heic or a .tif no type at all and the picker would grey it out.
+// Xero only ever sees a format it takes. A zip of receipts, a saved email
+// (.eml, or Outlook's .msg) and an .xlsx claim form are offered too, for the
+// New case page and the case page, which send them on to the zip, email and
+// claim-import routes. Extensions as well as types, because Windows gives a
+// .heic, a .tif or an .eml no type at all and the picker would grey it out.
 export const ACCEPT_ATTR = [
   'image/*', 'image/heic', 'image/heif', 'image/tiff', 'image/avif', 'image/webp', 'image/gif', 'image/bmp',
-  '.jpg', '.jpeg', '.png', '.heic', '.heif', '.tif', '.tiff', '.avif', '.webp', '.gif', '.bmp', '.pdf', '.zip', '.xlsx',
+  '.jpg', '.jpeg', '.png', '.heic', '.heif', '.tif', '.tiff', '.avif', '.webp', '.gif', '.bmp', '.pdf', '.zip', '.xlsx', '.eml', '.msg',
   'application/pdf', 'application/zip', 'application/x-zip-compressed',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'message/rfc822', 'application/vnd.ms-outlook',
 ].join(',');
 // For a picker of single receipts (the phone's capture page): photos and PDFs,
 // no zips or claim forms, which only the New case page knows what to do with.

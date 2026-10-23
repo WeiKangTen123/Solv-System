@@ -10,17 +10,23 @@ const MB = 1024 * 1024;
 // themselves and stops at 18 MB (routes/claims.js MAX_UPLOAD_BYTES).
 export const ZIP_MAX_BYTES = 18 * MB;
 export const CLAIM_MAX_BYTES = 18 * MB;
+// An email goes up the same way, to a route with the same 25 MB body.
+export const MAIL_MAX_BYTES = 18 * MB;
 
-const ACCEPTED_WORDS = 'photos (JPEG, PNG, HEIC, WebP, TIFF, GIF, AVIF, BMP), PDF, a zip of receipts, or an .xlsx claim form';
+const ACCEPTED_WORDS = 'photos (JPEG, PNG, HEIC, WebP, TIFF, GIF, AVIF, BMP), PDF, a zip of receipts, an email (.eml or .msg), or an .xlsx claim form';
+// What a saved email is to a browser: Outlook's .msg has a type of its own,
+// and an .eml is message/rfc822 (or nothing at all, on Windows).
+const MAIL_TYPES = new Set(['message/rfc822', 'application/vnd.ms-outlook']);
 const RECEIPT_EXT = new Set(['jpg', 'jpeg', 'png', 'heic', 'heif', 'tif', 'tiff', 'avif', 'webp', 'gif', 'bmp', 'pdf']);
 
 const extOf = name => { const m = /\.([a-z0-9]+)$/i.exec(String(name || '')); return m ? m[1].toLowerCase() : ''; };
 const mb = n => `${(n / MB).toFixed(1)} MB`;
 
 // What a dropped file is to the page: a receipt to upload, a zip of receipts,
-// a claim form, or something refused here (with why), before any of it is
-// sent. A file with no type and no extension is tried as a receipt: whether
-// it is a picture is the browser's to find out when it draws it.
+// an email whose attachments are the receipts, a claim form, or something
+// refused here (with why), before any of it is sent. A file with no type and
+// no extension is tried as a receipt: whether it is a picture is the
+// browser's to find out when it draws it.
 export function kindOf(file) {
   const name = String((file && file.name) || '');
   const type = String((file && file.type) || '').toLowerCase();
@@ -31,7 +37,7 @@ export function kindOf(file) {
   if (ext === 'zip' || /zip/.test(type)) return { kind: 'zip' };
   if (ext === 'xlsx' || type.includes('spreadsheetml')) return { kind: 'form' };
   if (ext === 'xls') return { kind: 'refused', why: 'An .xls claim form cannot be read. Open it in Excel and save it as .xlsx.' };
-  if (ext === 'eml' || ext === 'msg') return { kind: 'refused', why: 'Emails are not read yet. Save the receipt attached to it and add that.' };
+  if (ext === 'eml' || ext === 'msg' || MAIL_TYPES.has(type)) return { kind: 'mail' };
   if (type.startsWith('image/') || type === 'application/pdf' || RECEIPT_EXT.has(ext)) return { kind: 'receipt' };
   if (!type && !ext) return { kind: 'receipt' };
   return { kind: 'refused', why: `Not a receipt file. Accepted: ${ACCEPTED_WORDS}.` };
@@ -40,20 +46,25 @@ export function kindOf(file) {
 // One drop, sorted by where each file goes. A claim form in the drop makes
 // the drop a claim: the form and every zip with it go to the claim import
 // together, which matches the form's rows to the receipts in the zips. Zips
-// without a form are unpacked into the case one by one, and everything else
-// is a receipt of its own.
+// without a form are unpacked into the case one by one. An email is opened
+// by the server, each on its own, whatever else is in the drop; everything
+// else is a receipt of its own.
 //
-// Returns { receipts: File[], zips: File[], claim: { archives, forms } | null,
-// refused: [{ file, why, state }] }, `state` being 'unsupported' or 'too-big'.
+// Returns { receipts: File[], zips: File[], mails: File[], claim: { archives,
+// forms } | null, refused: [{ file, why, state }] }, `state` being
+// 'unsupported' or 'too-big'.
 export function planDrop(files) {
-  const out = { receipts: [], zips: [], claim: null, refused: [] };
+  const out = { receipts: [], zips: [], mails: [], claim: null, refused: [] };
   const zips = [], forms = [];
   for (const file of Array.from(files || [])) {
     const k = kindOf(file);
     if (k.kind === 'refused') out.refused.push({ file, why: k.why, state: 'unsupported' });
     else if (k.kind === 'zip') zips.push(file);
     else if (k.kind === 'form') forms.push(file);
-    else out.receipts.push(file);
+    else if (k.kind === 'mail') {
+      if (file.size > MAIL_MAX_BYTES) out.refused.push({ file, state: 'too-big', why: `This email is ${mb(file.size)}; an email can be up to ${mb(MAIL_MAX_BYTES)}. Save its attachments and add those instead.` });
+      else out.mails.push(file);
+    } else out.receipts.push(file);
   }
   if (forms.length) {
     const bytes = [...zips, ...forms].reduce((s, f) => s + (f.size || 0), 0);
@@ -110,6 +121,12 @@ const LOCAL_UPLOADING = new Set(['queued', 'preparing', 'uploading']);
 const LOCAL_PROBLEM = new Set(['duplicate', 'unsupported', 'too-big', 'failed']);
 const CLAIM_ENDED = new Set(['done', 'failed', 'cancelled', 'gone']);
 
+// What an email had besides its receipts (a logo, a signature, a tracking
+// image), left out by the server with why: shown as one row, so the person
+// can see what was not taken, but it is not a file of the drop and asks
+// nothing of them.
+export const isLeftOut = r => !!(r && !r.file && r.local && r.local.state === 'skipped');
+
 // Which of the counts line's groups a row is in:
 //   uploading  still on its way from this page;
 //   reading    on the server, waiting for the reader or being read;
@@ -139,6 +156,7 @@ export function bucketOf(row, now) {
   }
   if (LOCAL_UPLOADING.has(local.state)) return 'uploading';
   if (LOCAL_PROBLEM.has(local.state)) return 'needYou';
+  if (local.state === 'skipped') return 'read';
   return 'reading';   // stored, and the server has not said more yet
 }
 
@@ -149,7 +167,7 @@ export const isDoneClaim = r => !!(r && !r.file && r.local && r.local.kind === '
 export function countRows(rows, now) {
   const c = { files: 0, uploading: 0, reading: 0, waiting: 0, read: 0, needYou: 0 };
   for (const r of rows || []) {
-    if (isDoneClaim(r)) continue;
+    if (isDoneClaim(r) || isLeftOut(r)) continue;
     c.files++;
     c[bucketOf(r, now)]++;
   }

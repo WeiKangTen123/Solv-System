@@ -12,7 +12,7 @@ import FileRow from './FileRow';
 import ClaimRow from './ClaimRow';
 import { useUploader } from './useUploader';
 import { useIntake } from './useIntake';
-import { bucketOf, countRows, countsLine, fmtEta, mergeRows, pollEvery, waitingRetry } from './intake-logic';
+import { bucketOf, countRows, countsLine, fmtEta, isLeftOut, mergeRows, pollEvery, waitingRetry } from './intake-logic';
 
 // Receipts going into a case: the drop zone and its buttons, then one row per
 // file with how far it has got, from the moment it is picked to the moment
@@ -148,7 +148,9 @@ const IntakePanel = forwardRef(function IntakePanel({ caseId, ensureCase, compac
   }
   phoneRef.current = phone;
 
-  const shown = compact ? rows.filter(r => (r.local && r.local.kind === 'claim') || bucketOf(r, now) !== 'read') : rows;
+  // An email's left-out parts count as done, and stay in sight until
+  // dismissed: on the case page nothing else would say why a logo is missing.
+  const shown = compact ? rows.filter(r => (r.local && r.local.kind === 'claim') || isLeftOut(r) || bucketOf(r, now) !== 'read') : rows;
   const settled = counts.read + counts.needYou;
   const going = counts.uploading + counts.reading + counts.waiting;
   const tone = going ? 'info' : counts.needYou ? 'warning' : 'success';
@@ -166,7 +168,7 @@ const IntakePanel = forwardRef(function IntakePanel({ caseId, ensureCase, compac
         {!isMobile && (
           <DropZone ref={zoneRef} onFiles={up.add} accept={ACCEPT_ATTR} compact={compact}
                     label={compact ? 'Drop more receipts here, or click to choose' : 'Drop receipts here'}>
-            Photos, HEIC, PDF, a zip of receipts, or a claim form
+            Photos, HEIC, PDF, a zip of receipts, an email (.eml, .msg), or a claim form
           </DropZone>
         )}
         <div className="in-drop-actions">

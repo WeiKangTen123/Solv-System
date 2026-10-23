@@ -2784,3 +2784,5 @@ a.mr-name:hover { text-decoration: underline; }
 .al-card-foot { margin: auto 0 0; font-size: 12px; line-height: 1.5; color: var(--text-muted); }
 .mobile-mode .al-card-fact { grid-template-columns: 84px minmax(0, 1fr); }
 
+/* An email's left-out parts, named. */
+.in-subrow-name { font-weight: 600; color: var(--text-primary); }
