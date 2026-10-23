@@ -58,7 +58,7 @@
     "testTimeout": 20000,
     "testPathIgnorePatterns": [
       "/node_modules/",
-      "/ui/"
+      "<rootDir>/ui/"
     ],
     "setupFiles": [
       "<rootDir>/main/scripts/jest.setup.js"
