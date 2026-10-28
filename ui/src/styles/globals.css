@@ -2786,3 +2786,89 @@ a.mr-name:hover { text-decoration: underline; }
 
 /* An email's left-out parts, named. */
 .in-subrow-name { font-weight: 600; color: var(--text-primary); }
+
+/* ══ Case activity (components/cases/CaseActivity.jsx) ══════════════════════
+   The case's Activity tab: one timeline by day, a dot per entry coloured by
+   who did it (a person, the AI, the system) and the who also in words, the
+   receipt named as a link, and the fields of one save listed under it.
+   Theme tokens only, so light and dark both hold; under .mobile-mode the
+   filter chips scroll (UI foundations) and the links are fingertip-sized.
+   Classes start with ca-.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.ca-top { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.ca-top .section-label { margin: 0; }
+.ca-error { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.ca-day + .ca-day { margin-top: 14px; }
+.ca-day-head {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.ca-list { list-style: none; margin: 0; padding: 0; }
+.ca-entry {
+  position: relative;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  align-items: baseline;
+  padding: 8px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+/* The thread the dots hang on, from one entry to the next. */
+.ca-entry:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 20px;
+  bottom: -8px;
+  width: 1px;
+  background: var(--border);
+}
+.ca-dot {
+  position: relative;
+  top: 1px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid var(--text-muted);
+  background: var(--bg-card);
+}
+.ca-entry.is-ai .ca-dot { border-color: var(--accent); background: var(--accent-subtle); }
+.ca-entry.is-system .ca-dot { border-style: dashed; }
+.ca-body { min-width: 0; color: var(--text-primary); overflow-wrap: anywhere; }
+.ca-who { font-weight: 600; }
+.ca-ai { margin-right: 2px; vertical-align: 1px; cursor: default; }
+.ca-what { color: var(--text-secondary); }
+.ca-receipt { font-weight: 600; color: var(--text-primary); }
+a.ca-receipt, .ca-receipts a { text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 2px; }
+a.ca-receipt:hover, .ca-receipts a:hover { text-decoration-color: currentColor; }
+.ca-via { color: var(--text-muted); }
+.ca-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  font: 600 10px/1.7 var(--font-sans);
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+.ca-tag.is-warn { border-color: var(--warning-border); background: var(--warning-subtle); color: var(--warning); }
+.ca-detail, .ca-receipts { list-style: none; margin: 3px 0 0; padding: 0; font-size: 12px; color: var(--text-muted); }
+.ca-detail li + li { margin-top: 1px; }
+.ca-receipts { display: flex; flex-wrap: wrap; gap: 2px 12px; }
+.ca-receipts a { color: var(--text-secondary); }
+.ca-when { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ca-more { display: flex; justify-content: center; padding-top: 10px; }
+a.ca-receipt:focus-visible, .ca-receipts a:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; border-radius: 2px; }
+.mobile-mode .ca-entry { padding: 10px 0; }
+.mobile-mode .ca-receipts { gap: 0 14px; }
+.mobile-mode .ca-receipts a { display: inline-flex; align-items: center; min-height: 44px; }
+.mobile-mode .ca-more .btn { width: 100%; }
