@@ -10,7 +10,7 @@ const { CATEGORY_NAMES, canonicalCategory } = require('../intake/categories');
 const { localDate } = require('../utils/zone-date');
 const astore  = require('./store');
 const { rateBasis } = require('./actions');
-const { caseSuggestion } = require('../reports/cover-help');
+const { caseSuggestion, purposeDraft } = require('../reports/cover-help');
 const { coverPatch, sameCover } = require('../reports/cover-patch');
 const { changeNote } = require('../reports/cover-auto');
 
@@ -345,6 +345,9 @@ const READ = {
         id: r.id, number: r.number, title: r.title, purpose: r.purpose, kind: r.kind, from: r.periodFrom, to: r.periodTo, destination: r.destination,
         nights: r.nights, notes: r.notes, coverAi: r.coverAi,
         suggestion: s ? { kind: s.kind, title: s.title, from: s.periodFrom, to: s.periodTo, destination: s.destination, nights: s.nights, madeFrom: s.basis } : null,
+        // What the receipts show, for the person to finish with why: the only
+        // purpose text the details card may carry that the person did not say.
+        purposeDraft: purposeDraft(r, { baseCurrency: ctx.base, today: _today(ctx) }),
         owner: _who(ctx, r.userId), status: r.status, claimedAt: r.claimedAt, inXero: !!r.xeroInvoiceId,
         totals: { [ctx.base]: r.totals.totalBase, advances: r.advances, reimbursement: r.totals.reimbursement, byCategory: r.totals.byCategory, notReviewed: r.totals.unreviewed, withoutRate: r.totals.pendingRates },
         receipts: r.expenses.slice(0, 100).map(e => _brief(ctx, e)),
@@ -609,6 +612,20 @@ const PROPOSE = {
         from[k] = r[k] ?? null;
       }
       if (!Object.keys(patch).length) no('Those are already the case\'s details.');
+      // A purpose is the claimant's reason, which no receipt shows. The card
+      // carries one only when it is the person's own words from this message,
+      // or the plain draft of what the receipts show (get_case purposeDraft),
+      // offered for them to finish. Asked to "write a purpose", the model
+      // wrote one; the prompt alone did not hold it.
+      if (patch.purpose) {
+        const flat = t => String(t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+        const said = flat(ctx.question);
+        const draft = purposeDraft(r, { baseCurrency: ctx.base, today: _today(ctx) });
+        const theirs = said && flat(patch.purpose) && said.includes(flat(patch.purpose));
+        if (!theirs && flat(patch.purpose) !== flat(draft)) {
+          no(`A purpose is the person's own reason, so it is not written for them. Ask them why they went; or offer the draft of what the receipts show for them to finish: "${draft || 'there is no draft yet'}".`);
+        }
+      }
       const lo = patch.periodFrom !== undefined ? patch.periodFrom : r.periodFrom, hi = patch.periodTo !== undefined ? patch.periodTo : r.periodTo;
       if (lo && hi && lo > hi) no(`From would be after To (${lo} to ${hi}).`);
       const summary = `${_caseLabel(r)}${r.title ? ` (${r.title})` : ''}: ${changeNote(r, patch)}`;

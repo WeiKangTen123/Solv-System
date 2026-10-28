@@ -2999,3 +2999,18 @@ a.ca-receipt:focus-visible, .ca-receipts a:focus-visible { outline: 2px solid va
 @media (prefers-reduced-motion: reduce) {
   .in-purpose-choice { transition: none; }
 }
+
+/* ══ Fixes after the 2026-10-29 QA pass ══════════════════════════════════════
+   Small corrections to the sections above, kept together so each says why. */
+
+/* A line's amount keeps room for a folio's figures in the review page's narrow
+   fields pane: at 0.9fr it showed "43131.3" for 43,131.36. */
+.expense-line { grid-template-columns: 1.1fr 1.4fr minmax(11ch, 0.9fr) auto; }
+.mobile-mode .expense-line { grid-template-columns: 1fr minmax(11ch, 0.8fr) auto; }
+
+/* On a phone Purpose has the row to itself; beside Advance it was cut off. */
+.mobile-mode .in-purpose-row { grid-template-columns: 1fr; }
+
+/* The assistant's Ask button floats over the bottom of the page; the details
+   form keeps room under its last field (Notes) for it. */
+.mobile-mode .cs-details.is-editing { padding-bottom: 72px; }

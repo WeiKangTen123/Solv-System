@@ -167,10 +167,14 @@ function _shown(row, vals) {
 function _row(row, d) {
   const differs = !!d.fields && row.fields.some(f => !_same(d.fields[f], d.current[f]));
   const offers = !!d.fields && row.fields.some(f => !_blank(d.fields[f]));
-  const aiKeeps = row.fields.every(f => (d.coverAi.auto || []).includes(f));
+  const marked = row.fields.every(f => (d.coverAi.auto || []).includes(f));
   const keepable = row.fields.every(f => (d.aiCanKeep || []).includes(f));
+  // Marked as the AI's is not the same as kept up by it: on an open case the
+  // AI keeps only the dates, where and nights, so a title it wrote when the
+  // case was made says so rather than promising to follow the receipts.
+  const aiKeeps = marked && keepable;
   const theirs = row.fields.some(f => (d.coverAi.user || []).includes(f) || !_blank(d.current[f]));
-  return { ...row, tickable: differs && offers, aiKeeps, canHandBack: keepable && !aiKeeps && theirs };
+  return { ...row, tickable: differs && offers, aiKeeps, aiFilled: marked && !keepable, canHandBack: keepable && !aiKeeps && theirs };
 }
 // "From 4 receipts in Mumbai and Pune, 31 Aug – 4 Sep 2026."
 function _source(b) {
@@ -277,6 +281,7 @@ function FillPanel({ id, report, onClose }) {
                   <div className="cf-keep">
                     {row.aiKeeps
                       ? <span className="cf-kept">The AI keeps this up</span>
+                      : row.aiFilled ? <span className="cf-kept">Filled by the AI</span>
                       : row.canHandBack && (
                         <button type="button" className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => handBack(row)}
                                 title="Take the receipts' value now, and let the AI keep it in step with them">

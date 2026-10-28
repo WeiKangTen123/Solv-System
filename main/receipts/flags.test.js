@@ -136,9 +136,12 @@ describe('receipts/flags, from what the reader saw', () => {
 
   test('charged-twice names the charge and how often it appears', () => {
     const f = flagsFor(read({ chargedTwice: [{ description: 'MoMo Cafe Dinner Food', amount: 1296.25, count: 2 }] }), null, opts);
-    expect(f).toEqual([{ code: 'charged-twice', level: 'yellow', text: 'MoMo Cafe Dinner Food (1,296.25) appears twice on the receipt, so it may have been billed twice; check with the merchant.', field: 'lines' }]);
+    expect(f).toEqual([{ code: 'charged-twice', level: 'yellow', text: 'MoMo Cafe Dinner Food, 1,296.25, appears twice on the receipt, so it may have been billed twice; check with the merchant.', field: 'lines' }]);
     const two = flagsFor(read({ chargedTwice: [{ description: 'Dinner', amount: 50, count: 3 }, { description: 'Soda', amount: 5, count: 2 }] }), null, opts);
-    expect(two[0].text).toBe('Dinner (50.00) appears 3 times and Soda (5.00) appears twice on the receipt, so they may have been billed twice; check with the merchant.');
+    expect(two[0].text).toBe('Dinner, 50.00, appears 3 times and Soda, 5.00, appears twice on the receipt, so they may have been billed twice; check with the merchant.');
+    // The folio's own codes give way to what the charge was and its check number.
+    const folio = flagsFor(read({ chargedTwice: [{ description: 'MoMo Cafe Dinner Food Room# 110 : CHECK# 11603631 [oneha089]', amount: 1296.25, count: 2 }] }), null, opts);
+    expect(folio[0].text).toBe('MoMo Cafe Dinner Food (check 11603631), 1,296.25, appears twice on the receipt, so it may have been billed twice; check with the merchant.');
   });
 
   test('lines-adjusted says by how much, and which way', () => {

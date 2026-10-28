@@ -90,6 +90,19 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const _day = iso => `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
 const _names = list => (list.length < 2 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
 const _same = (a, b) => toCents(a) !== null && toCents(a) === toCents(b);
+// A folio's line is the hotel's system talking ("MoMo Cafe Dinner Food
+// Room# 110 : CHECK# 11603631 [oneha089]"). The flag says what the charge was,
+// and the check number that ties the two copies together, in words a person
+// reads; quoted whole, the codes buried the point.
+const CHECK_NO = /\b(?:check|chk|bill)\s*#?\s*(\d{4,})/i;
+function _charge(description) {
+  const raw = String(description || '').replace(/\s+/g, ' ').trim();
+  const check = CHECK_NO.exec(raw);
+  let words = raw.replace(/\[[^\]]*\]/g, ' ').replace(/\broom\s*#?\s*\d+\s*:?/gi, ' ').replace(new RegExp(CHECK_NO.source, 'gi'), ' ')
+    .replace(/[\s:–-]+$/, '').replace(/\s+/g, ' ').trim();
+  if (words.length > 40) words = `${words.slice(0, 40).replace(/\s+\S*$/, '')}…`;
+  return `${words || 'A charge'}${check ? ` (check ${check[1]})` : ''}`;
+}
 
 // ── Yellow, from what the reader saw ──
 //
@@ -109,7 +122,7 @@ function _readFlags(e, lines, add) {
     add('yellow', 'subtotal-mismatch', `The subtotal of ${formatAmount(sm.subtotal)} and the tax of ${formatAmount(sm.tax)} do not come to the total of ${formatAmount(sm.total)}, even with the charges on the receipt; check the figures.`, 'total');
   }
   if (Array.isArray(c.chargedTwice) && c.chargedTwice.length) {
-    const what = c.chargedTwice.slice(0, 3).map(x => `${x.description} (${formatAmount(x.amount)}) appears ${x.count === 2 ? 'twice' : `${x.count} times`}`);
+    const what = c.chargedTwice.slice(0, 3).map(x => `${_charge(x.description)}, ${formatAmount(x.amount)}, appears ${x.count === 2 ? 'twice' : `${x.count} times`}`);
     add('yellow', 'charged-twice', `${_names(what)} on the receipt, so ${what.length > 1 ? 'they' : 'it'} may have been billed twice; check with the merchant.`, 'lines');
   }
   if (c.adjusted) {

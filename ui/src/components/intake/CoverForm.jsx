@@ -129,6 +129,8 @@ export default function CoverForm({ cover, suggestion, base, disabled = false, a
   // server has said so.
   const isAi = f => ai.has(f) && !cover.typedFields.has(f);
   const sug = suggestion || {};
+  // The server names the field it refused ("Advances must be an amount…").
+  const advanceError = cover.save.state === 'error' && /^advances?\b/i.test(cover.save.error || '');
   // A suggestion only for a field the person owns and the AI would fill
   // differently; one the AI owns already shows the AI's value.
   const differs = f => mine.has(f) && sug[f] && String(sug[f]) !== String(v[f] || '');
@@ -205,7 +207,7 @@ export default function CoverForm({ cover, suggestion, base, disabled = false, a
         </div>
       )}
 
-      <div className="in-dates">
+      <div className="in-dates in-purpose-row">
         <div className="form-group">
           <div className="in-label-row">
             <label className="form-label" htmlFor={id('purpose')}>Purpose</label>
@@ -221,7 +223,10 @@ export default function CoverForm({ cover, suggestion, base, disabled = false, a
         </div>
         <div className="form-group">
           <label className="form-label" htmlFor={id('advances')}>Advance {base}</label>
-          <input className="form-input in-money" type="number" inputMode="decimal" min="0" step="0.01" placeholder="0.00" {...field('advances')} />
+          <input className="form-input in-money" type="number" inputMode="decimal" min="0" step="0.01" placeholder="0.00" {...field('advances')}
+                 aria-invalid={advanceError ? true : undefined} aria-describedby={advanceError ? id('advances-error') : undefined} />
+          {/* At the field it is about: under the row it read as Purpose's. */}
+          {advanceError && <div id={id('advances-error')} className="in-field-warn" role="alert">{cover.save.error}</div>}
         </div>
       </div>
       {choices && canSuggest && <PurposeChoices id={id('choices')} caseId={cover.caseId} onPick={pick} onClose={closeChoices} />}
@@ -230,7 +235,7 @@ export default function CoverForm({ cover, suggestion, base, disabled = false, a
       <div className={`in-save is-${cover.save.state}`} role="status">
         {cover.save.state === 'saving' ? 'Saving…'
           : cover.save.state === 'saved' ? 'Saved'
-          : cover.save.state === 'error' ? `Not saved: ${cover.save.error}` : ''}
+          : cover.save.state === 'error' ? (advanceError ? 'Not saved: see Advance' : `Not saved: ${cover.save.error}`) : ''}
       </div>
     </form>
   );

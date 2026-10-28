@@ -139,6 +139,32 @@ describe('reports/cover-auto', () => {
     expect(cover(typed.id)).toMatchObject({ periodFrom: '2026-09-01', periodTo: '2026-09-04', nights: 3 });
   });
 
+  // The QA pass of 2026-10-29: the AI's dates widened to a 31 Aug taxi and
+  // stayed there after it was taken out; and a tie flipped the destination's
+  // order, which was written as an AI change.
+  test('an open case\'s AI dates come back in when the receipt that widened them leaves; the same places reordered are no change', () => {
+    const d = draft();
+    put(d, '2026-09-01', { currency: 'INR', country: 'IN', city: 'Mumbai', docType: 'hotel' });
+    put(d, '2026-09-04', { currency: 'INR', country: 'IN', city: 'Pune', docType: 'hotel' });
+    auto.refresh(d.id);
+    reports.openDraft(d.id, {}, u.id);
+    const taxi = store.createExpense({ companyId: u.companyId, userId: u.id, status: 'review-needed', receiptDate: '2026-08-31', currency: 'INR', country: 'IN', city: 'Mumbai', docType: 'ride' });
+    reports.addExpense(d.id, taxi.id);
+    auto.refresh(d.id);
+    expect(cover(d.id)).toMatchObject({ periodFrom: '2026-08-31', periodTo: '2026-09-04', nights: 4 });
+
+    reports.removeExpense(d.id, taxi.id);
+    const before = reports.listEvents(d.id).length;
+    auto.refresh(d.id);
+    expect(cover(d.id)).toMatchObject({ periodFrom: '2026-09-01', periodTo: '2026-09-04', nights: 3 });
+    const said = reports.listEvents(d.id).slice(before);
+    expect(said).toHaveLength(1);
+    expect(said[0].action).toBe('ai_details');
+    // Mumbai and Pune have one receipt each either way: no word about the destination.
+    expect(said[0].note).not.toMatch(/Destination/i);
+    expect(auto.refresh(d.id)).toBeNull();
+  });
+
   test('a claimed case is left as it was claimed', () => {
     const c = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'T' });
     put(c, '2026-09-01', { currency: 'INR' });

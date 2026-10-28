@@ -545,6 +545,24 @@ describe('assistant', () => {
       expect(await no({ title: 'Pune visit', advances: 9 })).toMatch(/already the case's details/);
     });
 
+    // The QA pass of 2026-10-29: asked to "write a business purpose", the
+    // model put one on a card. A purpose is the person's own reason.
+    test('a purpose on the card is the person\'s own words or the plain draft of what the receipts show, nothing else', async () => {
+      const r = trip();
+      const ctx = ctxFor(emp);
+      ctx.question = 'Write a business purpose for this case and put it on a card.';
+      const refused = await tools.run(ctx, 'propose_case_details', { id: r.id, changes: { purpose: 'Client meetings with Tata Motors' }, reason: 'x' });
+      expect(refused.error).toMatch(/own reason, so it is not written for them/);
+      expect(ctx.proposals).toHaveLength(0);
+      const draft = (await tools.run(ctx, 'get_case', { id: r.id })).purposeDraft;
+      if (draft) {
+        expect((await tools.run(ctx, 'propose_case_details', { id: r.id, changes: { purpose: draft }, reason: 'x' })).proposed).toBe(true);
+      }
+      const told = ctxFor(emp);
+      told.question = 'The purpose is: plant audit at the Chakan site';
+      expect((await tools.run(told, 'propose_case_details', { id: r.id, changes: { purpose: 'Plant audit at the Chakan site' }, reason: 'x' })).proposed).toBe(true);
+    });
+
     test('only the owner, only an open case: not a draft, not a claimed one, not somebody else\'s', async () => {
       const r = trip();
       expect((await tools.run(ctxFor(admin), 'propose_case_details', { id: r.id, changes: { title: 'x' }, reason: 'x' })).error).toMatch(/Only the person whose case/);
@@ -559,6 +577,7 @@ describe('assistant', () => {
     test('Apply saves it as the owner\'s own edit and says so in the case\'s history', async () => {
       const r = trip();
       const ctx = ctxFor(emp);
+      ctx.question = 'Put the purpose as site visits, and fix where and the nights';   // the person's own words
       await tools.run(ctx, 'propose_case_details', { id: r.id, changes: { destination: 'Mumbai, Pune, India', purpose: 'Site visits', nights: 3 }, reason: 'x' });
       expect(await actions.apply(ctx.proposals[0].id, as(peer)).catch(err => err.status)).toBe(404);
       expect(await actions.apply(ctx.proposals[0].id, as(emp))).toMatchObject({ status: 'applied' });

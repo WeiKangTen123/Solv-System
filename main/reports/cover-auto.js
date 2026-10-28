@@ -42,6 +42,9 @@ const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const _day = d => Date.parse(`${d}T00:00:00Z`) / 86400000;
 const _lastDay = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 
+const _places = v => String(v || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean).sort().join('|');
+const _samePlaces = (a, b) => _filled(a) && _filled(b) && _places(a) === _places(b);
+
 // The receipt days that say when a case was: read, not a duplicate, not a per
 // diem or mileage row (cover-suggest.js), and not after today.
 function _dates(r, today) {
@@ -95,9 +98,14 @@ function openTarget(r, s, { today, baseCurrency = 'SGD', asIfAi = false } = {}) 
     if (!_filled(from)) from = dates[0] || null;
     if (!_filled(to)) to = dates[dates.length - 1] || null;
     if (_filled(r.periodFrom) && _filled(r.periodTo)) {
+      // An end the AI owns follows the receipts beside the dates both ways:
+      // out to one that lands within WIDEN_DAYS, and back in when the receipt
+      // that widened it is taken out. Kept only ever widening, a trip stayed
+      // 31 Aug – 4 Sep after its 31 Aug taxi left, and the AI then titled it
+      // "Aug–Sep". With no receipt near at all, the dates stay as they are.
       const near = dates.filter(d => _day(d) >= _day(r.periodFrom) - WIDEN_DAYS && _day(d) <= _day(r.periodTo) + WIDEN_DAYS);
-      if (aiOwns('periodFrom')) from = [r.periodFrom, ...near].sort()[0];
-      if (aiOwns('periodTo')) to = [r.periodTo, ...near].sort().pop();
+      if (aiOwns('periodFrom') && near.length) from = near[0];
+      if (aiOwns('periodTo') && near.length) to = near[near.length - 1];
     }
   }
   const lo = from && to && from > to ? to : from, hi = from && to && from > to ? from : to;
@@ -153,7 +161,11 @@ function refresh(reportId) {
     for (const f of r.status === 'draft' ? DRAFT_FIELDS : OPEN_FIELDS) {
       if (user.includes(f)) continue;
       if (r.status === 'open' && _filled(r[f]) && !auto.includes(f)) continue;
-      const v = _filled(target[f]) ? target[f] : null;
+      let v = _filled(target[f]) ? target[f] : null;
+      // The same places in another order are not a change: a tie in how many
+      // receipts each town has flipped "Mumbai, Pune" to "Pune, Mumbai" and
+      // wrote an AI entry in the case's Activity for nothing.
+      if (f === 'destination' && _samePlaces(r[f], v)) v = r[f];
       if ((r[f] ?? null) !== v) patch[f] = v;
       // A field the AI emptied is nobody's again, and carries no marker.
       nextAuto = nextAuto.filter(x => x !== f);
