@@ -4,7 +4,7 @@
 // picker, the exchange-rate page offers them when finance types a rate, and
 // the live board groups its currencies by `region`.
 //
-// It is a convenience, never a limit. `currencyCode()` accepts any three-letter
+// It is a convenience, never a limit. `currencyCode()` accepts any real ISO
 // code the AI reader returns, a claimant can type one that is not here, and the
 // rate providers between them cover about 160 currencies — so a receipt from
 // somewhere nobody has been yet still prices correctly.
