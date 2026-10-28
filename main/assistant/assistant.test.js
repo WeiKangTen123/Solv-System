@@ -506,6 +506,95 @@ describe('assistant', () => {
     });
   });
 
+  describe('a case\'s details', () => {
+    const india = (r, receiptDate, city) => reports.addExpense(r.id, seed(emp, { currency: 'INR', country: 'IN', city, receiptDate, total: 100,
+      lines: [{ category: 'Lodging', amount: 100 }] }).id);
+    const trip = (extra = {}) => reports.createReport({ companyId: emp.companyId, userId: emp.id, title: 'Pune visit', kind: 'trip', periodFrom: '2026-09-01', periodTo: '2026-09-04', ...extra });
+
+    test('get_case says which details the AI filled, which the person set, and what the receipts suggest', async () => {
+      const r = trip();
+      india(r, '2026-09-01', 'Mumbai'); india(r, '2026-09-05', 'Pune');
+      require('../reports/cover-auto').refresh(r.id);
+      const out = await tools.run(ctxFor(emp), 'get_case', { id: r.id });
+      expect(out).toMatchObject({ kind: 'trip', from: '2026-09-01', to: '2026-09-04', destination: 'Mumbai, India', nights: 3, notes: null });   // the typed dates hold only the Mumbai receipt
+      expect(out.coverAi.user).toEqual(expect.arrayContaining(['kind', 'title', 'periodFrom', 'periodTo']));
+      expect(out.coverAi.auto.sort()).toEqual(['destination', 'nights']);
+      expect(out.suggestion).toMatchObject({ kind: 'trip', title: 'India trip, Sep 2026', from: '2026-09-01', to: '2026-09-05', nights: 4,
+                                             madeFrom: { receipts: 2, cities: ['Mumbai', 'Pune'], countries: ['India'] } });
+      expect((await tools.run(ctxFor(admin), 'get_case', { id: r.id })).suggestion).toEqual(out.suggestion);
+    });
+
+    test('a card for the owner\'s open case, of what differs, held to the cover rules', async () => {
+      const r = trip({ destination: 'Pune', nights: 3 });
+      const ctx = ctxFor(emp);
+      const out = await tools.run(ctx, 'propose_case_details', { id: r.id, reason: 'From the receipts',
+        changes: { title: 'India trip, Sep 2026', periodTo: '2026-09-05', nights: 4, destination: 'Pune', advances: 500 } });
+      expect(out).toMatchObject({ proposed: true });
+      expect(out.summary).toBe(`${r.number} (Pune visit): Title “Pune visit” → “India trip, Sep 2026”; dates 1–4 Sep 2026 → 1–5 Sep 2026; nights 3 → 4`);
+      expect(ctx.proposals[0]).toMatchObject({ kind: 'edit_case', expenseId: null,
+        payload: { reportId: r.id, patch: { title: 'India trip, Sep 2026', periodTo: '2026-09-05', nights: 4 }, from: { title: 'Pune visit', periodTo: '2026-09-04', nights: 3 } } });
+      expect(reports.getReport(r.id).title).toBe('Pune visit');                 // nothing changed yet
+
+      const no = async changes => (await tools.run(ctx, 'propose_case_details', { id: r.id, changes, reason: 'x' })).error;
+      expect(await no({ periodFrom: '2026-02-30' })).toMatch(/From must be a real date/);
+      expect(await no({ kind: 'holiday' })).toMatch(/kind must be/);
+      expect(await no({ title: { x: 1 } })).toMatch(/Title must be text/);
+      expect(await no({ nights: -1 })).toMatch(/Nights must be a whole number/);
+      expect(await no({ nights: 2.5 })).toMatch(/Nights must be a whole number/);
+      expect(await no({ periodFrom: '2026-09-10' })).toMatch(/From would be after To/);
+      expect(await no({ title: 'Pune visit', advances: 9 })).toMatch(/already the case's details/);
+    });
+
+    test('only the owner, only an open case: not a draft, not a claimed one, not somebody else\'s', async () => {
+      const r = trip();
+      expect((await tools.run(ctxFor(admin), 'propose_case_details', { id: r.id, changes: { title: 'x' }, reason: 'x' })).error).toMatch(/Only the person whose case/);
+      expect((await tools.run(ctxFor(peer), 'propose_case_details', { id: r.id, changes: { title: 'x' }, reason: 'x' })).error).toMatch(/No case/);
+      const d = reports.createReport({ companyId: emp.companyId, userId: emp.id, draft: true });
+      expect((await tools.run(ctxFor(emp), 'propose_case_details', { id: d.id, changes: { title: 'x' }, reason: 'x' })).error).toMatch(/still a draft/);
+      require('../db').prepare("UPDATE expense_reports SET status = 'claimed' WHERE id = ?").run(r.id);
+      expect((await tools.run(ctxFor(emp), 'propose_case_details', { id: r.id, changes: { title: 'x' }, reason: 'x' })).error).toMatch(/claimed/);
+      expect(tools.DEFINITIONS.map(d2 => d2.function.name)).toContain('propose_case_details');
+    });
+
+    test('Apply saves it as the owner\'s own edit and says so in the case\'s history', async () => {
+      const r = trip();
+      const ctx = ctxFor(emp);
+      await tools.run(ctx, 'propose_case_details', { id: r.id, changes: { destination: 'Mumbai, Pune, India', purpose: 'Site visits', nights: 3 }, reason: 'x' });
+      expect(await actions.apply(ctx.proposals[0].id, as(peer)).catch(err => err.status)).toBe(404);
+      expect(await actions.apply(ctx.proposals[0].id, as(emp))).toMatchObject({ status: 'applied' });
+      const now = reports.getReport(r.id);
+      expect(now).toMatchObject({ destination: 'Mumbai, Pune, India', purpose: 'Site visits', nights: 3 });
+      expect(now.coverAi.user).toEqual(expect.arrayContaining(['destination', 'purpose', 'nights']));
+      expect(now.events.slice(-1)[0]).toMatchObject({ action: 'details_edited', actorId: emp.id, note: 'destination, nights, purpose (via the assistant)' });
+      // One entry, written by updateReport; Apply no longer writes a second.
+      expect(now.events.filter(e => e.action === 'details_edited')).toHaveLength(1);
+      await expect(actions.apply(ctx.proposals[0].id, as(emp))).rejects.toMatchObject({ status: 409 });   // once
+    });
+
+    test('a card for details that have moved since, a case claimed since, or a card a day old, does not apply', async () => {
+      const r = trip();
+      const ctx = ctxFor(emp);
+      await tools.run(ctx, 'propose_case_details', { id: r.id, changes: { title: 'India trip' }, reason: 'x' });
+      await tools.run(ctx, 'propose_case_details', { id: r.id, changes: { periodTo: '2026-09-06' }, reason: 'x' });
+      await tools.run(ctx, 'propose_case_details', { id: r.id, changes: { notes: 'Receipts for the taxi are lost' }, reason: 'x' });
+      reports.updateReport(r.id, { title: 'Typed on the page' });
+      expect(await actions.apply(ctx.proposals[0].id, as(emp))).toMatchObject({ status: 'failed', result: 'The case changed after this was proposed: Title is now Typed on the page. Ask the assistant again.' });
+      expect(reports.getReport(r.id).title).toBe('Typed on the page');
+      require('../db').prepare("UPDATE assistant_actions SET created_at = '2020-01-01T00:00:00.000Z' WHERE id = ?").run(ctx.proposals[2].id);
+      expect(await actions.apply(ctx.proposals[2].id, as(emp))).toMatchObject({ status: 'failed', result: expect.stringMatching(/Expired/) });
+      require('../db').prepare("UPDATE expense_reports SET status = 'claimed' WHERE id = ?").run(r.id);
+      expect(await actions.apply(ctx.proposals[1].id, as(emp))).toMatchObject({ status: 'failed', result: expect.stringMatching(/claimed case cannot be edited/) });
+      expect(reports.getReport(r.id)).toMatchObject({ periodTo: '2026-09-04', notes: null });
+    });
+
+    test('the prompt offers the details card and still forbids inventing a purpose', () => {
+      const p = conversation.systemPrompt(as(emp), users.getCompany(emp.companyId), null);
+      expect(p).toMatch(/propose_case_details/);
+      expect(p).toMatch(/a purpose is only ever what the person told you/);
+      expect(p).toMatch(/inventing receipts, figures or purposes/);
+    });
+  });
+
   describe('a closed tab', () => {
     test('stops the turn, cancels the model call under way, and leaves nothing behind', async () => {
       const e = seed(emp);

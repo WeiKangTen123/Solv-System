@@ -9,14 +9,43 @@ describe('reports/cover-auto', () => {
   const put = (c, receiptDate, extra = {}) => reports.addExpense(c.id, store.createExpense({ companyId: u.companyId, userId: u.id, status: 'review-needed', receiptDate, currency: 'SGD', ...extra }).id);
   const cover = id => { const r = reports.getReport(id); return { kind: r.kind, title: r.title, periodFrom: r.periodFrom, periodTo: r.periodTo, destination: r.destination, nights: r.nights, purpose: r.purpose, coverAi: r.coverAi }; };
 
-  test('a draft gets every field the owner has not set, marked as the AI\'s, with no event', () => {
+  test('a draft gets every field the owner has not set, marked as the AI\'s, and its history says what the AI wrote', () => {
     const d = draft();
     put(d, '2026-09-01', { currency: 'INR' }); put(d, '2026-09-04', { currency: 'INR' });
     expect(auto.refresh(d.id)).toEqual({ changed: ['kind', 'title', 'periodFrom', 'periodTo', 'destination', 'nights'] });
     expect(cover(d.id)).toEqual({ kind: 'trip', title: 'India trip, Sep 2026', periodFrom: '2026-09-01', periodTo: '2026-09-04', destination: 'India', nights: 3, purpose: null,
                                   coverAi: { auto: ['kind', 'title', 'periodFrom', 'periodTo', 'destination', 'nights'], user: [] } });
-    expect(reports.getReport(d.id).events.map(e => e.action)).toEqual(['created']);
+    const events = () => reports.getReport(d.id).events;
+    expect(events().map(e => e.action)).toEqual(['created', 'ai_details']);
+    expect(events()[1]).toMatchObject({ actorId: null,
+      note: 'Kind Other → Trip; title empty → “India trip, Sep 2026”; dates empty → 1–4 Sep 2026; destination empty → “India”; nights empty → 3' });
     expect(auto.refresh(d.id)).toBeNull();                               // nothing new to say
+    expect(events()).toHaveLength(2);                                    // and nothing written
+  });
+
+  test('one event per refresh that moved a value, old → new; none when nothing moved or only a marker did', () => {
+    const t = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'Pune', kind: 'trip' });
+    put(t, '2026-09-01', { currency: 'INR' }); put(t, '2026-09-04', { currency: 'INR' });
+    auto.refresh(t.id);
+    put(t, '2026-09-06', { currency: 'INR' }); put(t, '2026-09-05', { currency: 'INR' });
+    auto.refresh(t.id);
+    const ai = () => reports.getReport(t.id).events.filter(e => e.action === 'ai_details').map(e => e.note);
+    expect(ai()).toEqual(['Dates empty → 1–4 Sep 2026; destination empty → “India”; nights empty → 3',
+                          'Dates 1–4 Sep 2026 → 1–6 Sep 2026; nights 3 → 5']);
+    expect(auto.refresh(t.id)).toBeNull();
+    expect(ai()).toHaveLength(2);
+
+    // An empty destination handed to the AI, which has none to give: only
+    // the marker moves, and nothing anybody sees has changed.
+    const l = reports.createReport({ companyId: u.companyId, userId: u.id, title: 'Local', kind: 'trip' });
+    put(l, '2026-09-01');
+    auto.refresh(l.id);
+    const c = reports.getReport(l.id).coverAi;
+    reports.setCoverAi(l.id, { auto: [...c.auto, 'destination'], user: c.user });
+    expect(auto.refresh(l.id)).toEqual({ changed: [] });
+    expect(reports.getReport(l.id).events.filter(e => e.action === 'ai_details')).toHaveLength(1);
+    expect(auto.changeNote({ periodFrom: '2026-09-03', periodTo: null, title: 'A' }, { periodTo: '2026-09-01', title: null }))
+      .toBe('Title “A” → empty; dates from 3 Sep 2026 → 1–3 Sep 2026');
   });
 
   test('what the owner set stays theirs, before the AI wrote it or after', () => {

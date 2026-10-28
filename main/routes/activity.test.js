@@ -65,8 +65,11 @@ describe('routes/activity', () => {
     await http().delete(`/api/expenses/${d.id}`).set(as(emp)).expect(200);
 
     const items = (await feed(r, admin)).items;
+    // Taking a receipt out refreshes the cover from what is left, and the AI's
+    // change to it (the trip's empty nights) is its own entry, said as the AI.
     expect(items.map(x => [x.actor.name, x.text])).toEqual([
       ['Aisha Rahman', 'Deleted Starbucks, INR 100.00, 4 Sep 2026'],
+      ['AI', 'Updated the details from the receipts: Nights empty → 3'],
       ['Aisha Rahman', 'Took Grab, INR 100.00, 4 Sep 2026 out of the case'],
       ['Aisha Rahman', 'Checked 2 receipts'],
       ['Aisha Rahman', 'Checked 2 receipts'],
@@ -74,13 +77,14 @@ describe('routes/activity', () => {
       ['Aisha Rahman', 'Edited the details: title and destination'],
       ['Aisha Rahman', 'Created the case'],
     ]);
+    expect(items[1].actor).toMatchObject({ type: 'ai' });
     // the one-by-one run and "check all" are two events, each naming its own:
     // the deleted one is counted and, its log gone with it, no longer named
-    expect(items[2].receipts.map(x => [x.merchant, x.inCase])).toEqual([['Grab', false]]);
-    expect(items[3].receipts.map(x => x.merchant)).toEqual(['Uber', 'Taj']);
-    expect(items[1]).toMatchObject({ receiptId: c.id, merchant: 'Grab' });
-    expect(items[4].actor).toMatchObject({ type: 'person', role: 'admin' });
-    expect(reports.listEvents(r.id).map(x => x.action)).toEqual(['created', 'details_edited', 'checked', 'checked', 'removed', 'deleted']);
+    expect(items[3].receipts.map(x => [x.merchant, x.inCase])).toEqual([['Grab', false]]);
+    expect(items[4].receipts.map(x => x.merchant)).toEqual(['Uber', 'Taj']);
+    expect(items[2]).toMatchObject({ receiptId: c.id, merchant: 'Grab' });
+    expect(items[5].actor).toMatchObject({ type: 'person', role: 'admin' });
+    expect(reports.listEvents(r.id).map(x => x.action)).toEqual(['created', 'details_edited', 'checked', 'checked', 'removed', 'ai_details', 'deleted']);
   });
 
   test('taking out keeps every rule filing has: the owner\'s, an open case, and a duplicate stays where it is', async () => {

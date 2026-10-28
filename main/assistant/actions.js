@@ -1,6 +1,9 @@
 const store   = require('../store/expenses');
 const changes = require('../store/changes');
 const edit    = require('../receipts/edit');
+const reports = require('../store/reports');
+const wf      = require('../reports/workflow');
+const { coverPatch, sameCover } = require('../reports/cover-patch');
 const astore  = require('./store');
 const logger  = require('../utils/logger');
 
@@ -67,8 +70,33 @@ async function _do(a, actor) {
     }
     case 'mark_reviewed': return edit.setStatus(p.expenseId, 'reviewed', actor, { via: 'assistant' });
     case 'file_in_case':  return edit.fileInCase(p.expenseId, p.caseId || null, actor, { via: 'assistant' });
+    case 'edit_case':     return _editCase(p, actor);
     default: return fail(400, 'Unknown change');
   }
+}
+
+// A case details card (tools.js propose_case_details), asked again of the
+// case as it is now: still the person's, still open, every field the card
+// showed "from" still holding that, and the change still within the cover
+// rules. Saved as the owner's own edit; updateReport writes the case's
+// history entry and says it came through the assistant (store/reports.js),
+// so there is one entry, not that one and another written here.
+const FIELD_NAME = { kind: 'Kind', title: 'Title', periodFrom: 'From', periodTo: 'To', destination: 'Where', nights: 'Nights', purpose: 'Purpose', notes: 'Notes' };
+const KIND_WORD = { trip: 'Trip', period: 'Month', case: 'Other' };
+const _now = (k, v) => (v === null || v === undefined || v === '' ? 'empty' : k === 'kind' ? KIND_WORD[v] || v : String(v).length > 60 ? `${String(v).slice(0, 59)}…` : String(v));
+function _editCase(p, actor) {
+  const r = p.reportId ? reports.getReport(p.reportId) : null;
+  if (!r) fail(404, 'The case is gone.');
+  if (r.userId !== actor.id) fail(403, 'Only the person whose case this is can change its details.');
+  if (r.status === 'draft' || !wf.isEditable(r)) fail(409, `A ${r.status} case cannot be edited here.`);
+  for (const [k, was] of Object.entries(p.from || {})) {
+    if (!sameCover(r[k], was)) fail(409, `The case changed after this was proposed: ${FIELD_NAME[k] || k} is now ${_now(k, r[k])}. Ask the assistant again.`);
+  }
+  let patch;
+  try { patch = coverPatch(p.patch || {}); }
+  catch (err) { fail(400, err.message); }
+  if (!Object.keys(patch).length) fail(400, 'The card has nothing to change.');
+  return reports.updateReport(r.id, patch, { actorId: actor.id, via: 'assistant' });
 }
 
 async function apply(id, actor) {

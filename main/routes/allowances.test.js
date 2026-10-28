@@ -42,7 +42,8 @@ describe('routes/allowances', () => {
         description: 'India: 4 days (first and last at 75%) × INR 4,000', baseTotal: 229.74, flags: [] });
       expect(row.lines).toEqual([expect.objectContaining({ category: 'Meals', amount: 14000, currency: 'INR', fxRate: 0.01641, baseAmount: 229.74 })]);
       expect(res.body).toMatchObject({ editable: true, isOwner: true });
-      expect(res.body.report.events.at(-1)).toMatchObject({ action: 'edited', note: 'Per diem added: India: 4 days (first and last at 75%) × INR 4,000' });
+      // the AI's own line about the destination and nights it filled may follow (reports/cover-auto.js)
+      expect(res.body.report.events.filter(e => e.action === 'edited').at(-1)).toMatchObject({ note: 'Per diem added: India: 4 days (first and last at 75%) × INR 4,000' });
       // the dinner inside the per diem's days is worth a look; the per diem itself is not
       expect(res.body.report.expenses.find(e => e.id === d.id).flags.map(f => f.code)).toEqual(['per-diem-meal']);
       // the receipts list, which knows only the case's dates, says the same
@@ -61,7 +62,7 @@ describe('routes/allowances', () => {
       expect(rows[0].id).not.toBe(first);
       expect(rows[0].total).toBe(18000);
       expect(store.getExpense(first)).toBeNull();
-      expect(res.body.report.events.at(-1).note).toBe('Per diem replaced: India: 5 days (first and last at 75%) × INR 4,000');
+      expect(res.body.report.events.filter(e => e.action === 'edited').at(-1).note).toBe('Per diem replaced: India: 5 days (first and last at 75%) × INR 4,000');
     });
 
     test('who may: the owner; an admin who can see the case is refused, anyone else does not see it', async () => {

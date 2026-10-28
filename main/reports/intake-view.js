@@ -1,7 +1,8 @@
 const db = require('../db');
 const readQueue = require('../receipts/read-queue');
 const { flagsFor } = require('../receipts/flags');
-const { suggestCover, findMatch } = require('./cover-suggest');
+const { findMatch } = require('./cover-suggest');
+const { caseSuggestion } = require('./cover-help');
 
 // What the New case page and the case page poll while receipts go in: one row
 // per file the person sent, how far its read has got, and what came out of it.
@@ -82,7 +83,10 @@ function intakeView(report, { baseCurrency, today }) {
              destination: report.destination, nights: report.nights, advances: report.advances, notes: report.notes },
     totals: report.totals || null,
     coverAi: report.coverAi || { auto: [], user: [] },
-    suggestion: suggestCover(report.expenses, ctx),
+    // What the AI makes of the case for the kind it is: a draft's whole
+    // cover; for a case already created, its own kind and the dates the
+    // receipts beside them say (reports/cover-help.js).
+    suggestion: caseSuggestion(report, ctx),
     match: report.status === 'draft' ? findMatch(report.id, report.userId) : null,
   };
 }

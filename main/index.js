@@ -126,6 +126,9 @@ app.use('/api/reports',   require('./routes/allowances'));
 app.use('/api/reports',   require('./routes/activity'));
 // A case's intake pushed as it changes (routes/intake-stream.js).
 app.use('/api/reports',   require('./routes/intake-stream'));
+// What the receipts say about a case's details, and handing a detail back to
+// the AI (routes/cover.js), ahead of the case routes.
+app.use('/api/reports',   require('./routes/cover'));
 app.use('/api/reports',   reportRoutes);
 // Mail a provider forwards to someone's receipts address (routes/inbound.js).
 // Answered only when the box is set up for it; its own secret, not a session.

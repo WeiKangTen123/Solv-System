@@ -5,9 +5,11 @@ const db = require('../db');
 // and how many nights. The same receipts always give the same cover, and the
 // person can see why (`basis`).
 //
-// The purpose is never suggested. It is the business reason for the spend,
+// The purpose is never filled in. It is the business reason for the spend,
 // which is on no receipt, and a reader that made one up would be putting
-// words in the claimant's mouth on a document they sign.
+// words in the claimant's mouth on a document they sign. What the person is
+// offered instead is a plain account of the receipts and their own earlier
+// purposes, saved only when they pick one (cover-help.js).
 
 // The country a currency is spent in, for the currencies that have one. The
 // euro has no single country, so a euro receipt with no address says nothing
@@ -165,4 +167,6 @@ function findMatch(caseId, userId) {
   return row ? { id: row.id, number: row.number, title: row.title, periodFrom: row.period_from, periodTo: row.period_to } : null;
 }
 
-module.exports = { suggestCover, findMatch, countryName, monthSpan, dayRange, CURRENCY_COUNTRY };
+// usable and ranked are the same rules cover-help.js builds its source line
+// and purpose draft from, so they cannot count different receipts.
+module.exports = { suggestCover, findMatch, countryName, monthSpan, dayRange, CURRENCY_COUNTRY, MONTH, usable: _usable, ranked: _ranked };
