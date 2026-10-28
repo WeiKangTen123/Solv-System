@@ -24,8 +24,26 @@ const CATEGORY_NAMES = CATEGORIES.map(c => c.name);
 // "staff  welfare", "Entertainment / Meals" and "SOFTWARE/UTILITIES" all mean
 // a listed category; a model is allowed to be sloppy about case and spacing,
 // not about which categories exist.
-const _key = v => String(v).toLowerCase().replace(/\s*\/\s*/g, '/').replace(/\s+/g, ' ').trim();
+const _key = v => String(v).toLowerCase().replace(/\s+and\s+/g, ' & ').replace(/\s*([/&])\s*/g, '$1').replace(/[.:]+$/, '').replace(/\s+/g, ' ').trim();
+// The words a reader uses for a listed category instead of its name. A hotel
+// line it called "Accommodation", or a ride it called "Taxi", was dropped as
+// an invented category and the line fell back to whatever the receipt was.
+// Only words that mean one category: "Gas" (fuel or a utility?) and
+// "Groceries" (a meal or supplies?) are left out on purpose.
+const SYNONYMS = {
+  'Lodging': ['hotel', 'hotels', 'accommodation', 'accommodations', 'accomodation', 'lodging & accommodation', 'room', 'rooms', 'room charge', 'room charges'],
+  'Air & Transport': ['transport', 'transportation', 'taxi', 'taxis', 'ride', 'rides', 'ride-hailing', 'travel', 'airfare', 'air fare', 'air', 'flight', 'flights', 'train', 'bus', 'parking', 'toll', 'tolls', 'public transport', 'air/transport'],
+  'Meals': ['food', 'f&b', 'food & beverage', 'food & beverages', 'food & drink', 'meal', 'dining', 'restaurant', 'breakfast', 'lunch', 'dinner', 'beverages', 'drinks', 'meals & entertainment', 'room service'],
+  'Entertainment': ['client entertainment', 'hospitality', 'events'],
+  'Phone': ['telephone', 'mobile', 'telecom', 'telecommunications', 'telco', 'internet', 'roaming'],
+  'Fuel/Mileage': ['fuel', 'petrol', 'diesel', 'mileage', 'ev charging'],
+  'Office Supplies': ['stationery', 'office', 'office supply', 'supplies'],
+  'Software/Utilities': ['software', 'utilities', 'subscription', 'subscriptions', 'saas', 'cloud'],
+  'Medical/Dental': ['medical', 'dental', 'clinic', 'pharmacy', 'medicine', 'health'],
+  'Other': ['others', 'misc', 'miscellaneous', 'sundry', 'sundries'],
+};
 const _byKey = new Map(CATEGORIES.map(c => [_key(c.name), c.name]));
+for (const [name, words] of Object.entries(SYNONYMS)) for (const w of words) if (!_byKey.has(_key(w))) _byKey.set(_key(w), name);
 function canonicalCategory(value) {
   if (typeof value !== 'string' || !value.trim()) return null;
   return _byKey.get(_key(value)) || null;

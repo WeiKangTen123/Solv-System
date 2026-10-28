@@ -107,6 +107,61 @@ describe('receipts/flags', () => {
   });
 });
 
+describe('receipts/flags, from what the reader saw', () => {
+  // A receipt read with checks (aiRead.checks, read-receipt.js) that found nothing.
+  const none = { subtotalMismatch: null, chargedTwice: [], people: [], adjusted: null, dateOrder: null };
+  const read = (checks, extra = {}) => good({ aiRead: { total: 10.9, checks: { ...none, ...checks } }, ...extra });
+
+  test('checks that found nothing, or a receipt read before there were checks, say nothing', () => {
+    expect(codes(read({}))).toEqual([]);
+    expect(codes(good({ aiRead: { total: 10.9 } }))).toEqual([]);
+    expect(codes(good({ aiRead: null }))).toEqual([]);
+  });
+
+  test('split-people names the other people on the lines, and goes when their lines do', () => {
+    const lines = [{ amount: 5.9, baseAmount: 5.9 }, { amount: 3, baseAmount: 3, onBehalfOf: 'Tan Suan Kuan' }, { amount: 2, baseAmount: 2, onBehalfOf: 'Tan Suan Kuan' }];
+    expect(flagsFor(good({ lines }), null, opts)).toEqual([{ code: 'split-people', level: 'yellow', text: 'Split between you and Tan Suan Kuan: check each person\'s lines.', field: 'lines' }]);
+    const three = [{ amount: 4.9, baseAmount: 4.9 }, { amount: 3, baseAmount: 3, onBehalfOf: 'Lim Wei Jie' }, { amount: 3, baseAmount: 3, onBehalfOf: 'Rahman Aisha' }];
+    expect(flagsFor(good({ lines: three }), null, opts)[0].text).toBe('Split between you, Lim Wei Jie and Rahman Aisha: check each person\'s lines.');
+    expect(codes(good({ lines: [{ amount: 10.9, baseAmount: 10.9 }], aiRead: { total: 10.9, checks: { ...none, people: ['Tan Suan Kuan'] } } }))).toEqual([]);
+  });
+
+  test('subtotal-mismatch, in any currency, while the figures are the ones read', () => {
+    const e = read({ subtotalMismatch: { subtotal: 2780, tax: 300, total: 3058 } }, { currency: 'JPY', subTotal: 2780, tax: 300, total: 3058, lines: [{ amount: 3058, baseAmount: 27.4 }], aiRead: undefined });
+    e.aiRead = { total: 3058, checks: { ...none, subtotalMismatch: { subtotal: 2780, tax: 300, total: 3058 } } };
+    expect(flagsFor(e, null, opts)).toEqual([{ code: 'subtotal-mismatch', level: 'yellow', text: 'The subtotal of 2,780.00 and the tax of 300.00 do not come to the total of 3,058.00, even with the charges on the receipt; check the figures.', field: 'total' }]);
+    // Somebody corrected the tax: they have looked.
+    expect(codes({ ...e, tax: 278 })).toEqual([]);
+  });
+
+  test('charged-twice names the charge and how often it appears', () => {
+    const f = flagsFor(read({ chargedTwice: [{ description: 'MoMo Cafe Dinner Food', amount: 1296.25, count: 2 }] }), null, opts);
+    expect(f).toEqual([{ code: 'charged-twice', level: 'yellow', text: 'MoMo Cafe Dinner Food (1,296.25) appears twice on the receipt, so it may have been billed twice; check with the merchant.', field: 'lines' }]);
+    const two = flagsFor(read({ chargedTwice: [{ description: 'Dinner', amount: 50, count: 3 }, { description: 'Soda', amount: 5, count: 2 }] }), null, opts);
+    expect(two[0].text).toBe('Dinner (50.00) appears 3 times and Soda (5.00) appears twice on the receipt, so they may have been billed twice; check with the merchant.');
+  });
+
+  test('lines-adjusted says by how much, and which way', () => {
+    expect(flagsFor(read({ adjusted: { amount: 20, pct: 15.2 } }), null, opts)).toEqual([{ code: 'lines-adjusted', level: 'yellow',
+      text: 'The items read came to 20.00 less than the total (15.2%), so the lines were made to match it; check them against the receipt.', field: 'lines' }]);
+    expect(flagsFor(read({ adjusted: { amount: -4, pct: 3.1 } }), null, opts)[0].text).toMatch(/^The items read came to 4\.00 more than the total \(3\.1%\)/);
+  });
+
+  test('date-order names the other reading, until the date is changed', () => {
+    const e = read({ dateOrder: { read: '2026-09-04', other: '2026-04-09' } });
+    expect(flagsFor(e, null, opts)).toEqual([{ code: 'date-order', level: 'yellow', text: 'The date was read month first, as 4 Sep 2026; read day first it would be 9 Apr 2026. Check it on the receipt.', field: 'receiptDate' }]);
+    expect(codes({ ...e, receiptDate: '2026-04-09' })).toEqual([]);
+  });
+
+  test('a per diem or mileage claim has none of them', () => {
+    const all = { subtotalMismatch: { subtotal: 1, tax: 1, total: 10.9 }, chargedTwice: [{ description: 'x', amount: 1, count: 2 }], people: ['A'], adjusted: { amount: 1, pct: 9 }, dateOrder: { read: '2026-09-04', other: '2026-04-09' } };
+    const lines = [{ amount: 10.9, baseAmount: 10.9, onBehalfOf: 'A' }];
+    expect(codes(good({ source: 'per_diem', lines, subTotal: 1, tax: 1, aiRead: { checks: all } }))).toEqual([]);
+    expect(codes(good({ source: 'mileage', lines, subTotal: 1, tax: 1, aiRead: { checks: all } }))).toEqual([]);
+    expect(codes(good({ lines, subTotal: 1, tax: 1, aiRead: { total: 10.9, checks: all } }))).toEqual(['gst-mismatch', 'split-people', 'subtotal-mismatch', 'charged-twice', 'lines-adjusted', 'date-order']);
+  });
+});
+
 describe('receipts/flags, from the company policy', () => {
   let flags, policy, users, companyId;
   beforeEach(async () => {

@@ -372,6 +372,107 @@ describe('receipts/read-receipt', () => {
     expect(after).toMatchObject({ city: 'Mumbai', country: 'IN', docType: 'hotel' });
     expect(after.aiRead).toMatchObject({ city: 'Mumbai', country: 'IN', docType: 'hotel' });
   });
+
+  test('what was worth a look is kept with what the reader read, and stays when the lines are edited', async () => {
+    const { r, e } = seed();
+    const item = (description, unitAmount, category, onBehalfOf = null) => ({ description, unitAmount, category, onBehalfOf });
+    parser.parseReceiptImage.mockResolvedValue({ split: false, receipts: [{ merchant: 'Harbourview', date: '2026-10-14', total: 1280, currency: 'SGD', category: 'Lodging', docType: 'hotel', country: 'SG', confidence: 'high',
+      lineItems: [item('Room Charge', 560, 'Lodging'), item('Room Charge', 560, 'Lodging', 'Ong Mei Lin'), item('Breakfast CHECK# 5120', 32, 'Meals'), item('Breakfast CHECK# 5120', 32, 'Meals'), item('Dinner', 96, 'Meals')] }] });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('x'), mime: 'image/jpeg' });
+    const checks = store.getExpense(e.id).aiRead.checks;
+    expect(checks).toEqual({ subtotalMismatch: null, chargedTwice: [{ description: 'Breakfast CHECK# 5120', amount: 32, count: 2 }], people: ['Ong Mei Lin'], adjusted: null, dateOrder: null });
+    store.replaceLines(e.id, [{ category: 'Lodging', amount: 1280, currency: 'SGD' }], { force: true });
+    expect(store.getExpense(e.id).aiRead.checks.people).toEqual(['Ong Mei Lin']);
+  });
+
+  test('a refund is read as no amount, with a note that says why', async () => {
+    const { r, e } = seed();
+    parser.parseReceiptImage.mockResolvedValue({ split: false, receipts: [{ merchant: 'Office Depot', date: '2026-10-21', total: null, refund: true, currency: 'USD', category: 'Office Supplies', confidence: 'high', lineItems: [] }] });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('x'), mime: 'image/jpeg' });
+    const after = store.getExpense(e.id);
+    expect(after).toMatchObject({ merchant: 'Office Depot', total: 0, errorMsg: read.REFUND_NOTE, lines: [] });
+    expect(read.REFUND_NOTE).toBe('This looks like a refund; refunds are not claimed here.');
+  });
+});
+
+describe('receipts/read-receipt — the difference to the total, and the read-time checks', () => {
+  const { buildLines, readChecks } = require('./read-receipt');
+  const item = (description, unitAmount, category, onBehalfOf = null) => ({ description, unitAmount, category, onBehalfOf });
+  const shown = r => buildLines(r, 'Other').map(l => [l.category, l.onBehalfOf, l.amount]);
+
+  test('a dinner the reader missed goes on the claimant\'s own line in the receipt\'s category, never a colleague\'s', () => {
+    // It used to go on the largest line: the colleague's room.
+    const folio = { merchant: 'Hotel', total: 1300, category: 'Lodging', lineItems: [item('Room', 500, 'Lodging'), item('Room', 600, 'Lodging', 'Colleague A'), item('Dinner', 100, 'Meals')] };
+    expect(shown(folio)).toEqual([['Lodging', null, 600], ['Lodging', 'Colleague A', 600], ['Meals', null, 100]]);
+    expect(readChecks(folio, buildLines(folio, 'Other')).adjusted).toEqual({ amount: 100, pct: 7.7 });
+  });
+
+  test('with no line of the claimant\'s own in that category, one is made for the difference', () => {
+    const r = { merchant: 'Hotel', description: '[Lodging] Rooms @ Hotel', total: 1010, category: 'Lodging', lineItems: [item('Room', 1000, 'Lodging', 'Colleague A')] };
+    expect(buildLines(r, 'Other')).toEqual([
+      { category: 'Lodging', description: 'Room', amount: 1000, onBehalfOf: 'Colleague A' },
+      { category: 'Lodging', description: '[Lodging] Rooms @ Hotel', amount: 10, onBehalfOf: null },
+    ]);
+    // Rounding within 2% is not worth a look.
+    expect(readChecks(r, buildLines(r, 'Other')).adjusted).toBeNull();
+  });
+
+  test('a difference the claimant\'s own line cannot carry puts the total on one line', () => {
+    const r = { merchant: 'Jumbo', total: 99, category: 'Meals', description: '[Meals] Dinner @ Jumbo', lineItems: Array.from({ length: 10 }, (_, i) => item(`Dinner ${i}`, 10, 'Meals', `Guest ${i}`)) };
+    expect(buildLines(r, 'Other')).toEqual([{ category: 'Meals', description: '[Meals] Dinner @ Jumbo', amount: 99, onBehalfOf: null }]);
+  });
+
+  test('subtotal and tax that do not come to the total, in any currency, with the charges between allowed', () => {
+    const r = (sub, tax, total, lineItems = []) => readChecks({ subTotal: sub, tax, total, lineItems }, []).subtotalMismatch;
+    expect(r(99, 8.54, 107.54)).toBeNull();
+    // A San Francisco bill: subtotal, sales tax, then a city surcharge and the tip.
+    expect(r(99, 8.54, 131.5, [item('Steak', 99), item('Sales Tax', 8.54), item('SF Mandate 4%', 3.96), item('Tip', 20)])).toBeNull();
+    // Kuala Lumpur: SST and a service charge, and a rounding of two sen.
+    expect(r(23.9, 1.58, 27.85, [item('Nasi', 23.9), item('Service Charge 10%', 2.39), item('SST 6%', 1.58), item('Rounding Adj', -0.02)])).toBeNull();
+    // The same bill with a total misread by a digit; two cents out is still rounding.
+    expect(r(23.9, 1.58, 28.85, [item('Nasi', 23.9), item('Service Charge 10%', 2.39), item('SST 6%', 1.58), item('Rounding Adj', -0.02)])).toEqual({ subtotal: 23.9, tax: 1.58, total: 28.85 });
+    expect(r(23.9, 1.58, 27.87, [item('Nasi', 23.9), item('Service Charge 10%', 2.39), item('SST 6%', 1.58)])).toBeNull();
+    expect(r(2780, 300, 3058)).toEqual({ subtotal: 2780, tax: 300, total: 3058 });
+    expect(r(100, 0.01, 100.03)).toBeNull();
+    expect(r(null, 1, 10)).toBeNull();
+    expect(r(9, null, 10)).toBeNull();
+  });
+
+  test('the same charge for the same person twice is named once, with its count; taxes and colleagues\' twins are not', () => {
+    const r = { total: 3000, lineItems: [
+      item('MoMo Cafe Dinner Food  Room# 110 : CHECK# 11603631', 1296.25, 'Meals'), item('MoMo Cafe Dinner Food Room# 110 : CHECK# 11603631', 1296.25, 'Meals'),
+      item('CGST Momo Cafe F&B 9%', 139.15, 'Meals'), item('CGST Momo Cafe F&B 9%', 139.15, 'Meals'),
+      item('Accomodation Charges', 17575, 'Lodging'), item('Accomodation Charges', 17575, 'Lodging', 'Lim Wei Jie'),
+      item('Promo', -2, 'Meals'), item('Promo', -2, 'Meals'),
+    ] };
+    expect(readChecks(r, []).chargedTwice).toEqual([{ description: 'MoMo Cafe Dinner Food Room# 110 : CHECK# 11603631', amount: 1296.25, count: 2 }]);
+  });
+
+  test('the other people are those the lines carry', () => {
+    const lines = [{ onBehalfOf: null }, { onBehalfOf: 'Lim Wei Jie' }, { onBehalfOf: 'Lim Wei Jie' }, { onBehalfOf: 'Tan Ah Kow' }];
+    expect(readChecks({ total: 1 }, lines).people).toEqual(['Lim Wei Jie', 'Tan Ah Kow']);
+  });
+
+  test('a month-first date whose day could be its month reads two ways', () => {
+    const d = r => readChecks({ total: 10, ...r }, []).dateOrder;
+    expect(d({ date: '2026-10-09', country: 'US', datePrinted: '10/09/2026' })).toEqual({ read: '2026-10-09', other: '2026-09-10' });
+    expect(d({ date: '2026-10-09', country: 'PH', dateOrder: 'MDY' })).toEqual({ read: '2026-10-09', other: '2026-09-10' });
+    expect(d({ date: '2026-10-09', country: 'US' })).toEqual({ read: '2026-10-09', other: '2026-09-10' });
+    // Not when the day is over 12, the two are the same, the month is a word,
+    // the year comes first, the receipt is day-first, or the other day is to come.
+    expect(d({ date: '2026-10-21', country: 'US', datePrinted: '10/21/2026' })).toBeNull();
+    expect(d({ date: '2026-10-10', country: 'US', datePrinted: '10/10/2026' })).toBeNull();
+    expect(d({ date: '2026-10-09', country: 'US', datePrinted: 'Oct 9, 2026' })).toBeNull();
+    expect(d({ date: '2026-10-09', country: 'US', datePrinted: '2026-10-09' })).toBeNull();
+    expect(d({ date: '2026-10-09', country: 'SG', datePrinted: '09/10/2026', dateOrder: 'DMY' })).toBeNull();
+    expect(d({ date: '2025-01-12', country: 'US', datePrinted: '01/12/2025' })).toEqual({ read: '2025-01-12', other: '2025-12-01' });
+    expect(d({ date: '2099-10-12', country: 'US', datePrinted: '10/12/2099' })).toBeNull();   // 10 December 2099 has not happened
+  });
+
+  test('a read with nothing to remark on has empty checks, and no read has none', () => {
+    expect(readChecks({ total: 10, lineItems: [item('Latte', 10, 'Meals')] }, [{ onBehalfOf: null }])).toEqual({ subtotalMismatch: null, chargedTwice: [], people: [], adjusted: null, dateOrder: null });
+    expect(readChecks(null, [])).toBeNull();
+  });
 });
 
 describe('receipts/read-receipt — reading one part of a file again', () => {

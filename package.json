@@ -11,6 +11,7 @@
     "build:ui": "npm --prefix ui run build",
     "test": "jest --runInBand",
     "test:receipt-case": "node main/scripts/test-receipt-case.js",
+    "eval:reader": "node main/scripts/eval/index.js",
     "lint": "eslint main ui/src",
     "backup": "node main/db/backup.js",
     "backup:pull": "bash main/scripts/backup-pull.sh",
