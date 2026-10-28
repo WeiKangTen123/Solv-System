@@ -19,6 +19,10 @@ const logger = require('../utils/logger');
 // page to point at. A receipt still being read has no flags: whatever is on
 // it is about to be replaced.
 //
+// Five yellow ones are about the reading: the lines carry other people's
+// charges, the subtotal and tax do not come to the total, a charge appears
+// twice, the lines were adjusted to meet the total, and a date reads two ways.
+//
 // The company's policy (store/policy.js) adds four yellow ones: over a
 // category's limit, older than the maximum age, dated on a weekend, and a
 // meal on a day the case's per diem already pays for. The policy is read
@@ -82,6 +86,42 @@ function _baseByCategory(e, lines) {
 
 const _days = n => `${n} day${n === 1 ? '' : 's'}`;
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const _day = iso => `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
+const _names = list => (list.length < 2 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
+const _same = (a, b) => toCents(a) !== null && toCents(a) === toCents(b);
+
+// ── Yellow, from what the reader saw ──
+//
+// The lines carry another person's charges: a colleague's room transferred
+// onto this folio. Said from the lines as they stand, so it goes once the
+// person moves or removes them. The rest come from the checks made when the
+// receipt was read (aiRead.checks, read-receipt.js), and each says what the
+// reader saw. The two about a figure go quiet once that figure is changed,
+// since whoever changed it has looked.
+function _readFlags(e, lines, add) {
+  const others = [...new Set(lines.map(l => l.onBehalfOf).filter(Boolean))];
+  if (others.length) add('yellow', 'split-people', `Split between ${_names(['you', ...others])}: check each person's lines.`, 'lines');
+  const c = e.aiRead && e.aiRead.checks;
+  if (!c) return;
+  const sm = c.subtotalMismatch;
+  if (sm && _same(e.subTotal, sm.subtotal) && _same(e.tax, sm.tax) && _same(e.total, sm.total)) {
+    add('yellow', 'subtotal-mismatch', `The subtotal of ${formatAmount(sm.subtotal)} and the tax of ${formatAmount(sm.tax)} do not come to the total of ${formatAmount(sm.total)}, even with the charges on the receipt; check the figures.`, 'total');
+  }
+  if (Array.isArray(c.chargedTwice) && c.chargedTwice.length) {
+    const what = c.chargedTwice.slice(0, 3).map(x => `${x.description} (${formatAmount(x.amount)}) appears ${x.count === 2 ? 'twice' : `${x.count} times`}`);
+    add('yellow', 'charged-twice', `${_names(what)} on the receipt, so ${what.length > 1 ? 'they' : 'it'} may have been billed twice; check with the merchant.`, 'lines');
+  }
+  if (c.adjusted) {
+    const { amount, pct } = c.adjusted;
+    add('yellow', 'lines-adjusted', `The items read came to ${formatAmount(Math.abs(amount))} ${amount > 0 ? 'less' : 'more'} than the total (${pct}%), so the lines were made to match it; check them against the receipt.`, 'lines');
+  }
+  const d = c.dateOrder;
+  if (d && d.read && d.other && e.receiptDate === d.read) {
+    add('yellow', 'date-order', `The date was read month first, as ${_day(d.read)}; read day first it would be ${_day(d.other)}. Check it on the receipt.`, 'receiptDate');
+  }
+}
+
 function flagsFor(expense, report = null, { baseCurrency = 'SGD', today = null } = {}) {
   const e = expense;
   if (!e || e.status === 'reading') return [];
@@ -126,6 +166,7 @@ function flagsFor(expense, report = null, { baseCurrency = 'SGD', today = null }
     add('yellow', 'edited-amount', `The total was changed from the ${formatAmount(read)} the reader read.`, 'total');
   }
   if (today && e.receiptDate && e.receiptDate > today) add('yellow', 'future-date', 'The date is in the future.', 'receiptDate');
+  if (!allowance) _readFlags(e, lines, add);
 
   // ── Yellow, from the company's policy ──
   const policy = _policy(e, report);
