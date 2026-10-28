@@ -192,7 +192,7 @@ router.patch('/:id', requireAuth, (req, res) => {
   const r = _load(req, res); if (!r) return;
   if (!_owns(req, r)) return res.status(403).json({ error: OWNER_ONLY });
   if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} case cannot be edited` });
-  try { res.json(_view(reports.updateReport(r.id, _coverPatch(req.body || {})), req)); }
+  try { res.json(_view(reports.updateReport(r.id, _coverPatch(req.body || {}), { actorId: req.user.id }), req)); }
   catch (err) { res.status(400).json({ error: err.message }); }
 });
 
@@ -287,11 +287,20 @@ router.post('/:id/expenses', requireAuth, (req, res) => {
   res.json({ ..._view(reports.getReport(r.id), req), skipped });
 });
 
+// A receipt taken out of the case, into My receipts with no case. Through the
+// one rule for filing (receipts/edit.js fileInCase), like every other door
+// that moves a receipt: it asks what this route asked and a duplicate's lock
+// besides, writes the receipt's own log, and names it in the case's history.
+// The store's removeExpense alone used to do this, and left no trace of it
+// anywhere.
 router.delete('/:id/expenses/:expenseId', requireAuth, (req, res) => {
   const r = _load(req, res); if (!r) return;
   if (!_owns(req, r)) return res.status(403).json({ error: OWNER_ONLY });
   if (!wf.isEditable(r)) return res.status(409).json({ error: `A ${r.status} case cannot be changed` });
-  if (!reports.removeExpense(r.id, req.params.expenseId)) return res.status(404).json({ error: 'That receipt is not in this case' });
+  const e = store.getExpense(req.params.expenseId);
+  if (!e || e.reportId !== r.id) return res.status(404).json({ error: 'That receipt is not in this case' });
+  try { require('../receipts/edit').fileInCase(e.id, null, req.user); }
+  catch (err) { return _fail(res, err); }
   coverAuto.refresh(r.id);
   res.json(_view(reports.getReport(r.id), req));
 });
@@ -357,7 +366,8 @@ router.post('/:id/review-all', requireAuth, (req, res) => {
     // Exactly the single-receipt rule (receipts/edit.js), so the two cannot
     // drift apart again: this copy once kept the assumed-currency warning the
     // single route clears.
-    try { edit.setStatus(e.id, 'reviewed', req.user); reviewed.push(e.id); }
+    // One event for the lot, below, rather than one per receipt.
+    try { edit.setStatus(e.id, 'reviewed', req.user, { caseEvent: false }); reviewed.push(e.id); }
     catch (err) {
       if (!err.status) throw err;
       skipped.push({ id: e.id, merchant: e.merchant, why: err.message.replace(/^./, c => c.toLowerCase()) });

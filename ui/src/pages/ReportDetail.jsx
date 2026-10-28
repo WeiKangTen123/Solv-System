@@ -332,7 +332,8 @@ function CasePage({ id }) {
         <div className="alert alert-info cs-banner">
           <span>
             This is {r.ownerName || r.ownerEmail || 'someone else'}&rsquo;s case. You can read and export it
-            {view.canEditDetails ? <>, and correct a receipt&rsquo;s details in <Link to={`/reports/${id}/review`}>the review</Link>; every change is logged and they can see it</> : ''}.
+            {view.canEditDetails ? <>, and correct a receipt&rsquo;s details in <Link to={`/reports/${id}/review`}>the review</Link>. Each change you
+              make is listed in the case&rsquo;s <Link to="?tab=activity" replace>Activity</Link> under your name, marked admin, where they see it</> : ''}.
             Filing receipts, claiming and posting to Xero stay theirs.
           </span>
         </div>
@@ -376,7 +377,7 @@ function CasePage({ id }) {
                          editing={editing} onEdit={on => { setEditing(on); if (!on) refresh(); }} />
           </div>
           <div {...tabPanelProps('case', 'activity')} hidden={tab !== 'activity'} className="cs-panel">
-            <CaseActivity report={r} base={base} tz={user?.timezone} />
+            <CaseActivity report={r} base={base} tz={user?.timezone} active={tab === 'activity'} />
           </div>
         </div>
         {!isMobile && <aside className="cs-side" aria-label="Totals">{totals}</aside>}

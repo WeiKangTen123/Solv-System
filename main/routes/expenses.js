@@ -240,9 +240,14 @@ router.post('/:id/merge', requireAuth, (req, res) => {
   res.json(_out(merged, req));
 });
 
+// A receipt deleted from a case is named in the case's history: its own log
+// goes with it, and the case would otherwise have nothing to show it was ever
+// there.
 router.delete('/:id', requireAuth, (req, res) => {
   const e = _loadActionable(req, res); if (!e) return;
   require('../receipts/remove').removeExpense(e);
+  const reports = require('../store/reports');
+  if (e.reportId && reports.head(e.reportId)) reports.addEvent(e.reportId, req.user.id, 'deleted', changes.receiptName(e));
   logger.info('Expense deleted', { id: e.id, by: req.user.id });
   res.json({ ok: true });
 });

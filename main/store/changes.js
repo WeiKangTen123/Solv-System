@@ -82,4 +82,40 @@ function list(expenseId) {
                  via: r.via, actorRole: r.actor_role, actorId: r.actor_id, actorName: r.actor_name || r.actor_email || null }));
 }
 
-module.exports = { record, list, diff, linesSummary, rateSummary, FIELDS, LABEL };
+// ── Checks one after another ─────────────────────────────────────────────────
+// A person checking a case's receipts one at a time is one thing they did,
+// not thirty: the case's history keeps one `checked` event for the run
+// (store/reports.js noteChecked) and the Activity tab folds the receipts'
+// own rows into it (reports/activity.js). Both have to agree on what one run
+// is, so it is said once, here: checks by the same person, each within
+// RUN_GAP_MS of the next, counted back from the newest.
+const RUN_GAP_MS = 15 * 60 * 1000;
+// `rows` are { at, ... }, newest first. Returns the run ending at the first.
+function checkRun(rows, gapMs = RUN_GAP_MS) {
+  const out = [];
+  for (const r of rows) {
+    if (out.length && Date.parse(out[out.length - 1].at) - Date.parse(r.at) > gapMs) break;
+    out.push(r);
+  }
+  return out;
+}
+// The receipts of a case this person marked checked from `since` on, newest
+// first. Only receipts still in the case: one taken out meanwhile wrote an
+// event of its own, which ended the run.
+function checksInCase(reportId, actorId, since = '') {
+  return db.prepare(`SELECT c.expense_id AS expenseId, c.at FROM expense_changes c JOIN expenses e ON e.id = c.expense_id
+                     WHERE e.report_id = ? AND c.actor_id = ? AND c.field = 'status' AND c.new_value = ? AND c.at >= ?
+                     ORDER BY c.at DESC, c.id DESC`).all(reportId, actorId, STATUS_WORDS.reviewed, since || '');
+}
+
+// "Grab Taxi, SGD 12.50, 1 Sep 2026": a receipt named the way a person would
+// find it again, for a case's history once the receipt is no longer there
+// to point at (taken out, or deleted).
+function receiptName(e) {
+  if (!e) return 'A receipt';
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(e.receiptDate || '')) ? require('../reports/cover-suggest').dayRange(e.receiptDate, e.receiptDate) : null;
+  return [e.merchant || 'A receipt with no merchant', e.total !== null && e.total !== undefined ? `${e.currency ? `${e.currency} ` : ''}${money(e.total)}` : null, day]
+    .filter(Boolean).join(', ');
+}
+
+module.exports = { record, list, diff, linesSummary, rateSummary, checkRun, checksInCase, receiptName, FIELDS, LABEL, STATUS_WORDS, RUN_GAP_MS };

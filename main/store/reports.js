@@ -238,10 +238,33 @@ function listReports({ companyId, userId, userIds, owner, status, kind, q, ready
 // The owner's edit of the cover. Every cover field in it becomes theirs: the
 // AI fills a draft as its receipts are read, and must not then change a
 // title somebody typed, or put back a destination somebody cleared.
-function updateReport(id, patch) {
-  db.transaction(() => _saveCover(id, patch, { by: 'user' }))();
+//
+// What changed goes in the case's history as `details_edited`, one event per
+// stretch of editing (noteDetailsEdited). Only the cover's owner edits it,
+// here or through the assistant on their behalf, so the owner is the actor
+// when the caller does not say; `via: 'assistant'` says it was the
+// assistant's proposal they applied. A draft writes none: its details are
+// being put together, and "Created" is the event that stands for them.
+// The AI's own writes go through applyAutoCover and are not edits by anyone.
+function updateReport(id, patch, { actorId = null, via = 'app' } = {}) {
+  db.transaction(() => {
+    const before = db.prepare('SELECT * FROM expense_reports WHERE id = ?').get(id);
+    _saveCover(id, patch, { by: 'user' });
+    if (!before || before.status === 'draft') return;
+    const after = db.prepare('SELECT * FROM expense_reports WHERE id = ?').get(id);
+    const fields = DETAIL_FIELDS.filter(([, cols]) => cols.some(c => (before[c] ?? null) !== (after[c] ?? null))).map(([label]) => label);
+    if (fields.length) noteDetailsEdited(id, actorId || before.user_id, fields, via);
+  })();
   return getReport(id);
 }
+// The cover's fields as the history names them, in the order they are listed:
+// the two dates are one thing to a person, "the dates".
+const DETAIL_FIELDS = [
+  ['kind', ['kind']], ['title', ['title']], ['dates', ['period_from', 'period_to']], ['destination', ['destination']],
+  ['nights', ['nights']], ['purpose', ['purpose']], ['advances', ['advances_cents']], ['notes', ['notes']],
+];
+const DETAIL_ORDER = DETAIL_FIELDS.map(([label]) => label);
+const VIA_ASSISTANT = ' (via the assistant)';
 // `by: 'user'` moves the fields to cover_ai.user and out of auto; `by: 'auto'`
 // leaves cover_ai to the caller (reports/cover-auto.js keeps it itself).
 function _saveCover(id, patch, { by = 'user' } = {}) {
@@ -361,6 +384,70 @@ function mergeInto(sourceId, targetId, actorId = null) {
 function addEvent(reportId, actorId, action, note = null) {
   db.prepare('INSERT INTO report_events (report_id, actor_id, action, note, at) VALUES (?, ?, ?, ?, ?)').run(reportId, actorId || null, action, note, now());
 }
+
+// One event for a stretch of the same thing done by the same person: the
+// cover saves 600 ms after each key, and a person checks thirty receipts one
+// at a time, and a history of every keystroke and every click says nothing.
+//
+// The case's latest event is brought up to date instead of a new one written
+// when it is the same action by the same person and they did it last within
+// COALESCE_MS; its time moves to now, so it sits where the person stopped.
+// Only the latest: anything in between (a claim, the AI changing the dates)
+// starts a new one, so the history never shows a stretch spanning something
+// that happened in its middle.
+//
+// `merge(prev)` is given the event being continued (or null) and returns its
+// note, or undefined when the two cannot be one event after all.
+const COALESCE_MS = 15 * 60 * 1000;
+function coalesceEvent(reportId, actorId, action, merge) {
+  return db.transaction(() => {
+    const last = db.prepare('SELECT * FROM report_events WHERE report_id = ? ORDER BY id DESC LIMIT 1').get(reportId);
+    const at = now();
+    if (last && last.action === action && (last.actor_id || null) === (actorId || null) && Date.parse(last.at) >= Date.parse(at) - COALESCE_MS) {
+      const note = merge(last);
+      if (note !== undefined) {
+        db.prepare('UPDATE report_events SET note = ?, at = ? WHERE id = ?').run(note, at, last.id);
+        return last.id;
+      }
+    }
+    return db.prepare('INSERT INTO report_events (report_id, actor_id, action, note, at) VALUES (?, ?, ?, ?, ?)')
+      .run(reportId, actorId || null, action, merge(null), at).lastInsertRowid;
+  })();
+}
+
+// "title, dates": the fields edited in this stretch, each once, in the
+// cover's order. Edits through the assistant are a stretch of their own, so
+// the history can say whose proposal it was.
+function noteDetailsEdited(reportId, actorId, fields, via = 'app') {
+  const tail = via === 'assistant' ? VIA_ASSISTANT : '';
+  return coalesceEvent(reportId, actorId, 'details_edited', prev => {
+    let had = [];
+    if (prev) {
+      const note = String(prev.note || '');
+      if (note.endsWith(VIA_ASSISTANT) !== !!tail) return undefined;
+      had = note.slice(0, note.length - tail.length).split(', ');
+    }
+    return DETAIL_ORDER.filter(f => had.includes(f) || fields.includes(f)).join(', ') + tail;
+  });
+}
+
+// A receipt checked on its own, from any page: "3 receipts" for the run.
+// The count is of the receipts checked in the run (store/changes.js), not of
+// clicks, so one checked, unchecked and checked again is one. "Check all"
+// writes its own event (routes/reports.js review-all), which a check straight
+// after it continues.
+function noteChecked(reportId, actorId) {
+  const changes = require('./changes');
+  const _n = n => `${n} receipt${n === 1 ? '' : 's'}`;
+  return coalesceEvent(reportId, actorId, 'checked', prev => {
+    if (!prev) return _n(1);
+    // The run started after whatever the case's history said before it.
+    const before = db.prepare('SELECT at FROM report_events WHERE report_id = ? AND id < ? ORDER BY id DESC LIMIT 1').get(reportId, prev.id);
+    const run = changes.checkRun(changes.checksInCase(reportId, actorId, before ? before.at : ''));
+    const had = Number((String(prev.note || '').match(/^(\d+) receipts?$/) || [])[1]) || 0;
+    return _n(Math.max(new Set(run.map(c => c.expenseId)).size, had, 1));
+  });
+}
 function listEvents(reportId) {
   return db.prepare('SELECT ev.*, u.name AS actor_name, u.email AS actor_email FROM report_events ev LEFT JOIN users u ON u.id = ev.actor_id WHERE ev.report_id = ? ORDER BY ev.id').all(reportId)
     .map(x => ({ id: x.id, action: x.action, note: x.note, at: x.at, actorId: x.actor_id, actorName: x.actor_name || x.actor_email || null }));
@@ -368,4 +455,5 @@ function listEvents(reportId) {
 
 module.exports = {
   claimForPost, releasePost, isPosting, recordBill, POST_STALE_MS, createReport, openDraft, getReport, head, listReports, updateReport, setCoverAi, applyAutoCover,
-  setState, addExpense, removeExpense, deleteReport, mergeInto, addEvent, listEvents, nextNumber, AI_FIELDS, SORTS };
+  setState, addExpense, removeExpense, deleteReport, mergeInto, addEvent, coalesceEvent, noteDetailsEdited, noteChecked, listEvents, nextNumber,
+  AI_FIELDS, SORTS, COALESCE_MS };
