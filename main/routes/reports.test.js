@@ -48,7 +48,8 @@ describe('routes/reports', () => {
     const p = await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(emp)).expect(200);
     expect(p.body.report.status).toBe('claimed');
     expect(p.body.report.claimedAt).toBeTruthy();
-    expect(p.body.report.events.map(x => x.action)).toEqual(['created', 'claimed']);
+    // ai_details: the AI counted the nights from the case's dates when the receipt went in
+    expect(p.body.report.events.map(x => x.action)).toEqual(['created', 'ai_details', 'claimed']);
     // claiming the case claimed what was in it, and locked it
     const claimed = await request(serverFor(app)).get(`/api/expenses/${e.id}`).set(as(emp)).expect(200);
     expect(claimed.body.expense.claimed).toBe(true);
@@ -65,7 +66,7 @@ describe('routes/reports', () => {
     await request(serverFor(app)).patch(`/api/reports/${r.id}`).set(as(admin)).send({ title: 'x' }).expect(403);
     const ro = await request(serverFor(app)).post(`/api/reports/${r.id}/reopen`).set(as(emp)).expect(200);
     expect(ro.body.report.status).toBe('open');
-    expect(ro.body.report.events.map(x => x.action)).toEqual(['created', 'claimed', 'edited', 'reopened']);
+    expect(ro.body.report.events.map(x => x.action)).toEqual(['created', 'ai_details', 'claimed', 'edited', 'reopened']);
     await request(serverFor(app)).patch(`/api/expenses/${e.id}`).set(as(emp)).send({ purpose: 'Client visit' }).expect(200);
   });
 
