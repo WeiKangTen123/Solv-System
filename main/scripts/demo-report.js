@@ -25,6 +25,7 @@ const { applyFx } = require('../fx/apply');
 const { reportPayload } = require('../reports/expense-payload');
 const exporter = require('../reports/expense-export');
 const doc = require('../reports/expense-doc');
+const pdfDoc = require('../reports/expense-pdf');
 const { newId } = require('../utils/ids');
 const { buildLines } = require('../receipts/read-receipt');
 
@@ -84,7 +85,7 @@ const SAMPLES = [
   const payload = await reportPayload(report.id, { withReceipts: true });
   const name = doc.exportFilename(payload);
   const outDir = path.join(ROOT, 'docs/acceptance/exports');
-  const pdfBuf = await exporter.pdfBuffer(doc.expenseReportDoc(payload));
+  const pdfBuf = await exporter.pdfBuffer(pdfDoc.expenseReportDoc(payload));
   fs.writeFileSync(path.join(outDir, `${name}.pdf`), pdfBuf);
   fs.writeFileSync(path.join(outDir, `${name}.xlsx`), await exporter.xlsxBuffer(payload));
   fs.writeFileSync(path.join(outDir, `${name}.csv`), exporter.csvText(payload));

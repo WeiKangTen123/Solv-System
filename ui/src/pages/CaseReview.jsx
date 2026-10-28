@@ -13,6 +13,7 @@ import { fmtMoney, fmtDay } from '../utils/format';
 import { unpricedCount, unpricedText } from '../utils/caseTotals';
 import StatusBadge from '../components/StatusBadge';
 import Modal from '../components/Modal';
+import ClaimMessage from '../components/cases/ClaimMessage';
 import { PageHeader, FlagList, EmptyState, Skeleton, Menu } from '../components/ui';
 import {
   ReceiptViewer, AllowanceCard, ReceiptFields, ExchangeRatePanel, LinesEditor, HistoryDisclosure, ReviewQueue,
@@ -486,11 +487,11 @@ export default function CaseReview() {
   // saved is saved first, so the claim is of what is on screen.
   async function claim() {
     if (!view.isOwner || r.status !== 'open' || busy) return;
-    if (!(await confirm({ title: `Mark ${r.number} claimed?`, message: 'Do this once the claim has gone through your company. Its receipts are then locked; you can reopen it until it is posted to Xero.', confirmLabel: 'Mark claimed' }))) return;
+    if (!(await confirm({ title: `Mark ${r.number} claimed?`, message: <ClaimMessage company={user?.companyName} />, confirmLabel: 'Mark claimed' }))) return;
     setBusy('claim'); setClaimError(null);
     try {
       if (sel && isDirty()) await rf.save(sel.id);
-      await api.post(`/reports/${id}/claimed`, {});
+      await api.post(`/reports/${id}/claimed`, { declared: true });
       navigate(`/reports/${id}`);
     } catch (err) { setClaimError(err.message); }
     finally { setBusy(''); }

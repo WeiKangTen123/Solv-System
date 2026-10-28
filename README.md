@@ -89,7 +89,9 @@ main/
                  apply (per-line, policy, overrides)
   reports/       workflow (state machine), cover-suggest + cover-auto (the AI's case details),
                  intake-view (what the New case page polls), draft-sweep, expense-payload,
-                 expense-doc (pdfmake definition, CSV, workbook model), expense-export (bytes)
+                 expense-doc (the model, CSV, workbook), expense-pdf (the case PDF: cover, summary,
+                 lines, allowances, items to note, activity, receipts), pdf-text (embedded Noto
+                 fonts, assets/fonts), declaration (the claimant's words), expense-export (bytes)
   xero/          connect + oauth + oauth-state + token-cache (company-scoped), reconnect, contacts,
                  category-account, attachments, bills
   claims/        ZIP and claim-form batch import, durable job queue and worker, category suggestions

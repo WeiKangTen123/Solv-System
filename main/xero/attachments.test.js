@@ -37,7 +37,7 @@ describe('xero/attachments — casePdfs', () => {
   let attachments, doc, exporter, sharp;
   beforeEach(() => {
     jest.resetModules();
-    attachments = require('./attachments'); doc = require('../reports/expense-doc'); exporter = require('../reports/expense-export'); sharp = require('sharp');
+    attachments = require('./attachments'); doc = require('../reports/expense-pdf'); exporter = require('../reports/expense-export'); sharp = require('sharp');
   });
   const pages = buf => Number(/\/Type \/Pages\s+\/Count (\d+)/.exec(buf.toString('latin1'))[1]);
   // A noisy picture, which JPEG cannot make small: its weight is what it is.

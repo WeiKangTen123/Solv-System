@@ -48,10 +48,19 @@ describe('reports/workflow', () => {
     expect(out.status).toBe('claimed');
     expect(out.claimedAt).toBeTruthy();
     expect(out.events.at(-1).action).toBe('claimed');
+    expect(out.events.at(-1).note).toBeNull();
     expect(wf.isEditable(out)).toBe(false);
     expect(() => wf.markClaimed(r3.id, owner)).toThrow(/already/);
     // the receipts inside went in together, so they are claimed together
     expect(store.getExpense(e.id).claimed).toBe(true);
+  });
+
+  // The claim window shows the declaration; the claim's event says it did, and
+  // the PDF prints "Declared in Solv" only then (reports/declaration.js).
+  test('a claim made through the declaration says so on its event', () => {
+    const r = fresh(); reports.addExpense(r.id, ready().id);
+    const out = wf.markClaimed(r.id, owner, { declared: true });
+    expect(out.events.at(-1)).toMatchObject({ action: 'claimed', note: require('./declaration').DECLARED_NOTE });
   });
 
   // An admin watches claims; whether one went through is the claimant's to say.

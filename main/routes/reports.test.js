@@ -142,6 +142,19 @@ describe('routes/reports', () => {
     expect(back.body.report.status).toBe('open');
     expect(back.body.report.expenses[0].lines[0]).toMatchObject({ fxRate: 0.0152, baseAmount: 1.52 });
   });
+
+  // The claim window shows the declaration and says so; anything but a plain
+  // true is a claim without it.
+  test('a claim sent with the declaration records it; one without does not', async () => {
+    const claim = async body => {
+      const r = (await create(emp).expect(201)).body.report;
+      await request(serverFor(app)).post(`/api/reports/${r.id}/expenses`).set(as(emp)).send({ expenseIds: [reviewed(emp).id] }).expect(200);
+      return (await request(serverFor(app)).post(`/api/reports/${r.id}/claimed`).set(as(emp)).send(body).expect(200)).body.report.events.at(-1);
+    };
+    expect(await claim({ declared: true })).toMatchObject({ action: 'claimed', note: 'with the declaration' });
+    expect(await claim({ declared: 'yes' })).toMatchObject({ action: 'claimed', note: null });
+    expect(await claim({})).toMatchObject({ action: 'claimed', note: null });
+  });
 });
 
 // Checking a whole case at once, which is the difference between three minutes

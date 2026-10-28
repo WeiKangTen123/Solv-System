@@ -38,25 +38,6 @@ describe('reports/expense-doc', () => {
     expect(m.notes.join(' ')).toMatch(/foreign tax/i);
   });
 
-  test('the PDF definition carries the cover, the table with a total row, the signature block and one appendix section per receipt', () => {
-    const d = doc.expenseReportDoc(payload);
-    expect(d.pageOrientation).toBe('landscape');
-    const text = JSON.stringify(d);
-    expect(text).toContain('EXP-2026-0007');
-    expect(text).toContain('Aisha Mei Ling Rahman');
-    expect(text).toContain('Mumbai and Pune, India');
-    expect(text).toContain('SGD 661.35');
-    expect(text).toContain('Claimed 10 Sep 2026');
-    expect(text).not.toContain('Approved by');
-    expect(text).not.toContain('Manager');
-    expect(text).toContain('R2');
-    expect(text).toContain('rounded to the cent');
-    const table = d.content.find(c => c.table && c.table.headerRows === 1).table;
-    expect(table.body[0].map(c => c.text)).toEqual(['#', 'Date', 'Description', 'Ccy', 'Amount', 'Rate', 'Lodging', 'Meals', 'Other', 'Total SGD']);
-    expect(table.body.at(-1).map(c => c.text)).toContain('661.35');
-    expect(d.content.filter(c => c.pageBreak === 'before')).toHaveLength(3);
-  });
-
   test('the CSV has one row per line with the base amount, and the workbook model has four sheets', () => {
     const csv = doc.expenseReportCsv(payload);
     expect(csv.split('\n')[0]).toBe('Report,Line,Date,Merchant,Description,Purpose,On behalf of,Category,Currency,Amount,Rate,Rate date,Rate source,SGD,Receipt');
@@ -66,26 +47,16 @@ describe('reports/expense-doc', () => {
     expect(doc.exportFilename(payload)).toBe('EXP-2026-0007_Aisha-Mei-Ling-Rahman');
   });
 
-  test('text outside Latin-1 is folded, but the dash, quote, dagger and arrow survive', () => {
-    expect(doc._latin1('Café – ‘ok’ ‡ → 東京 — end')).toBe('Café – ‘ok’ ‡ to ?? — end');
-  });
 });
 
 // A cell that starts with = + - @ is a formula to Excel, quoted or not, and
 // merchants and purposes come from receipts and from people.
-describe('reports/expense-doc — dates and missing rates', () => {
-  test('the claim is dated where the company is, and a line without a rate says so instead of printing 0.00', () => {
-    const p = { ...payload, report: { ...payload.report, claimedAt: '2026-09-30T23:30:00Z' },
-                lines: [...payload.lines, { ref: 'R4', date: '2026-09-03', merchant: 'Pending', category: 'Meals', currency: 'VND', amount: 500000, fxRate: null, baseAmount: null }] };
+describe('reports/expense-doc — missing rates', () => {
+  test('a line without a rate is left out of the totals, and the notes say so', () => {
+    const p = { ...payload, lines: [...payload.lines, { ref: 'R4', date: '2026-09-03', merchant: 'Pending', category: 'Meals', currency: 'VND', amount: 500000, fxRate: null, baseAmount: null }] };
     const m = doc.buildModel(p);
     expect(m.notes.join(' ')).toMatch(/1 line has no exchange rate yet/);
     expect(m.total).toBe(doc.buildModel(payload).total);
-    const text = JSON.stringify(doc.expenseReportDoc(p));
-    expect(text).toContain('Claimed 1 Oct 2026');
-    // Both places the date is printed agree: the office-use block used UTC's
-    // date, so the same page read 1 Oct on the cover and 30 Sep below.
-    expect(text).not.toContain('30 Sep 2026');
-    expect(text).toContain('rate pending');
   });
 });
 
