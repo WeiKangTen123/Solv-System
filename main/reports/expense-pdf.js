@@ -36,8 +36,15 @@ const IMAGE_FIRST = 600, IMAGE_MORE = 665;
 
 const ALLOWANCE = new Set(['per_diem', 'mileage']);
 const DATES_LABEL = { trip: 'Trip', period: 'Period', case: 'Dates' };
-// The words the case page uses for its history (ui CaseActivity.jsx).
+// The words the case page uses for its history (ui CaseActivity.jsx). One
+// recorded under a name not listed here is said from its name
+// ("details_edited" as "Details edited"), not printed as code.
 const SAID = { created: 'Created', opened: 'Created from a draft', claimed: 'Marked claimed', reopened: 'Reopened', edited: 'Edited', checked: 'Checked', posted: 'Posted to Xero', xero_failed: 'Posting to Xero failed' };
+function said(e) {
+  if (e.action === 'created' && e.note === 'draft') return 'Started as a draft';
+  const word = SAID[e.action] || String(e.action || '').replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+  return e.note ? `${word}: ${e.note}` : word;
+}
 const TAX_NAME = { SGD: 'GST', MYR: 'SST' };
 
 // Text from people and receipts, as runs pdfmake can draw (pdf-text.js).
@@ -411,7 +418,7 @@ function morePages(x) {
         ...events.map(e => [
           { text: fmtStamp(e.at, tz), style: 'cell' },
           { text: R(e.actorName || '—'), style: 'cell' },
-          { text: R(`${SAID[e.action] || e.action}${e.note ? `: ${e.note}` : ''}`), style: 'cell' },
+          { text: R(said(e)), style: 'cell' },
         ]),
       ] }, layout: gridLayout });
   }

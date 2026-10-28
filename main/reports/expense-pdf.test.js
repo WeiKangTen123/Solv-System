@@ -133,6 +133,17 @@ describe('reports/expense-pdf — the document', () => {
     }
   });
 
+  test('activity says each event in words, a draft as started, and a newer kind of event from its name', () => {
+    const p = base();
+    p.report.events = [{ action: 'created', note: 'draft', at: '2026-09-01T02:00:00Z', actorName: 'Aisha' }, { action: 'details_edited', note: 'purpose', at: '2026-09-01T03:00:00Z', actorName: 'Aisha' },
+      { action: 'claimed', note: DECLARED_NOTE, at: '2026-09-10T06:02:00Z', actorName: 'Aisha' }];
+    const t = text(pdf.expenseReportDoc(p));
+    expect(t).toContain('Started as a draft');
+    expect(t).toContain('Details edited: purpose');
+    expect(t).toContain('Marked claimed: with the declaration');
+    expect(t).not.toContain('details_edited');
+  });
+
   test('a posted case says so in the finance box, with the start of its bill id', () => {
     const p = base(); p.report.xeroInvoiceId = '1a2b3c4d-0000-4000-8000-000000000000';
     p.report.events.push({ action: 'posted', at: '2026-09-11T02:00:00Z', note: 'Xero bill 1a2b3c4d' });
