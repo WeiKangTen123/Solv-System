@@ -229,7 +229,12 @@ function reviewBlocked(e) {
 }
 
 // Reviewed (the owner saying the details are right) or back to review-needed.
-function setStatus(expenseId, status, actor, { via = 'app' } = {}) {
+//
+// A receipt checked in a case is also in the case's history, as one
+// `checked` event for a run of them (store/reports.js noteChecked), whichever
+// page or the assistant did it. "Check all" passes `caseEvent: false` and
+// writes its own one event for the lot.
+function setStatus(expenseId, status, actor, { via = 'app', caseEvent = true } = {}) {
   const e = store.getExpense(expenseId);
   _assertAction(e, actor);
   if (!['reviewed', 'review-needed'].includes(status)) fail(400, 'Status can be reviewed or review-needed here');
@@ -243,6 +248,9 @@ function setStatus(expenseId, status, actor, { via = 'app' } = {}) {
   if (status === 'reviewed' && e.errorMsg) patch.errorMsg = withoutCurrencyNote(e.errorMsg);
   const after = store.updateExpense(e.id, patch);
   _record(e, after, actor, via);
+  if (caseEvent && status === 'reviewed' && e.status !== 'reviewed' && after.reportId) {
+    require('../store/reports').noteChecked(after.reportId, actor.id);
+  }
   return after;
 }
 
@@ -251,11 +259,17 @@ function setStatus(expenseId, status, actor, { via = 'app' } = {}) {
 // own. Only the cases' own rows are read: filing a zip's worth of receipts
 // asks this once per receipt, and loading every receipt of both cases each
 // time made that quadratic.
+//
+// The case it leaves says so in its history (`removed`, naming it), as well
+// as the receipt's own log: once it is gone the case has nothing else to
+// show for it, and an Activity tab without it hid a receipt taken out.
 function fileInCase(expenseId, reportId, actor, { via = 'app' } = {}) {
   const reports = require('../store/reports');
   const e = store.getExpense(expenseId);
   _assertAction(e, actor);
-  if (e.status === 'duplicate') fail(400, DUPLICATE('filed'));
+  // A duplicate is locked where it is, in a case or out of one; deleting it
+  // is the way out (the message says so).
+  if (e.status === 'duplicate') fail(400, DUPLICATE(reportId || !e.reportId ? 'filed' : 'taken out of its case'));
   reportId = reportId || null;
   // Claimed on its own already: in a case it would be claimed a second time.
   if (reportId && e.claimedAt && !e.reportId) fail(409, 'This receipt was already claimed on its own. Unmark it as claimed before filing it in a case.');
@@ -276,6 +290,11 @@ function fileInCase(expenseId, reportId, actor, { via = 'app' } = {}) {
   } else leaving();
   const after = store.getExpense(e.id);
   _record(e, after, actor, via);
+  if (e.reportId) {
+    const to = reportId ? reports.head(reportId) : null;
+    const where = !to ? '' : ` (moved to ${to.number || (to.title ? `the draft "${to.title}"` : 'a draft')})`;
+    reports.addEvent(e.reportId, actor.id, 'removed', `${changes.receiptName(e)}${where}`);
+  }
   return after;
 }
 
