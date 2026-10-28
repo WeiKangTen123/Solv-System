@@ -50,11 +50,22 @@ export function useCover(caseId) {
 
   const show = () => setValues(s.values);
 
-  const flush = useCallback(async () => {
+  // Sends what is unsaved. Resolves to '' when everything is saved (or there
+  // was nothing to save), else to the reason it was not; never rejects, so a
+  // save started by a timer or by leaving a field cannot become an unhandled
+  // rejection. The fields that failed stay unsaved, to go with the next try.
+  //
+  // A save already on its way is waited for first, even with nothing new to
+  // send: pressing Done blurs the field, whose save is then in flight, and
+  // Done used to find nothing unsaved and close before that save failed. One
+  // that failed is the answer, not tried again at once: what it carried waits
+  // for the next change or the next Done.
+  const send = useCallback(async () => {
     clearTimeout(s.timer);
     s.timer = null;
-    if (!s.caseId || !s.dirty.size) return;
-    if (s.inflight) { await s.inflight; return flush(); }
+    if (!s.caseId) return '';
+    if (s.inflight) { const failed = await s.inflight; return failed || send(); }
+    if (!s.dirty.size) return '';
     const id = s.caseId;
     const fields = [...s.dirty];
     const sent = { ...s.values };
@@ -67,24 +78,35 @@ export function useCover(caseId) {
         fields.forEach(f => { s.savedAt[f] = at; });
         if (d && d.report && d.report.coverAi) setCoverAi(d.report.coverAi);
         setSave({ state: 'saved', error: '' });
+        return '';
       })
       .catch(err => {
         // Kept to send again with the next change, unless it has changed
         // since and is in `dirty` already.
         fields.forEach(f => s.dirty.add(f));
-        setSave({ state: 'error', error: err.message || 'Not saved' });
+        const failed = err.message || 'Not saved';
+        setSave({ state: 'error', error: failed });
+        return failed;
       })
       .finally(() => {
         fields.forEach(f => s.sending.delete(f));
         s.inflight = null;
       });
-    await s.inflight;
+    return s.inflight;
   }, [s]);
+
+  // Saves now, for a caller that goes on only once it is saved: "Done" on the
+  // case's details, "Save draft". Throws when the save failed, so the form
+  // stays open with the error rather than closing over what was not kept.
+  const flush = useCallback(async () => {
+    const failed = await send();
+    if (failed) throw new Error(failed);
+  }, [send]);
 
   const schedule = useCallback(() => {
     clearTimeout(s.timer);
-    if (s.caseId) s.timer = setTimeout(flush, SAVE_AFTER_MS);
-  }, [s, flush]);
+    if (s.caseId) s.timer = setTimeout(send, SAVE_AFTER_MS);
+  }, [s, send]);
 
   // The person changed one or more fields.
   const change = useCallback(patch => {
@@ -97,7 +119,7 @@ export function useCover(caseId) {
 
   const focus = useCallback(f => { s.focused = f; }, [s]);
   // Leaving a field saves it now rather than in 600 ms.
-  const blur = useCallback(f => { if (s.focused === f) s.focused = null; if (s.dirty.size) flush(); }, [s, flush]);
+  const blur = useCallback(f => { if (s.focused === f) s.focused = null; if (s.dirty.size) send(); }, [s, send]);
 
   // A poll's cover (or a freshly loaded case), asked for at `at` (ms).
   const fromServer = useCallback((cover, ai, at = Date.now()) => {
@@ -138,7 +160,9 @@ export function useCover(caseId) {
   const cancel = useCallback(() => { clearTimeout(s.timer); s.timer = null; s.dirty.clear(); }, [s]);
 
   // A change typed in the last 600 ms still goes when the page closes.
-  useEffect(() => () => { if (s.dirty.size && s.caseId) flush(); }, [s, flush]);
+  useEffect(() => () => { if (s.dirty.size && s.caseId) send(); }, [s, send]);
 
-  return { values, coverAi, save, change, focus, blur, fromServer, typed, unsaved, anyTyped, adopt, cancel, flush, typedFields: s.typed };
+  // caseId: the case being written, or null before a draft exists. The
+  // purpose's suggestions (CoverForm) are asked of it.
+  return { values, coverAi, save, change, focus, blur, fromServer, typed, unsaved, anyTyped, adopt, cancel, flush, typedFields: s.typed, caseId };
 }
