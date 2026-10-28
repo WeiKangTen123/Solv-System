@@ -6,6 +6,8 @@ const { findDuplicate, possibleDuplicateNote, POSSIBLE_DUPLICATE_RE: DUP_NOTE_RE
 const { canonicalCategory } = require('../intake/categories');
 const logger    = require('../utils/logger');
 const { firstReceipt, readSomething, overlapFraction } = require('./parse-result');
+const lineKinds = require('./line-kinds');
+const { isoDate } = require('../intake/document');
 
 // The one place that decides HOW a stored file is read and what the read does
 // to the expense rows. Callers (the upload route, the phone route, the batch
@@ -33,16 +35,11 @@ const CURRENCY_NOTE_RE = /\s*No currency is printed on this receipt, so [A-Z]{3}
 const currencyNote = ccy => `No currency is printed on this receipt, so ${ccy} was assumed. Check it before marking the receipt reviewed.`;
 function withoutCurrencyNote(msg) { return String(msg || '').replace(CURRENCY_NOTE_RE, '').trim() || null; }
 
-// One line per (category, on-behalf-of), summing exactly to the total. The
-// reader's items rarely add up to the cent, so the residual goes to the
-// largest line. Items that are nowhere near the total are not trusted, and the
-// whole total sits on one line at the receipt's own category.
-function buildLines(r, fallbackCategory) {
-  const totalCents = Math.round((Number(r.total) || 0) * 100);
-  if (totalCents <= 0) return [];
-  const cat = canonicalCategory(r.category) || fallbackCategory || 'Other';
+// The reader's items grouped by (category, on-behalf-of), in cents. A
+// discount or rounding stays negative inside its group, and a group that
+// comes to nothing or less is not a charge and is left out.
+function _groups(r, cat) {
   const items = Array.isArray(r.lineItems) ? r.lineItems.filter(li => li && Number.isFinite(Number(li.unitAmount))) : [];
-
   const groups = new Map();
   for (const li of items) {
     const category = canonicalCategory(li.category) || cat;
@@ -51,24 +48,135 @@ function buildLines(r, fallbackCategory) {
     const g = groups.get(key) || { category, onBehalfOf, cents: 0, names: [], count: 0 };
     g.cents += Math.round(Number(li.unitAmount) * 100);
     g.count++;
-    if (li.description && !g.names.length) g.names.push(String(li.description).replace(/\s+/g, ' ').trim());
+    if (li.description && !g.names.length && Number(li.unitAmount) > 0) g.names.push(String(li.description).replace(/\s+/g, ' ').trim());
     groups.set(key, g);
   }
   const lines = [...groups.values()].filter(g => g.cents > 0);
-  const sum = lines.reduce((s, g) => s + g.cents, 0);
+  return { lines, sum: lines.reduce((s, g) => s + g.cents, 0) };
+}
+
+// One line per (category, on-behalf-of), summing exactly to the total. The
+// reader's items rarely add up to the cent, and the difference goes to the
+// claimant's own line in the receipt's category, made if there is none. It
+// used to go to the largest line, whoever's and whatever it was: a dinner the
+// reader missed on a folio was put on a colleague's room. Items that are
+// nowhere near the total are not trusted, and the whole total sits on one
+// line at the receipt's own category. How far the items were from the total
+// is a read-time check (readChecks, below).
+function buildLines(r, fallbackCategory) {
+  const totalCents = Math.round((Number(r.total) || 0) * 100);
+  if (totalCents <= 0) return [];
+  const cat = canonicalCategory(r.category) || fallbackCategory || 'Other';
+  const { lines, sum } = _groups(r, cat);
   const tolerance = Math.max(100, Math.round(totalCents * 0.15));
   const oneLine = [{ category: cat, description: r.description || r.merchant || null, amount: totalCents / 100, onBehalfOf: null }];
   if (!lines.length || Math.abs(sum - totalCents) > tolerance) return oneLine;
+  if (sum !== totalCents) {
+    let own = lines.find(g => g.category === cat && !g.onBehalfOf);
+    if (!own) {
+      own = { category: cat, onBehalfOf: null, cents: 0, names: [r.description || r.merchant].filter(Boolean), count: 1 };
+      lines.push(own);
+    }
+    // Taking the difference off can leave the claimant's line at nothing or
+    // less: ten people's 10.00 against a total of 87.00. A line of nothing is
+    // not a charge, and the difference is nobody else's, so the total goes on
+    // one line.
+    if (own.cents + totalCents - sum <= 0) return oneLine;
+    own.cents += totalCents - sum;
+  }
   lines.sort((a, b) => b.cents - a.cents);
-  // Within the tolerance the residual can still be larger than the largest
-  // line: ten people's 10.00 against a total of 87.00 left one line at -3.00.
-  // A line of nothing or less is not a charge, so the total goes on one line.
-  if (lines[0].cents + totalCents - sum <= 0) return oneLine;
-  lines[0].cents += totalCents - sum;
   // The first charge names the line; the rest are counted. A report row that
   // recites forty folio lines is not a description.
   return lines.map(g => ({ category: g.category, description: (g.names[0] ? `${g.names[0].slice(0, 80)}${g.count > 1 ? ` +${g.count - 1} more` : ''}` : null), amount: g.cents / 100, onBehalfOf: g.onBehalfOf }));
 }
+
+// ── What the reader saw that is worth a look ────────────────────────────────
+//
+// Worked out when the receipt is read and kept in aiRead.checks, beside what
+// the reader read: the reader's items are not kept on the expense, and once
+// somebody edits the lines nothing would remain to judge them by. The flags
+// (flags.js) say these in words. All money is as printed, in the receipt's
+// own currency.
+//
+//   subtotalMismatch  the subtotal and the tax do not come to the total, with
+//                     or without the service charges, tips, levies, rounding
+//                     and discounts on the receipt: { subtotal, tax, total }
+//   chargedTwice      the same charge for the same person, at the same amount,
+//                     more than once: [{ description, amount, count }]
+//   people            the other people whose charges the lines carry
+//   adjusted          the items were more than 2% off the total, and the
+//                     difference was made up on a line: { amount, pct }, the
+//                     amount added to the items (negative when taken off)
+//   dateOrder         a month-first date whose day could be its month:
+//                     { read, other }
+const ADJUSTED_SHARE = 0.02;
+function readChecks(r, lines) {
+  if (!r) return null;
+  return {
+    subtotalMismatch: _subtotalMismatch(r),
+    chargedTwice: _chargedTwice(r),
+    people: [...new Set((lines || []).map(l => l.onBehalfOf).filter(Boolean))],
+    adjusted: _adjusted(r),
+    dateOrder: _dateOrderCheck(r),
+  };
+}
+
+const _c = v => Math.round(Number(v) * 100);
+function _subtotalMismatch(r) {
+  if (r.subTotal == null || r.tax == null || !(Number(r.total) > 0)) return null;
+  const items = Array.isArray(r.lineItems) ? r.lineItems : [];
+  const extra = items.filter(li => lineKinds.adjustmentLine(li.description)).reduce((s, li) => s + _c(li.unitAmount), 0);
+  const off = items.filter(li => Number(li.unitAmount) < 0 && !lineKinds.adjustmentLine(li.description) && !lineKinds.taxLine(li.description)).reduce((s, li) => s + _c(li.unitAmount), 0);
+  const base = _c(r.subTotal) + _c(r.tax);
+  // Whether a discount or a service charge sits above the subtotal or below
+  // it is not something the lines say, so each way is allowed.
+  const total = _c(r.total);
+  if ([base, base + extra, base + off, base + extra + off].some(x => Math.abs(x - total) <= 2)) return null;
+  return { subtotal: Number(r.subTotal), tax: Number(r.tax), total: Number(r.total) };
+}
+
+// A tax line repeats with the charge it is on; only the charge is named.
+function _chargedTwice(r) {
+  const seen = new Map();
+  for (const li of Array.isArray(r.lineItems) ? r.lineItems : []) {
+    const cents = _c(li.unitAmount);
+    if (!(cents > 0) || lineKinds.taxLine(li.description)) continue;
+    const description = String(li.description || '').replace(/\s+/g, ' ').trim();
+    if (!description) continue;
+    const key = `${description.toLowerCase()}|${cents}|${li.onBehalfOf || ''}`;
+    const s = seen.get(key) || { description, amount: cents / 100, count: 0 };
+    s.count++;
+    seen.set(key, s);
+  }
+  return [...seen.values()].filter(s => s.count > 1).sort((a, b) => b.amount - a.amount);
+}
+
+function _adjusted(r) {
+  const total = _c(r.total);
+  if (!(total > 0)) return null;
+  const { lines, sum } = _groups(r, canonicalCategory(r.category) || 'Other');
+  if (!lines.length || Math.abs(total - sum) <= total * ADJUSTED_SHARE) return null;
+  return { amount: (total - sum) / 100, pct: Math.round((Math.abs(total - sum) / total) * 1000) / 10 };
+}
+
+// 10/09/2026 from a month-first country is 9 October, and could be 10
+// September if the receipt was printed the other way. Not asked of a date
+// printed with its month as a word or its year first, or of one whose day
+// and month are the same, or whose other reading is a day still to come.
+function _dateOrderCheck(r) {
+  if (!r.date || !(r.country === 'US' || r.dateOrder === 'MDY')) return null;
+  if (r.datePrinted) {
+    const parts = String(r.datePrinted).match(/(\d{1,4})\s*[/.-]\s*(\d{1,2})\s*[/.-]\s*(\d{2,4})/);
+    if (!parts || parts[1].length === 4) return null;
+  }
+  const [y, m, d] = r.date.split('-');
+  if (Number(m) > 12 || Number(d) > 12 || m === d) return null;
+  const other = isoDate(`${y}-${d}-${m}`);
+  return other ? { read: r.date, other } : null;
+}
+
+// What a read that saw a refund says on the receipt, in place of an amount.
+const REFUND_NOTE = 'This looks like a refund; refunds are not claimed here.';
 
 // Writes a read onto an expense. undefined leaves a field alone, so a value
 // the reader could not make out never erases one already typed.
@@ -100,14 +208,17 @@ async function applyRead(expenseId, r, { reread = false } = {}) {
     // A successful read supersedes every earlier note about reading this
     // receipt — "could not be read", a suspected duplicate (flagIfSuspected
     // puts that one back if it still holds). What a read may add is that the
-    // currency on the row is the default, not something it saw.
-    errorMsg: r.currency == null && r.total != null && exp?.currency ? currencyNote(exp.currency) : null,
+    // currency on the row is the default, not something it saw, or that the
+    // receipt is a refund and so has no amount to claim.
+    errorMsg: [r.refund ? REFUND_NOTE : null, r.currency == null && r.total != null && exp?.currency ? currencyNote(exp.currency) : null].filter(Boolean).join(' ') || null,
     aiConfidence: r.confidence || 'low', aiReadAt: new Date().toISOString(),
     // What the reader saw on the paper, kept beside whatever the fields say
-    // later, so a total that was changed away from the receipt shows.
+    // later, so a total that was changed away from the receipt shows; and
+    // what in it was worth a look, judged then, from the reader's own items.
     aiRead: { merchant: r.merchant ?? null, receiptDate: r.date ?? null, currency: r.currency ?? null, total: r.total ?? null,
               tax: r.tax ?? null, invoiceNo: r.invoiceNumber ?? null, category: canonicalCategory(r.category) ?? null,
-              city: r.city ?? null, country: r.country ?? null, docType: r.docType ?? null },
+              city: r.city ?? null, country: r.country ?? null, docType: r.docType ?? null,
+              checks: readChecks(r, buildLines(r, canonicalCategory(r.category) || exp.category)) },
   };
   const updated = store.updateExpense(expenseId, patch);
   if (!updated) return null;
@@ -422,4 +533,4 @@ async function readOne(userId, buffer, mime, { page = null, box = null } = {}) {
   return mine || _scannedPage(userId, buffer, page, box);
 }
 
-module.exports = { readReceipt, readParts, readOne, applyRead, buildLines, flagIfSuspected, currencyNote, withoutCurrencyNote, CURRENCY_NOTE_RE, MAX_PAGES_ONE_DOC, UNAVAILABLE_NOTE };
+module.exports = { readReceipt, readParts, readOne, applyRead, buildLines, readChecks, flagIfSuspected, currencyNote, withoutCurrencyNote, CURRENCY_NOTE_RE, MAX_PAGES_ONE_DOC, UNAVAILABLE_NOTE, REFUND_NOTE };
