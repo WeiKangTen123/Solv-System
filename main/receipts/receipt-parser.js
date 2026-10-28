@@ -32,11 +32,20 @@ For each receipt also return:
 
 Per receipt, extract:
 - merchant: the shop or business that was PAID (not the customer, not the payment network, not the bank)
-- date: YYYY-MM-DD of the purchase (null if unreadable)
+- datePrinted: the purchase date exactly as printed (e.g. "10/09/2026", "03.10.2026", "2026年10月15日"), null if none.
+- dateOrder: the order the printed date is in: "DMY", "MDY" or "YMD"; null if the month is written as a word or you cannot tell.
+  The United States prints the month first (10/09/2026 is 9 October); Singapore, Malaysia, India, Indonesia, the UK,
+  Europe and Australia print the day first (10/09/2026 is 10 September); Japan, China and Korea the year first.
+- date: YYYY-MM-DD of the purchase, read in that order (null if unreadable)
 - time: HH:MM in 24-hour format if printed on the receipt (e.g. "12:01", "16:37", "21:09"), null if not printed.
-- currency: 3-letter ISO code read from the receipt (SGD, USD, MYR, GBP, EUR, AUD...). "S$" or PayNow implies SGD; "RM" implies MYR; "£" GBP; "€" EUR. If only a bare "$" appears with no other signal, return null rather than guessing.
-- total: the FINAL amount paid, as a plain number. No symbols, no thousands separators.
-- tax: the GST/VAT/service-tax amount as a plain number, only if the receipt states it separately. null if not shown. 0 if the receipt says no tax applies.
+- currency: 3-letter ISO code read from the receipt (SGD, USD, MYR, GBP, EUR, AUD...), never a symbol. "S$" or PayNow implies SGD; "RM" implies MYR; "Rp" IDR; "RMB" CNY; "£" GBP; "€" EUR. If only a bare "$" appears with no other signal, return null rather than guessing.
+- total: the FINAL amount paid, as a plain number. No symbols, no thousands separators. A tip or gratuity is part of
+  the amount charged: when a GRAND TOTAL, AMOUNT PAID or card line is larger than the line marked "Total" because a tip
+  was added, the total is that larger amount. A refund or return prints a negative total: return it negative.
+- tax: the government's tax as a plain number (GST, CGST/SGST/IGST, VAT, SST, PPN, PB1, MwSt, HST/PST, IVA, TVA, a US
+  sales tax, 消費税), only if the receipt states it. Never a service charge, a tip, or a city, tourism or hotel levy.
+  When the tax is already inside the prices ("GST 9% included", "enth. MwSt", "内消費税"), still give its amount.
+  null if not shown. 0 if the receipt says no tax applies.
 - subTotal: the pre-tax amount as a plain number, only if explicitly printed. null otherwise.
 - invoiceNumber: the invoice, bill, folio or receipt number printed on the document (e.g. "00/000-000001"), null if none.
 - category: one of these exact names, judged from what was bought and when:
@@ -71,21 +80,26 @@ ${CATEGORIES.map(c => `    "${c.name}": ${c.scope}`).join('\n')}
 - lineItems: array of each individual charge listed on the receipt with its price:
     [
       {
-        "description": "item description or dish name",
+        "description": the item, dish or charge as printed. On a hotel folio copy the WHOLE description of the line, including the
+          text printed under it (room number, check number, and any transfer such as "[NA Room] LIM WEI JIE #126=>Rahman #110"),
+          even when that text continues at the top of the next page,
         "unitAmount": the price of ONE unit as a plain number (e.g. 1.60),
         "quantity": item quantity if shown (e.g. 1, 6), default 1,
-        "lineTotal": the amount printed on that line (quantity × unit price, e.g. 9.60); same as unitAmount when quantity is 1,
+        "lineTotal": the amount printed on that line (quantity × unit price, e.g. 9.60); same as unitAmount when quantity is 1. A discount, promotion or rounding down is NEGATIVE (e.g. -3.45),
         "discountRate": discount percent if shown, default 0,
-        "category": one of the category names above, judged from what THIS line is for. A tax, GST/VAT, service-charge or fee line takes the category of the charge it belongs to (a room's GST is Lodging, a cafe's GST is Meals),
-        "onBehalfOf": when the line was transferred from, or paid for, ANOTHER guest or person, that person's name exactly as printed (e.g. "LIM WEI JIE #126 => Rahman #110" means the line is for LIM WEI JIE); otherwise null
+        "category": one of the category names above, judged from what THIS line is for. A tax, GST/VAT, service-charge or fee line takes the category of the charge it belongs to (a room's GST is Lodging, a cafe's GST is Meals). On a hotel folio a room is Lodging whatever its rate is called ("Standard Retail", "Package", "BAR", "Corporate"),
+        "onBehalfOf": when the line was transferred from, or paid for, ANOTHER guest or person, that person's name exactly as printed (e.g. "LIM WEI JIE #126 => Rahman #110" means the line is for LIM WEI JIE); a tax line under a transferred charge is for the same person; otherwise null
       }
     ]
-  Include EVERY charge line, including each tax line, so the lines add up to the total.
+  Include EVERY charge line: each item, service charge, tip, surcharge, levy, discount and rounding, and each tax that is
+  ADDED to the prices, so the lines add up to the total. Do not list a tax that is already inside the prices (printed as
+  "incl.", "included", "inkl.", "enth.", "内税"); give it as tax only. Never list a payment (cash handed over, change,
+  the card), the subtotal or the total as a line.
 - confidence: "high" if the total and merchant are clearly legible, "low" if the photo is blurred, cropped, or you are guessing any of them.
 
 Rules:
 - Never invent a value. Anything you cannot read is null.
-- total is the amount actually charged, after discounts and including tax.
+- total is the amount actually charged, after discounts and including tax and any tip.
 - If several totals appear (subtotal, tax, total, cash tendered, change), pick the amount CHARGED, never the cash tendered.
 - A card slip or payment terminal stub belonging to a receipt beside it is NOT a separate receipt.
 - If you are unsure whether something is a second receipt, return one entry rather than two.`;
@@ -122,26 +136,121 @@ function _withoutTransfer(description) {
   const cleaned = String(description || '').replace(TRANSFER_TAIL_RE, '').trim();
   return cleaned || description;
 }
+// A folio's description runs over two or three printed lines, and the
+// reader keeps the breaks: "... [pbhun211] TAN SUAN\nKUAN #126=>Khoo #110"
+// named the guest "Kuan", and his meals went on a second person. A
+// description is one line of text.
+const _oneLine = s => String(s || '').replace(/\s+/g, ' ').trim();
 function _onBehalf(li) {
-  const printed = typeof li.description === 'string' ? TRANSFER_RE.exec(li.description) : null;
+  const printed = typeof li.description === 'string' ? TRANSFER_RE.exec(_oneLine(li.description)) : null;
   if (printed) return _titleCase(printed[1].trim().slice(0, 80));
   if (typeof li.onBehalfOf !== 'string' || !li.onBehalfOf.trim()) return null;
   const cleaned = li.onBehalfOf.split(/=>|#|\(/)[0].trim();
   return cleaned ? _titleCase(cleaned.slice(0, 80)) : null;
 }
 
+const lineKinds = require('./line-kinds');
+const _cents = v => Math.round(Number(v || 0) * 100);
+const _sum = items => items.reduce((s, li) => s + _cents(li.unitAmount), 0);
+
 // A folio ends with the payment that settled it ("Manual MasterCard / Euro
 // Card 88,188.77"). That is not a charge: kept, it doubles the sum of the
-// lines. Payment lines go, and so does any line that merely restates the
-// total when other lines exist.
-const PAYMENT_RE = /\b(mastercard|master card|visa|amex|american express|euro ?card|credit card|debit card|paynow|nets|grabpay|apple pay|google pay|cash tendered|change due|payment received|settlement|paid by|card payment)\b/i;
+// lines. Payment lines go (line-kinds.js says which), and so do the subtotal
+// and total printed as lines. A line equal to the total goes too, but only
+// when the others already add up to it: a room of 200.00 beside "Service
+// charge 0.00" on a bill of 200.00 was the bill, and used to be dropped as a
+// restated total, leaving the bill with nothing but the 0.00.
 function _dropPayments(lineItems, total) {
-  const kept = lineItems.filter(li => !PAYMENT_RE.test(li.description || ''));
-  if (kept.length > 1 && total !== null) {
-    const totalCents = Math.round(total * 100);
-    return kept.filter(li => Math.round(li.unitAmount * 100) !== totalCents);
+  const kept = lineItems.filter(li => !lineKinds.paymentLine(li.description) && !lineKinds.totalLine(li.description));
+  if (total === null || kept.length < 2) return kept;
+  const totalCents = _cents(total);
+  const at = kept.findIndex(li => _cents(li.unitAmount) === totalCents);
+  if (at < 0) return kept;
+  const others = kept.filter((li, i) => i !== at);
+  return _itemsAccountForTotal(others, total) ? others : kept;
+}
+
+// A tax already inside the prices, listed as a line as well ("GST 9% (incl.)"
+// under a hawker's 13.80, "enth. MwSt 7%" under a Berlin hotel's 402.00),
+// counts the tax twice: the lines came to more than was paid and the reader
+// took the difference off the largest. When the other lines add up to the
+// total without it, it leaves the lines; its amount is still the tax. Tax
+// lines not marked as included go the same way when the lines add up only
+// without them, since a tax that was added cannot do that.
+function _dropIncludedTax(lineItems, total) {
+  if (total === null || lineItems.length < 2) return lineItems;
+  const t = _cents(total);
+  const close = items => Math.abs(_sum(items) - t) <= Math.max(2, Math.round(t * 0.005));
+  if (close(lineItems)) return lineItems;
+  const kinds = lineItems.map(li => lineKinds.taxLine(li.description));
+  const notIncluded = lineItems.filter((li, i) => !(kinds[i] && kinds[i].included));
+  if (notIncluded.length && notIncluded.length < lineItems.length && close(notIncluded)) return notIncluded;
+  const noTax = lineItems.filter((li, i) => !kinds[i]);
+  if (noTax.length && noTax.length < lineItems.length && close(noTax)) return noTax;
+  return lineItems;
+}
+
+// A tip written in under the printed "Total" is part of what was charged.
+// When the lines hold a tip and come to the total read plus that tip, the
+// total read was the one before the tip, and the amount charged is larger.
+function _withTip(lineItems, total) {
+  if (total === null) return total;
+  const tip = lineItems.filter(li => lineKinds.tipLine(li.description) && li.unitAmount > 0).reduce((s, li) => s + _cents(li.unitAmount), 0);
+  if (!tip) return total;
+  const sum = _sum(lineItems), t = _cents(total);
+  return Math.abs(sum - t) > 1 && Math.abs(sum - (t + tip)) <= 1 ? (t + tip) / 100 : total;
+}
+
+// A folio prints a transferred charge with the transfer under it, and the
+// taxes on that charge under that, each with its own copy of the transfer.
+// Except where a page ends between them: the Pune folio's CGST of 940.50 sits
+// at the foot of page 1 and its transfer at the head of page 2, and the 940.50
+// went on the wrong person. A tax line that names nobody belongs to the
+// person of the charge it follows.
+function _carryTransfers(items) {
+  let charge = null;
+  for (const li of items) {
+    if (!lineKinds.taxLine(li.description)) { charge = li; continue; }
+    if (!li.onBehalfOf && charge && charge.onBehalfOf) li.onBehalfOf = charge.onBehalfOf;
   }
-  return kept;
+}
+
+// A hotel folio holds rooms, meals and the odd taxi or laundry. A line the
+// reader put in Office Supplies, Software/Utilities or Medical/Dental is not
+// that: the Pune folio's room rate is called "Standard Retail", and was read
+// as a shop's. It takes the receipt's own category.
+const NOT_ON_A_FOLIO = new Set(['Office Supplies', 'Software/Utilities', 'Medical/Dental']);
+
+// ── Dates ───────────────────────────────────────────────────────────────────
+//
+// "10/09/2026" is 9 October in San Francisco and 10 September in Singapore.
+// The model is asked for the date as printed and the order its country
+// prints dates in; read in that order, the printed numbers settle the date
+// whatever the model made of them. The United States prints the month first
+// whatever the model says. Only the order is corrected: a printed date that
+// is not the model's date with day and month swapped (a folio's arrival day
+// against its bill date) leaves the model's date alone.
+const MONTH_FIRST = new Set(['US']);
+function _dateOrder(value) {
+  const s = typeof value === 'string' ? value.trim().toUpperCase() : '';
+  return ['DMY', 'MDY', 'YMD'].includes(s) ? s : null;
+}
+function _printedParts(printed) {
+  const m = String(printed || '').match(/(\d{1,4})\s*[/.-]\s*(\d{1,2})\s*[/.-]\s*(\d{2,4})/);
+  return m ? [m[1], m[2], m[3]] : null;
+}
+function _date(parsed, country) {
+  const read = _isoDate(parsed.date);
+  const parts = _printedParts(parsed.datePrinted);
+  if (!parts || parts[0].length === 4) return read;
+  const order = MONTH_FIRST.has(country) ? 'MDY' : _dateOrder(parsed.dateOrder);
+  if (order !== 'MDY' && order !== 'DMY') return read;
+  const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+  const [m, d] = order === 'MDY' ? [parts[0], parts[1]] : [parts[1], parts[0]];
+  const printed = _isoDate(`${year}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`);
+  if (!printed || !read) return printed || read;
+  const swapped = `${read.slice(0, 4)}-${read.slice(8, 10)}-${read.slice(5, 7)}`;
+  return printed === read || printed === swapped ? printed : read;
 }
 
 // Where and what. A case is named and dated from these (a trip to Mumbai, a
@@ -169,15 +278,15 @@ function _titleCase(name) {
 
 // Indian and other tax lines are printed per charge. When the document's own
 // tax figure is missing (or a "VAT 0.00" footer was read as the tax), the tax
-// is the sum of the tax lines.
+// is the sum of the tax lines. Which lines are tax is line-kinds.js's call:
+// a tax's own name at the start of the line, never a levy or "tax-free".
 // A service charge is not one of them: it goes to the restaurant, not the
 // government. Counted as tax, a Singapore bill of 100.00 food, 10.00 service
 // and 9.90 GST went to Xero with 19.90 of tax.
-const TAX_LINE_RE = /\b(cgst|sgst|igst|utgst|gst|vat|tax)\b/i;
-function _taxFromLines(lineItems, total) {
-  const cents = lineItems.filter(li => TAX_LINE_RE.test(li.description || '')).reduce((sum, li) => sum + Math.round(Number(li.unitAmount || 0) * 100), 0);
+function _taxFromLines(taxLines, total) {
+  const cents = _sum(taxLines);
   if (cents <= 0) return null;
-  if (total !== null && cents >= Math.round(total * 100)) return null;
+  if (total !== null && cents >= _cents(total)) return null;
   return cents / 100;
 }
 
@@ -200,16 +309,13 @@ function normalise(parsed) {
   const total = _num(parsed.total);
   const tax   = _num(parsed.tax);
   let   sub   = _num(parsed.subTotal);
-  // Singapore receipts print "Sub Total 16.10 / GST 1.33" where the GST is
-  // already inside the sub total. A subtotal equal to the total with a tax
-  // beside it is that case: the pre-tax figure is total − tax.
-  if (sub !== null && total !== null && tax !== null && tax > 0 && Math.abs(sub - total) < 0.005) {
-    sub = Math.round((total - tax) * 100) / 100;
-  }
 
-  // A negative total is a refund, which this flow does not model, and a zero
-  // total tells the user nothing. Both are treated as "not read".
-  const usableTotal = total !== null && total > 0 ? total : null;
+  // Only a listed category survives; a reworded one is mapped back, an
+  // invented one is dropped and never prefixed onto the description.
+  const category = canonicalCategory(parsed.category);
+  const docType  = _docType(parsed.docType);
+  const country  = _country(parsed.country);
+  const folio    = docType === 'hotel' || (!docType && category === 'Lodging');
 
   // One normaliser for every reader (intake/document.js): the stored amount is
   // the LINE total and a quantity rides in the text. Receipts carry no tax
@@ -219,20 +325,29 @@ function normalise(parsed) {
       const n = _intake.normaliseLineItem(li);
       if (!n) return null;
       const onBehalfOf = li ? _onBehalf(li) : null;
+      let lineCategory = canonicalCategory(li && li.category);
+      if (folio && NOT_ON_A_FOLIO.has(lineCategory)) lineCategory = category;
+      const text = _oneLine(n.description);
       return {
-        description:  (onBehalfOf ? _withoutTransfer(n.description) : n.description).slice(0, 200),
+        description:  (onBehalfOf ? _withoutTransfer(text) : text).slice(0, 200),
         unitAmount:   n.unitAmount,
         discountRate: n.discountRate,
-        category:     canonicalCategory(li && li.category),
+        category:     lineCategory,
         onBehalfOf,
       };
     })
     .filter(Boolean);
-  const lineItems = _dropPayments(rawItems, usableTotal);
+  if (folio) _carryTransfers(rawItems);
 
-  // Only a listed category survives; a reworded one is mapped back, an
-  // invented one is dropped and never prefixed onto the description.
-  const category = canonicalCategory(parsed.category);
+  // A refund is not claimed here. A negative total is one, and so is a
+  // receipt whose every charge is negative, whatever sign the total was
+  // read with. A zero total tells the user nothing. Neither is an amount.
+  const charges = rawItems.filter(li => li.unitAmount !== 0);
+  const refund = (total !== null && total < 0) || (charges.length > 0 && charges.every(li => li.unitAmount < 0));
+  let usableTotal = !refund && total !== null && total > 0 ? total : null;
+  const kept = _dropPayments(rawItems, usableTotal);
+  usableTotal = _withTip(kept, usableTotal);
+
   let desc = typeof parsed.description === 'string' && parsed.description.trim() ? parsed.description.trim().slice(0, 250) : null;
   if (desc && category && !desc.startsWith('[')) {
     desc = `[${category}] ${desc}`.slice(0, 250);
@@ -240,23 +355,43 @@ function normalise(parsed) {
 
   // Tax cannot exceed the total; if it does, one of the two was misread and
   // neither should be presented as fact.
-  const fromLines = _taxFromLines(lineItems, usableTotal);
+  const taxLines = kept.filter(li => lineKinds.taxLine(li.description));
+  const fromLines = _taxFromLines(taxLines, usableTotal);
   let taxOut = (tax !== null && tax > 0 && (usableTotal === null || tax <= usableTotal)) ? tax : (fromLines ?? (tax === 0 ? 0 : null));
   // The model's one tax figure against its own itemised tax lines. When the
   // items account for the whole total, every tax line is there, and a tax
   // figure that disagrees with their sum is the model summarising badly: the
   // same folio read twice gave 6760 and then 3717, against tax lines that
   // summed to 6760 both times. The itemised figures are read one at a time
-  // off the page; the summary is the one to doubt.
-  if (fromLines !== null && taxOut !== null && _itemsAccountForTotal(lineItems, usableTotal) && Math.abs(fromLines - taxOut) > Math.max(1, fromLines * 0.01)) {
+  // off the page; the summary is the one to doubt. One tax line is not that
+  // evidence: it is usually the very figure the model read, and a single
+  // line misread as tax used to replace a right answer.
+  if (fromLines !== null && taxOut !== null && taxLines.length >= 2 && _itemsAccountForTotal(kept, usableTotal) && Math.abs(fromLines - taxOut) > Math.max(1, fromLines * 0.01)) {
     taxOut = fromLines;
+  }
+  // A tax figure that is the tax lines plus the service charge printed beside
+  // them is the service charge counted as tax: a Kuala Lumpur bill with SST
+  // of 1.58 and a service charge of 2.39 was read as 3.97 of tax.
+  const service = kept.filter(li => lineKinds.serviceLine(li.description) && li.unitAmount > 0).reduce((s, li) => s + _cents(li.unitAmount), 0);
+  if (fromLines !== null && tax !== null && service > 0 && Math.abs(_cents(tax) - (_cents(fromLines) + service)) <= 1) taxOut = fromLines;
+  const lineItems = _dropIncludedTax(kept, usableTotal);
+
+  // Singapore receipts print "Sub Total 16.10 / GST 1.33" where the GST is
+  // already inside the sub total. A subtotal equal to the total with a tax
+  // beside it is that case: the pre-tax figure is total − tax. Worked out
+  // from the tax as it finally stands, not the model's first figure: a tax
+  // taken from the lines left the subtotal at the total.
+  if (sub !== null && total !== null && taxOut !== null && taxOut > 0 && Math.abs(sub - total) < 0.005) {
+    sub = Math.round((total - taxOut) * 100) / 100;
   }
 
   const pages = _pages(parsed.pages);
+  const datePrinted = typeof parsed.datePrinted === 'string' && parsed.datePrinted.trim() ? parsed.datePrinted.trim().slice(0, 40) : null;
+  const dateOrder = _dateOrder(parsed.dateOrder);
   return {
     merchant:    typeof parsed.merchant === 'string' && parsed.merchant.trim() ? parsed.merchant.trim().slice(0, 120) : null,
     invoiceNumber: typeof parsed.invoiceNumber === 'string' && parsed.invoiceNumber.trim() ? parsed.invoiceNumber.trim().slice(0, 60) : null,
-    date:        _isoDate(parsed.date),
+    date:        _date(parsed, country),
     time:        _time(parsed.time),
     category,
     currency:    _currency(parsed.currency),
@@ -265,14 +400,19 @@ function normalise(parsed) {
     subTotal:    sub !== null && sub >= 0 && (usableTotal === null || sub <= usableTotal) ? sub : null,
     description: desc,
     city:        _city(parsed.city),
-    country:     _country(parsed.country),
-    docType:     _docType(parsed.docType),
+    country,
+    docType,
     lineItems,
     confidence:  parsed.confidence === 'high' ? 'high' : 'low',
     box:         _box(parsed.box_2d),
     // Only the pages of a scan are asked which pages they are on
     // (parseReceiptPages); nothing else carries the field.
     ...(pages ? { pages } : {}),
+    // How the date was printed, for the read-time check of a date that reads
+    // two ways (read-receipt.js), and a refund, which applyRead says is one.
+    ...(datePrinted ? { datePrinted } : {}),
+    ...(dateOrder ? { dateOrder } : {}),
+    ...(refund ? { refund: true } : {}),
   };
 }
 
@@ -520,7 +660,7 @@ function _batchPrompt(count) {
   return `You are reading ${count} SEPARATE receipts. They are unrelated to each other.
 
 Return ONLY a JSON array with exactly ${count} entries, one per image, in the order given:
-[{"index": 1, "count": 1, "merchant": ..., "date": ..., "time": ..., "category": ..., "currency": ..., "total": ..., "tax": ..., "subTotal": ..., "city": ..., "country": ..., "docType": ..., "description": ..., "lineItems": [...], "confidence": ...}]
+[{"index": 1, "count": 1, "merchant": ..., "datePrinted": ..., "dateOrder": ..., "date": ..., "time": ..., "category": ..., "currency": ..., "total": ..., "tax": ..., "subTotal": ..., "city": ..., "country": ..., "docType": ..., "description": ..., "lineItems": [...], "confidence": ...}]
 
 "index" is the image's position, starting at 1. Every image must appear exactly once.
 "count" is how many separate receipts you can see in that image, usually 1. When it is more than 1, still give that image one entry.
