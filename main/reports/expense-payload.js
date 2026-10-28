@@ -2,11 +2,19 @@ const reports = require('../store/reports');
 const users   = require('../store/users');
 const receiptStore = require('../receipts/receipt-store');
 const pdfRender = require('../pdf/render');
+const { flagsFor } = require('../receipts/flags');
+const { localDate } = require('../utils/zone-date');
 const logger = require('../utils/logger');
 
-// Receipt pages as JPEG data URIs sized for a landscape A4 page. sharp is
-// loaded lazily, as in the thumbnailer, so a missing native module degrades
-// to "no image" rather than a failed export.
+// Receipt pages as JPEG data URIs for a portrait A4 page. sharp is loaded
+// lazily, as in the thumbnailer, so a missing native module degrades to "no
+// image" rather than a failed export.
+//
+// A transparent PNG is laid on white first: JPEG has no transparency, and
+// sharp turned every see-through pixel black, so a cut-out receipt printed as
+// a black rectangle with the text lost in it. A PDF receipt is drawn at 140
+// dpi, which is about what the page prints it at; 110 left a folio's small
+// print unreadable once it filled a portrait page.
 async function _pagesFor(receipt) {
   const files = receiptStore.forUser(receipt.userId);
   const buffer = files.read(receipt.file);
@@ -14,15 +22,33 @@ async function _pagesFor(receipt) {
   const out = [];
   try {
     if (receipt.mime === 'application/pdf') {
-      const rendered = await pdfRender.renderPdfPages(buffer, { dpi: 110, maxPages: 10 });
+      const rendered = await pdfRender.renderPdfPages(buffer, { dpi: 140, maxPages: 10 });
       for (const p of (rendered ? rendered.pages : [])) out.push({ dataUri: `data:image/jpeg;base64,${p.buffer.toString('base64')}` });
     } else {
       const sharp = require('sharp');
-      const jpg = await sharp(buffer).rotate().resize({ width: 1400, height: 1400, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 78 }).toBuffer();
+      const jpg = await sharp(buffer).rotate().flatten({ background: '#ffffff' })
+        .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
       out.push({ dataUri: `data:image/jpeg;base64,${jpg.toString('base64')}` });
     }
   } catch (err) {
     logger.warn('Receipt page not rendered for the export', { receipt: receipt.id, error: err.message });
+  }
+  return out;
+}
+
+// What the PDF says is worth a second look, per receipt: the same flags the
+// case page shows (receipts/flags.js). Dated as of the claim for a claimed
+// case: "more than 90 days old" is about when it was claimed, not about the
+// day somebody printed it.
+function _flags(report, company) {
+  const tz = company.timezone || 'Asia/Singapore';
+  const today = report.claimedAt ? localDate(tz, new Date(report.claimedAt)) : localDate(tz);
+  const out = {};
+  for (const e of report.expenses) {
+    let list = [];
+    try { list = flagsFor(e, report, { baseCurrency: company.baseCurrency, today }); }
+    catch (err) { logger.warn('Flags not worked out for the export', { expense: e.id, error: err.message }); }
+    if (list.length) out[e.id] = list.map(f => ({ level: f.level, code: f.code, text: f.text }));
   }
   return out;
 }
@@ -43,7 +69,7 @@ async function reportPayload(reportId, { withReceipts = true } = {}) {
       ref = refs.get(e.receipt.id);
       if (!listed.has(e.receipt.id)) {
         listed.add(e.receipt.id);
-        receipts.push({ ref, title: e.merchant || e.receipt.originalName || 'Receipt', receipt: e.receipt, pages: [] });
+        receipts.push({ ref, title: e.merchant || e.receipt.originalName || 'Receipt', date: e.receiptDate || null, receipt: e.receipt, pages: [] });
       }
     }
     // The receipt's tax belongs to the receipt, not to each of its lines. It
@@ -61,7 +87,7 @@ async function reportPayload(reportId, { withReceipts = true } = {}) {
         : Math.round(taxCents * lineCents[i] / totalCents);
       spread += share;
       const rate = Number(l.fxRate) > 0 ? Number(l.fxRate) : null;
-      lines.push({ ref, date: e.receiptDate, merchant: e.merchant, purpose: e.purpose, description: l.description, category: l.category, currency: l.currency || e.currency, amount: l.amount,
+      lines.push({ ref, expenseId: e.id, source: e.source || null, date: e.receiptDate, merchant: e.merchant, purpose: e.purpose, description: l.description, category: l.category, currency: l.currency || e.currency, amount: l.amount,
         fxRate: l.fxRate, fxRateDate: l.fxRateDate, fxSource: l.fxSource, fxFetchedAt: l.fxFetchedAt, fxOverrideBy: l.fxOverrideBy, fxOverrideReason: l.fxOverrideReason,
         fxAskedDate: l.fxAskedDate, fxNotOnTheDay: l.fxNotOnTheDay,
         baseAmount: l.baseAmount, onBehalfOf: l.onBehalfOf,
@@ -71,7 +97,7 @@ async function reportPayload(reportId, { withReceipts = true } = {}) {
   }
   if (withReceipts) for (const r of receipts) r.pages = await _pagesFor(r.receipt);
   for (const r of receipts) delete r.receipt;
-  return { company, report, owner, lines, receipts, generatedAt: Date.now() };
+  return { company, report, owner, lines, receipts, flags: _flags(report, company), generatedAt: Date.now() };
 }
 
 // R1, R2… for each receipt file, in the case's order, first appearance first.

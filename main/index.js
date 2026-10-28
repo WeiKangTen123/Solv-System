@@ -74,11 +74,12 @@ app.use(morgan(':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, keyGenerator: rateLimitKey, skip: skipRateLimit, standardHeaders: true, legacyHeaders: false,
                     message: { error: 'Too many requests — slow down' } }));
 // 100 KB of JSON is plenty for everything except a file. The routes that take
-// one parse their own 25 MB body after checking who is asking (receipts,
-// claims and inbound mail); a body parsed here, before any route, was 25 MB
-// for anyone at all, the login form included. Inbound mail is listed too so a
-// provider that labels the raw message as JSON is not cut off at 100 KB.
-const LARGE_BODY_ROUTE = /^\/api\/(receipts\/?$|receipts\/archive\/?$|receipts\/email\/?$|receipts\/capture\/[^/]+\/?$|claims\/import\/?$|inbound\/email\/?$)/;
+// one parse their own larger body after checking who is asking (receipts,
+// claims, inbound mail and the company logo); a body parsed here, before any
+// route, was 25 MB for anyone at all, the login form included. Inbound mail is
+// listed too so a provider that labels the raw message as JSON is not cut off
+// at 100 KB.
+const LARGE_BODY_ROUTE = /^\/api\/(receipts\/?$|receipts\/archive\/?$|receipts\/email\/?$|receipts\/capture\/[^/]+\/?$|claims\/import\/?$|inbound\/email\/?$|company\/logo\/?$)/;
 const smallJson = express.json({ limit: '100kb' });
 app.use((req, res, next) => (req.method === 'POST' && LARGE_BODY_ROUTE.test(req.path) ? next() : smallJson(req, res, next)));
 // The form parser stands aside for the same routes: a mail posted with curl's

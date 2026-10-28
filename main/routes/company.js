@@ -7,6 +7,7 @@ const asyncHandler = require('../middleware/async-handler');
 const { CATEGORY_NAMES } = require('../intake/categories');
 const { CURRENCIES, CURRENCY_CODES } = require('../intake/currencies');
 const { companyHasPriced } = require('../store/expenses');
+const logger = require('../utils/logger');
 
 // A zone name as the date library spells it ("asia/singapore" is accepted by
 // Intl but stored that way broke the SGT label on the PDF and the browser's
@@ -75,6 +76,41 @@ router.patch('/', requireAuth, requireRole('admin'), (req, res) => {
     const company = users.updateCompany(req.user.companyId, patch);
     res.json({ company });
   } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+// ── Logo ────────────────────────────────────────────────────────────────────
+// The company's logo, for the case PDF's cover and page headers
+// (reports/expense-pdf.js). The page sends the picture as a data URL; it is
+// kept as a small PNG laid on white: the PDF embeds a transparent PNG as two
+// full-size pictures, a logo of a few kilobytes became sixty, and its pages
+// are white anyway. Its own body parser, as for receipts, after the role check
+// (index.js leaves this path to it).
+const LOGO_MAX_BYTES = 2 * 1024 * 1024;
+const logoJson = express.json({ limit: '3mb' });
+const companyView = companyId => ({ ...users.getCompany(companyId), baseCurrencyLocked: companyHasPriced(companyId) });
+
+router.post('/logo', requireAuth, requireRole('admin'), logoJson, asyncHandler(async (req, res) => {
+  const m = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(req.body?.dataUri || ''));
+  if (!m) return res.status(400).json({ error: 'Choose a PNG, JPEG or WebP picture for the logo.' });
+  const input = Buffer.from(m[2], 'base64');
+  if (input.length > LOGO_MAX_BYTES) return res.status(413).json({ error: 'The logo is over 2 MB. Choose a smaller picture.' });
+  let png;
+  try {
+    png = await require('sharp')(input, { limitInputPixels: 40e6 }).rotate()
+      .resize({ width: 900, height: 300, fit: 'inside', withoutEnlargement: true })
+      .flatten({ background: '#ffffff' }).png({ palette: true, compressionLevel: 9 }).toBuffer();
+  } catch {
+    return res.status(400).json({ error: 'That file could not be read as a picture.' });
+  }
+  users.updateCompany(req.user.companyId, { logo: `data:image/png;base64,${png.toString('base64')}` });
+  logger.info('Company logo set', { companyId: req.user.companyId, bytes: png.length, by: req.user.id });
+  res.json({ company: companyView(req.user.companyId) });
+}));
+
+router.delete('/logo', requireAuth, requireRole('admin'), (req, res) => {
+  users.updateCompany(req.user.companyId, { logo: null });
+  logger.info('Company logo removed', { companyId: req.user.companyId, by: req.user.id });
+  res.json({ company: companyView(req.user.companyId) });
 });
 
 // ── LLM API keys ────────────────────────────────────────────────────────────

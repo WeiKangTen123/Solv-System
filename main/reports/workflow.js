@@ -1,6 +1,7 @@
 const db       = require('../db');
 const reports  = require('../store/reports');
 const expenses = require('../store/expenses');
+const { DECLARED_NOTE } = require('./declaration');
 
 // The case state machine, and who may move it.
 //
@@ -64,7 +65,9 @@ function _mine(r, actor, what) {
 // Marking a case claimed is the owner's own record that they put it through.
 // It carries the checks that submitting used to: a claim with an unchecked
 // receipt or an unpriced line is not a claim anybody could have made.
-function markClaimed(reportId, actor) {
+// `declared` is the claimant having been shown the declaration and gone on
+// (reports/declaration.js); the claim's event records it, and the PDF says so.
+function markClaimed(reportId, actor, { declared = false } = {}) {
   const r = _get(reportId);
   _mine(r, actor, 'mark their own case claimed');
   // A draft has no number, and a claim with no number is one nobody can find.
@@ -89,7 +92,7 @@ function markClaimed(reportId, actor) {
     reports.setState(reportId, { status: 'claimed', claimedAt: at });
     // Claiming the case claims everything in it: the receipts went in together.
     for (const e of r.expenses) expenses.updateExpense(e.id, { claimedAt: at });
-    reports.addEvent(reportId, actor.id, 'claimed', null);
+    reports.addEvent(reportId, actor.id, 'claimed', declared ? DECLARED_NOTE : null);
   })();
   return reports.getReport(reportId);
 }

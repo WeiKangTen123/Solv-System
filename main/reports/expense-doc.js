@@ -1,13 +1,9 @@
-// Everything about what an expense report LOOKS like, as plain data.
-// buildModel() decides rows, columns and notes; expenseReportDoc() lays that
-// out for pdfmake; expenseReportCsv() and workbookModel() reuse the model, so
-// the three exports cannot disagree. Nothing here renders a byte.
-const ACCENT = '#0F6E56', MUTED = '#6b7280', RULE = '#d8dbd4', BAND = '#f3f4ef';
-const { localDate } = require('../utils/zone-date');
+// What an expense report says, as plain data. buildModel() decides rows,
+// columns, totals and notes; expenseReportCsv() and workbookModel() reuse it,
+// and so does the PDF (expense-pdf.js), so the three exports cannot disagree.
+// Nothing here renders a byte.
 const { SOURCE_LONG: SOURCE_LABEL, SOURCE_VIA: VIA } = require('../fx/sources');
 const POLICY_LABEL = { receipt_date: 'rate on the receipt date', submission_date: 'rate on the submission date', monthly_fixed: 'monthly fixed rate table' };
-
-const money = n => require('../utils/money').formatAmount(n);
 
 // A rate printed to six significant figures. The stored number keeps every
 // digit the provider gave — a rupiah rate is 0.0000717308657915501, and the
@@ -38,12 +34,6 @@ function fmtStamp(iso, tz) {
   const text = `${Number(parts.day)} ${MONTHS[Number(parts.month) - 1]} ${parts.year} ${parts.hour}:${parts.minute}`;
   return zone === 'Asia/Singapore' ? `${text} SGT` : text;
 }
-// The standard PDF fonts cover Latin-1 only. Anything else is folded to "?"
-// so a name in another script produces a readable placeholder rather than a
-// stream that dies mid-page. The en dash, right quote, double dagger and
-// arrow are kept: they are drawn by these fonts and the report uses them.
-// The arrow is not in the standard font's encoding at all, so it becomes the word.
-const latin1 = v => String(v ?? '').replace(/\s*→\s*/g, ' to ').replace(/[^ -ÿ–—‘’‡•]/g, '?');
 
 function buildModel(payload) {
   const { company, report, lines = [] } = payload;
@@ -97,88 +87,6 @@ function buildModel(payload) {
   return { base, columns, rows, categoryTotals, total, advances, reimbursement, rateNotes, notes };
 }
 
-// The claim's date where the company is: 07:30 in Singapore is still the
-// day before in UTC, and the cover said so.
-function statusLine(report, company = {}) {
-  if (report.status === 'claimed') return `Claimed ${report.claimedAt ? fmtDate(localDate(company.timezone || 'Asia/Singapore', new Date(report.claimedAt))) : '—'}`;
-  return 'Open';
-}
-
-function expenseReportDoc(payload) {
-  const { company, report, owner = {}, receipts = [], generatedAt = Date.now() } = payload;
-  const m = buildModel(payload);
-  const L = latin1;
-  const period = report.kind === 'period' ? 'Period' : report.kind === 'case' ? 'Case' : 'Trip';
-  const span = `${fmtDate(report.periodFrom)} – ${fmtDate(report.periodTo)}${report.nights ? ` · ${report.nights} night${report.nights === 1 ? '' : 's'}` : ''}`;
-  const cover = [
-    ['Employee', owner.name || owner.email || '—', 'Purpose', report.purpose || report.title || '—'],
-    ['Employee ID', owner.employeeId || '—', period, span],
-    ['Department', owner.department || '—',
-      report.kind === 'trip' ? 'Destination' : 'Reference',
-      report.kind === 'trip' ? (report.destination || '—') : report.number],
-    ['Reference', report.number, 'Status', statusLine(report, company)],
-  ];
-  const head = ['#', 'Date', 'Description', 'Ccy', 'Amount', 'Rate', ...m.columns, `Total ${m.base}`]
-    .map((t, i) => ({ text: L(t), style: 'colHead', alignment: i >= 4 ? 'right' : 'left' }));
-  const body = [head];
-  for (const r of m.rows) {
-    body.push([
-      { text: String(r.n), style: 'cell' }, { text: fmtDate(r.date), style: 'cell' }, { text: L(r.description), style: 'cell' },
-      { text: r.currency || '', style: 'cell' }, { text: money(r.amount), style: 'cell', alignment: 'right' }, { text: r.foreign && r.rate ? String(r.rate) : '', style: 'cell', alignment: 'right' },
-      ...m.columns.map(c => ({ text: r.cells[c] !== undefined ? money(r.cells[c]) : '', style: 'cell', alignment: 'right' })),
-      { text: r.pending ? 'rate pending' : money(r.base), style: 'strong', alignment: 'right' },
-    ]);
-  }
-  body.push([
-    { text: 'Category totals', style: 'strong', colSpan: 6 }, {}, {}, {}, {}, {},
-    ...m.columns.map(c => ({ text: money(m.categoryTotals[c] || 0), style: 'strong', alignment: 'right' })),
-    { text: money(m.total), style: 'strong', alignment: 'right' },
-  ]);
-
-  const content = [
-    { table: { widths: ['auto', '*', 'auto', '*'], body: cover.map(r => [{ text: r[0], style: 'label' }, { text: L(r[1]), style: 'value' }, { text: r[2], style: 'label' }, { text: L(r[3]), style: 'value' }]) }, layout: 'noBorders', margin: [0, 0, 0, 8] },
-    { columns: [{ text: '', width: '*' }, { width: 'auto', table: { body: [
-      [{ text: 'TOTAL REIMBURSEMENT', style: 'label', margin: [0, 4, 8, 0] }, { text: `${m.base} ${money(m.reimbursement)}`, style: 'big', alignment: 'right' }],
-      [{ text: 'Advances received', style: 'label', margin: [0, 2, 8, 0] }, { text: `${m.base} ${money(m.advances)}`, style: 'value', alignment: 'right' }],
-    ] }, layout: 'noBorders' }], margin: [0, 0, 0, 10] },
-    { table: { headerRows: 1, dontBreakRows: true, widths: ['auto', 'auto', '*', 'auto', 'auto', 'auto', ...m.columns.map(() => 'auto'), 'auto'], body },
-      layout: {
-        hLineWidth: i => (i === 1 || i === body.length - 1 || i === body.length ? 0.7 : 0), hLineColor: () => RULE, vLineWidth: () => 0,
-        fillColor: i => (i > 0 && i < body.length - 1 && i % 2 === 0 ? BAND : null),
-        paddingTop: () => 3, paddingBottom: () => 3, paddingLeft: () => 4, paddingRight: () => 4,
-      } },
-    { text: 'EXCHANGE RATES', style: 'section', margin: [0, 12, 0, 2] },
-    ...(m.rateNotes.length ? m.rateNotes.map(t => ({ text: L(t), style: 'note' })) : [{ text: `All amounts in ${m.base}.`, style: 'note' }]),
-    ...m.notes.map(t => ({ text: L(t), style: 'note' })),
-    { columns: [
-      { width: '*', stack: [{ text: 'Claimant', style: 'label', margin: [0, 16, 0, 2] }, { text: L(owner.name || owner.email || ''), style: 'value' }, { text: report.claimedAt ? `claimed ${fmtStamp(report.claimedAt, company.timezone)}` : 'not yet claimed', style: 'note' }] },
-      { width: '*', stack: [{ text: 'For office use', style: 'label', margin: [0, 16, 0, 2] }, { text: [report.claimedAt ? `Claimed ${fmtDate(localDate(company.timezone || 'Asia/Singapore', new Date(report.claimedAt)))}` : 'Not yet claimed', report.xeroInvoiceId ? `Xero ${report.xeroInvoiceId}` : null, `Receipts: ${receipts.length}${receipts.length ? ` (${receipts.map(r => r.ref).join(', ')})` : ''}`].filter(Boolean).join(' · '), style: 'note' }] },
-    ] },
-  ];
-  for (const r of receipts) {
-    content.push({ text: `${r.ref} · ${L(r.title || 'Receipt')}`, style: 'section', pageBreak: 'before' });
-    if (!r.pages.length) content.push({ text: 'No image available for this receipt.', style: 'note' });
-    r.pages.forEach((p, i) => content.push({ image: p.dataUri, fit: [770, 460], margin: [0, 6, 0, 6], ...(i > 0 ? { pageBreak: 'before' } : {}) }));
-  }
-
-  return {
-    pageSize: 'A4', pageOrientation: 'landscape', pageMargins: [28, 56, 28, 30],
-    defaultStyle: { font: 'Helvetica', fontSize: 8 },
-    header: { margin: [28, 18, 28, 0], columns: [
-      { width: '*', stack: [{ text: L(company.name || 'Company'), style: 'org' }, { text: 'Expense report', style: 'sub' }] },
-      { width: 'auto', stack: [{ text: report.number, style: 'title', alignment: 'right' }, { text: `Generated ${fmtStamp(new Date(generatedAt).toISOString(), company.timezone)}`, style: 'sub', alignment: 'right' }] },
-    ] },
-    footer: (page, pages) => ({ margin: [28, 6, 28, 0], columns: [{ text: `${report.number} · ${L(owner.name || owner.email || '')}`, style: 'foot' }, { text: `Page ${page} of ${pages}`, style: 'foot', alignment: 'right' }] }),
-    styles: {
-      org: { fontSize: 11, bold: true, color: ACCENT }, title: { fontSize: 14, bold: true }, sub: { fontSize: 7.5, color: MUTED }, foot: { fontSize: 6.5, color: MUTED },
-      label: { fontSize: 7, bold: true, color: MUTED, characterSpacing: 0.4 }, value: { fontSize: 9 }, big: { fontSize: 14, bold: true, color: ACCENT },
-      colHead: { fontSize: 6.5, bold: true, color: MUTED }, cell: { fontSize: 7.5 }, strong: { fontSize: 7.5, bold: true },
-      section: { fontSize: 8, bold: true, characterSpacing: 0.5 }, note: { fontSize: 7, color: '#374151', lineHeight: 1.25 },
-    },
-    content,
-  };
-}
-
 function expenseReportCsv(payload) {
   const m = buildModel(payload);
   const { report, lines = [] } = payload;
@@ -224,4 +132,4 @@ function exportFilename(payload) {
 }
 
 module.exports = {
-  fmtRate, buildModel, expenseReportDoc, expenseReportCsv, workbookModel, exportFilename, _fmtDate: fmtDate, _latin1: latin1 };
+  fmtRate, fmtDate, fmtStamp, POLICY_LABEL, buildModel, expenseReportCsv, workbookModel, exportFilename, _fmtDate: fmtDate };

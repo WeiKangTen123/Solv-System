@@ -14,6 +14,7 @@ import CaseTotals from '../components/cases/CaseTotals';
 import CaseDetails from '../components/cases/CaseDetails';
 import CaseActivity from '../components/cases/CaseActivity';
 import PostDialog from '../components/cases/PostDialog';
+import ClaimMessage from '../components/cases/ClaimMessage';
 import MergeDialog from '../components/cases/MergeDialog';
 import { AllowanceBar, PerDiemDialog, MileageDialog } from '../components/cases/Allowances';
 import Poll from '../components/cases/Poll';
@@ -223,10 +224,10 @@ function CasePage({ id }) {
     // One click used to mark it claimed, which locks every receipt in it.
     const ok = await confirm({
       title: `Mark ${r.number} claimed?`,
-      message: 'Do this once the claim has gone through your company. Its receipts are then locked; you can reopen it until it is posted to Xero.',
+      message: <ClaimMessage company={user?.companyName} />,
       confirmLabel: 'Mark claimed',
     });
-    if (ok) await act('claim', () => api.post(`/reports/${id}/claimed`, {}));
+    if (ok) await act('claim', () => api.post(`/reports/${id}/claimed`, { declared: true }));
   }
 
   async function remove() {

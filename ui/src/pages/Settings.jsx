@@ -11,6 +11,7 @@ import Modal from '../components/Modal';
 import ExchangeRates from '../components/settings/ExchangeRates';
 import PolicySettings from '../components/settings/PolicySettings';
 import PerDiemRates from '../components/settings/PerDiemRates';
+import CompanyLogo from '../components/settings/CompanyLogo';
 import InboundAddress from '../components/settings/InboundAddress';
 import Tabs, { tabPanelProps } from '../components/ui/Tabs';
 import { forgetCompany } from '../utils/useCompany';
@@ -492,7 +493,7 @@ export default function Settings() {
               <select id="c-fx" className="form-input" value={company.fxPolicy} onChange={e => setCompany({ ...company, fxPolicy: e.target.value })}>{POLICIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
           </div>
           <div className="form-group">
-            <label className="form-label" htmlFor="c-cols">Columns on the printed claim, in order</label>
+            <label className="form-label" htmlFor="c-cols">Categories on the PDF's summary, in order</label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
               {columns.map((c, i) => (
                 <span key={c} className="badge badge-gray" style={{ fontSize: 12, color: 'var(--text-primary)', padding: '2px 4px 2px 10px', gap: 0 }}>
@@ -508,10 +509,11 @@ export default function Settings() {
               <option value="">Add a column…</option>
               {categories.filter(c => !columns.includes(c)).map(c => <option key={c} value={c}>{c}</option>)}
             </select>
-            <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4 }}>A receipt in a category without a column of its own prints under Other.</div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4 }}>A receipt in a category not listed here is counted under Other in the summary. The expense lines still show each one's own category.</div>
           </div>
           <button className="btn btn-primary" type="submit" style={{ marginTop: 4 }}>Save company settings</button>
         </form>
+        <CompanyLogo logo={company.logo} onSaved={c => setCompany(prev => ({ ...prev, logo: c.logo }))} />
         {/* Each saves on its own and says so beside its own button: one
             message at the top of the tab was out of sight from either. */}
         <PolicySettings tz={user?.timezone} />

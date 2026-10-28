@@ -15,6 +15,7 @@ const { intakeView } = require('../reports/intake-view');
 const { reportPayload } = require('../reports/expense-payload');
 const exporter = require('../reports/expense-export');
 const doc     = require('../reports/expense-doc');
+const pdfDoc  = require('../reports/expense-pdf');
 const logger  = require('../utils/logger');
 
 // Cases: the cover, the receipts filed under it, draft, open or claimed, and
@@ -314,7 +315,8 @@ function _transition(action, fn) {
     catch (err) { _fail(res, err); }
   };
 }
-router.post('/:id/claimed', requireAuth, _transition('claimed',  (r, req) => wf.markClaimed(r.id, req.user)));
+// `declared: true` is the claim window having shown the declaration.
+router.post('/:id/claimed', requireAuth, _transition('claimed',  (r, req) => wf.markClaimed(r.id, req.user, { declared: req.body?.declared === true })));
 // Reopened, its receipts are priced as any open receipt is: one priced at the
 // live rate whose day has since closed moves to the close. While it was
 // claimed the close passed it by, and it was claimed again at the live rate.
@@ -413,7 +415,7 @@ router.get('/:id/export', asyncHandler(async (req, res) => {
   const name = doc.exportFilename(payload);
   res.type(FORMATS[spec.format]);
   setDownloadName(res, name, spec.format, spec.format === 'pdf');
-  if (spec.format === 'pdf') return res.send(await exporter.pdfBuffer(doc.expenseReportDoc(payload)));
+  if (spec.format === 'pdf') return res.send(await exporter.pdfBuffer(pdfDoc.expenseReportDoc(payload)));
   if (spec.format === 'xlsx') return res.send(await exporter.xlsxBuffer(payload));
   res.send(exporter.csvText(payload));
 }));

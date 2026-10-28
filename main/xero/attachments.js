@@ -80,7 +80,7 @@ async function _lighter(r, budget) {
 }
 
 // The case PDF, for a bill that would need more than MAX_FILES attachments:
-// the same document the PDF export makes (reports/expense-doc.js), the cover
+// the same document the PDF export makes (reports/expense-pdf.js), the cover
 // and then every receipt, cut between receipts into as few files as fit
 // MAX_BYTES, in order, the cover in the first. `payload` is reportPayload
 // with its receipts' pages (withReceipts: true).
@@ -90,25 +90,24 @@ async function _lighter(r, budget) {
 // Files are named for the case and the receipts in them, "EXP-2026-0002
 // receipts 1-8.pdf", the numbers the printed report gives them (R1–R8).
 async function casePdfs(payload, { maxBytes = MAX_BYTES, maxFiles = MAX_FILES } = {}) {
-  const doc = require('../reports/expense-doc');
   const exporter = require('../reports/expense-export');
   const receipts = payload.receipts || [];
   const number = payload.report.number || 'Case';
 
-  // The export with nothing appended is the cover; the receipts start where
-  // it ends. The cover is made from every receipt, so it lists them all
-  // whichever file each lands in.
-  const shell = doc.expenseReportDoc({ ...payload, receipts: [] });
-  const coverEnd = shell.content.length;
-  const cover = doc.expenseReportDoc({ ...payload, receipts: receipts.map(r => ({ ...r, pages: [] })) }).content.slice(0, coverEnd);
-  const pagesOf = r => doc.expenseReportDoc({ ...payload, receipts: [r] }).content.slice(coverEnd);
+  // The export in its parts. The front is made from every receipt, so its
+  // contents and lines name them all whichever file each lands in. A file of
+  // receipts only has no cover, so each of its pages carries the header, and
+  // its first receipt starts on its first page rather than after a blank one.
+  // Parts are made afresh for each file: pdfmake writes its layout into them.
+  // The cover's contents point at the "Receipts" mark, and pdfmake refuses a
+  // reference to a mark that is not in the file, so a file with the cover
+  // always has it, even the cover weighed on its own.
+  const partsOf = () => require('../reports/expense-pdf').caseParts({ ...payload, receipts: receipts.map(r => ({ ...r, pages: [] })) });
   const render = (withCover, list) => {
-    const content = withCover ? [...cover] : [];
-    for (const r of list) content.push(...pagesOf(r));
-    // A file that starts with a receipt starts on its first page, not after
-    // a blank one.
-    if (!withCover && content.length) { content[0] = { ...content[0] }; delete content[0].pageBreak; }
-    return exporter.pdfBuffer({ ...shell, content });
+    const p = partsOf();
+    const content = withCover ? [...p.front, ...(receipts.length ? [p.receiptsStart] : [])] : [];
+    list.forEach((r, k) => content.push(...p.receiptNodes(r, { first: k === 0 })));
+    return exporter.pdfBuffer({ ...p.frame(withCover), content });
   };
 
   const budget = Math.floor(maxBytes * FILL);

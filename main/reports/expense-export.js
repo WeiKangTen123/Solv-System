@@ -1,10 +1,13 @@
 const ExcelJS = require('exceljs');
 const doc = require('./expense-doc');
+const { FONTS: EMBEDDED } = require('./pdf-text');
 
-// The thin part that calls libraries. Helvetica is a standard PDF font every
-// reader resolves itself, so no font file is embedded (see the Xero app's
-// budget export for the reasoning); text is folded to Latin-1 in expense-doc.
-const FONTS = { Helvetica: { normal: 'Helvetica', bold: 'Helvetica-Bold', italics: 'Helvetica-Oblique', bolditalics: 'Helvetica-BoldOblique' } };
+// The thin part that calls libraries. The case PDF embeds Noto Sans, and Noto
+// Sans SC for Chinese (pdf-text.js); pdfmake keeps only the glyphs a document
+// uses. Helvetica stays for the PDFs intake makes of an email or a converted
+// file (intake/email.js, intake/convert.js): a standard font every reader has,
+// so nothing is embedded for it.
+const FONTS = { ...EMBEDDED, Helvetica: { normal: 'Helvetica', bold: 'Helvetica-Bold', italics: 'Helvetica-Oblique', bolditalics: 'Helvetica-BoldOblique' } };
 let _printer = null;
 function printer() { if (!_printer) { const PdfPrinter = require('pdfmake'); _printer = new PdfPrinter(FONTS); } return _printer; }
 
