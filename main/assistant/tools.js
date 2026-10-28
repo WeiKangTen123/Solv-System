@@ -10,6 +10,9 @@ const { CATEGORY_NAMES, canonicalCategory } = require('../intake/categories');
 const { localDate } = require('../utils/zone-date');
 const astore  = require('./store');
 const { rateBasis } = require('./actions');
+const { caseSuggestion } = require('../reports/cover-help');
+const { coverPatch, sameCover } = require('../reports/cover-patch');
+const { changeNote } = require('../reports/cover-auto');
 
 // What the assistant can do, as tools the model calls. Every tool runs as the
 // person in the conversation and is held to exactly what that person could do
@@ -37,6 +40,9 @@ const OPEN_STATUSES = 'reading,review-needed,reviewed,duplicate';
 const MAX_LOOKS = 3;
 const DATE = { type: 'string', description: 'YYYY-MM-DD' };
 const CATEGORY = { type: 'string', enum: CATEGORY_NAMES };
+// What a case details card may change (propose_case_details).
+const CASE_FIELDS = ['kind', 'title', 'periodFrom', 'periodTo', 'destination', 'nights', 'purpose', 'notes'];
+const MAX_NIGHTS = 366;
 
 class ToolError extends Error {}
 const no = msg => { throw new ToolError(msg); };
@@ -324,14 +330,21 @@ const READ = {
     },
   },
 
+  // The cover comes with which of its fields the AI filled from the receipts
+  // and which the person set (coverAi), and with what the receipts suggest
+  // for each (reports/cover-help.js): "why are my dates 31 Aug?" and "fix the
+  // details from my receipts" are answered from the same rules as the page.
   get_case: {
-    description: 'One case: its cover, totals, receipts and recent history.',
+    description: 'One case: its details (kind trip/period/case, title, dates, destination, nights, purpose, notes), which details the AI filled from the receipts (coverAi.auto) and which the person set (coverAi.user), what the receipts suggest for each detail (suggestion, with the receipts it was made from), totals, receipts and recent history.',
     parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
     run(ctx, a) {
       const r = a.id ? reports.getReport(String(a.id)) : null;
       if (!r || !canView(ctx.actor, r.userId, r.companyId)) no('No case with that id that this person can see.');
+      const s = caseSuggestion(r, { baseCurrency: ctx.base, today: _today(ctx) });
       return {
         id: r.id, number: r.number, title: r.title, purpose: r.purpose, kind: r.kind, from: r.periodFrom, to: r.periodTo, destination: r.destination,
+        nights: r.nights, notes: r.notes, coverAi: r.coverAi,
+        suggestion: s ? { kind: s.kind, title: s.title, from: s.periodFrom, to: s.periodTo, destination: s.destination, nights: s.nights, madeFrom: s.basis } : null,
         owner: _who(ctx, r.userId), status: r.status, claimedAt: r.claimedAt, inXero: !!r.xeroInvoiceId,
         totals: { [ctx.base]: r.totals.totalBase, advances: r.advances, reimbursement: r.totals.reimbursement, byCategory: r.totals.byCategory, notReviewed: r.totals.unreviewed, withoutRate: r.totals.pendingRates },
         receipts: r.expenses.slice(0, 100).map(e => _brief(ctx, e)),
@@ -558,6 +571,50 @@ const PROPOSE = {
       const cur = _case(ctx, e.reportId);
       return _propose(ctx, { expense: e, kind: 'file_in_case', payload: { expenseId: e.id, caseId: target ? target.id : null },
         summary: `${_label(ctx, e)}: ${target ? `file in ${target.number}${target.title ? ` (${target.title})` : ''}` : `take out of ${cur ? cur.label : 'its case'}`}` });
+    },
+  },
+
+  // A case's details, held to what the owner could save on the Details tab:
+  // the same cover rules (reports/cover-patch.js), on their own open case. A
+  // draft's details are the New case page's, and a claimed case is locked.
+  // The advance is money the person was handed, not a detail to correct from
+  // receipts, so it is not here. Every field the card sets becomes the
+  // person's (store/reports.js updateReport), as if typed.
+  propose_case_details: {
+    description: 'Propose changes to the details of one of the person\'s own open cases (not a draft, not claimed). kind is trip, period (one calendar month) or case (anything else). Only include fields that change; read the case with get_case first, whose suggestion says what the receipts give for each detail. A purpose is only ever words the person gave you. The person sees a card and must press Apply.',
+    parameters: { type: 'object', properties: {
+      id: { type: 'string', description: 'The case id' },
+      changes: { type: 'object', properties: {
+        kind: { type: 'string', enum: ['trip', 'period', 'case'] }, title: { type: 'string' }, periodFrom: DATE, periodTo: DATE,
+        destination: { type: 'string', description: 'Where a trip went, e.g. "Mumbai, Pune, India"' }, nights: { type: 'integer', description: 'Nights away, for a trip' },
+        purpose: { type: 'string', description: 'The business purpose, in the person\'s own words' }, notes: { type: 'string' },
+      } },
+      reason: REASON,
+    }, required: ['id', 'changes', 'reason'] },
+    run(ctx, a) {
+      const r = a.id ? reports.getReport(String(a.id)) : null;
+      if (!r || !canView(ctx.actor, r.userId, r.companyId)) no('No case with that id that this person can see.');
+      if (r.userId !== ctx.actor.id) no('Only the person whose case this is can change its details.');
+      if (r.status === 'draft') no('That case is still a draft on the New case page; its details are filled in there.');
+      if (!wf.isEditable(r)) no(`Case ${r.number} has been claimed, so its details are locked. The person can reopen it on the case page if it needs changing.`);
+      const asked = a.changes && typeof a.changes === 'object' ? a.changes : {};
+      const n = asked.nights;
+      if (n !== undefined && n !== null && n !== '' && !(Number.isInteger(Number(n)) && Number(n) >= 0 && Number(n) <= MAX_NIGHTS)) no(`Nights must be a whole number from 0 to ${MAX_NIGHTS}.`);
+      let patch;
+      try { patch = coverPatch(Object.fromEntries(CASE_FIELDS.filter(k => asked[k] !== undefined).map(k => [k, asked[k]]))); }
+      catch (err) { no(err.message); }
+      const from = {};
+      for (const k of Object.keys(patch)) {
+        if (sameCover(patch[k], r[k])) { delete patch[k]; continue; }
+        from[k] = r[k] ?? null;
+      }
+      if (!Object.keys(patch).length) no('Those are already the case\'s details.');
+      const lo = patch.periodFrom !== undefined ? patch.periodFrom : r.periodFrom, hi = patch.periodTo !== undefined ? patch.periodTo : r.periodTo;
+      if (lo && hi && lo > hi) no(`From would be after To (${lo} to ${hi}).`);
+      const summary = `${_caseLabel(r)}${r.title ? ` (${r.title})` : ''}: ${changeNote(r, patch)}`;
+      // `from` is what the card was made against: Apply refuses once any of
+      // those has moved, rather than overwriting what the person typed since.
+      return _propose(ctx, { expense: null, kind: 'edit_case', payload: { reportId: r.id, patch, from, reason: String(a.reason || '').slice(0, 300) }, summary });
     },
   },
 };
