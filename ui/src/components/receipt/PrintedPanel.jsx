@@ -52,8 +52,11 @@ export default function PrintedPanel({
   const taxCol = groups.length >= 2;
   const lay = arrange(rows);
   const reads = matchRead(rows, read && read.rows);
+  // The gap is said once the typing has stopped (half a second), so it is
+  // not announced at every key; it goes as soon as the rows add up.
   const settled = useSettled(printed, 500);
-  const sum = addsUp(settled, cur);
+  const live = addsUp(printed, cur);
+  const sum = live.ok ? live : addsUp(settled, cur);
   const category = mainCategory(rows, fallbackCategory);
 
   // Each row named by its kind and its place among them, for the boxes'
@@ -71,8 +74,11 @@ export default function PrintedPanel({
   const setRows = fn => edit(p => ({ ...p, rows: fn(p.rows) }));
   const setTop = (k, v) => edit(p => ({ ...p, [k]: v }));
   function changeKind(i, kind) {
+    // Nothing sits under a tax or a rounding, so what was under this row is
+    // then for the whole receipt.
+    const holds = kind === 'item' || kind === 'charge' || kind === 'discount';
     setRows(rs => rs.map((r, j) => {
-      if (j !== i) return r;
+      if (j !== i) return !holds && r.on === i ? { ...r, on: null } : r;
       const next = { ...r, kind };
       if (kind !== 'tax') { next.included = false; next.worked = false; }
       if (kind === 'rounding') next.rate = null;
@@ -110,9 +116,11 @@ export default function PrintedPanel({
   const gapText = !sum.ok && `These come to ${money(sum.sum)}, ${money(Math.abs(sum.gap))} ${sum.gap > 0 ? 'under' : 'over'} the total.`;
   // The gap as a row: under the total, an item nobody itemised; over it, a
   // discount of the same.
-  const addGap = () => (sum.gap > 0
-    ? add('item', { label: 'Not itemised', amount: sum.gap.toFixed(2), qty: null })
-    : add('discount', { label: 'Not itemised', amount: sum.gap.toFixed(2) }));
+  const addGap = () => {
+    if (live.ok) return;
+    if (live.gap > 0) add('item', { label: 'Not itemised', amount: live.gap.toFixed(2), qty: null });
+    else add('discount', { label: 'Not itemised', amount: live.gap.toFixed(2) });
+  };
   const readTotal = read && num(read.total) !== null && num(read.total) !== num(printed.total) ? num(read.total) : null;
   const readSub = read && num(read.subtotal) !== null && num(read.subtotal) !== num(printed.subtotal) ? num(read.subtotal) : null;
   const claimed = claimedParts(lines);
