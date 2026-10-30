@@ -217,9 +217,19 @@ function _readerRead(e) {
 // from theirs and its tax from its tax rows (receipts/edit.js refuses each):
 // none is proposed on its own. A card the server would turn down at Apply is
 // not a card worth showing.
+//
+// The refusal says no card was made, and where the person makes the change
+// themselves: told only "change the tax rows instead", the model told a
+// claimant it had proposed the change and to press Apply on a card that did
+// not exist.
+const NOT_PROPOSED = {
+  tax: 'No card was made: this receipt\'s tax comes from its tax rows as printed. The person changes the tax row themselves, under "As printed" on the receipt page.',
+  category: 'No card was made: this receipt\'s categories are its items\'. The person changes an item\'s category themselves, under "As printed" on the receipt page.',
+  lines: 'No card was made: this receipt\'s lines come from its items as printed. The person changes the items themselves, under "As printed" on the receipt page.',
+};
 function _printedPatchOk(e, patch) {
-  if (patch.tax !== undefined) no(edit.TAX_FROM_ROWS);
-  if (patch.category && patch.category !== e.category) no(edit.CATEGORY_FROM_ITEMS);
+  if (patch.tax !== undefined) no(NOT_PROPOSED.tax);
+  if (patch.category && patch.category !== e.category) no(NOT_PROPOSED.category);
 }
 
 // ── Reading tools ────────────────────────────────────────────────────────────
@@ -534,7 +544,7 @@ const PROPOSE = {
     run(ctx, a) {
       const e = _receipt(ctx, a.id);
       _detailsOk(ctx, e);
-      if (e.printed) no(edit.LINES_FROM_ITEMS);
+      if (e.printed) no(NOT_PROPOSED.lines);
       const lines = Array.isArray(a.lines) ? a.lines : [];
       if (!lines.length || lines.length > 50) no('Give between one and fifty lines.');
       const clean = lines.map(l => {

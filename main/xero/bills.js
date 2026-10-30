@@ -63,48 +63,104 @@ function taxForRate(rate, labels, accountCode, accounts, active) {
 
 const cents = n => Math.round(Number(n || 0) * 100);
 const ROUNDING_CENTS = 5;
+const _rateOf = t => (t.rate !== null && t.rate !== undefined && t.rate !== '' && Number(t.rate) > 0 ? Number(t.rate) : null);
+const _sameRate = (a, b) => a !== null && b !== null && Math.abs(a - b) < 0.0001;
+
+// A line's taxes in the parts they were charged on. `basis` names the rows a
+// tax was charged on (receipts/printed.js): the same for CGST and SGST on the
+// same charges, different for each night's own Service Tax. Without it, the
+// taxes charged on the same amount go together, unless they cannot be one
+// split pair: two nights at 8% on 332.64 each came to one 332.64 at 16%,
+// which no organisation has, and Xero coded it as Sales Tax 10% with the
+// second night left "not taxed". A pair at one rate is one when its taxes
+// come to their combined rate of the amount; otherwise each is a part alone.
+function _parts(taxes, inBase) {
+  const byKey = new Map();
+  for (const t of taxes) {
+    const key = t.basis !== null && t.basis !== undefined && t.basis !== '' ? `b:${t.basis}` : `g:${cents(t.gross)}`;
+    const p = byKey.get(key) || { key, taxes: [], gross: inBase(t.gross, t.baseGross) };
+    p.taxes.push(t);
+    byKey.set(key, p);
+  }
+  const out = [];
+  for (const p of byKey.values()) {
+    const rates = p.taxes.map(_rateOf);
+    if (p.key.startsWith('g:') && p.taxes.length > 1 && rates.every(r => _sameRate(r, rates[0]))) {
+      const R = rates.reduce((a, b) => a + b, 0);
+      const sum = p.taxes.reduce((s, t) => s + inBase(t.amount, t.baseAmount), 0);
+      if (Math.abs(sum - (p.gross * R) / (100 + R)) > 2 * p.taxes.length + sum * 0.01) {
+        for (const t of p.taxes) out.push({ key: p.key, taxes: [t], gross: inBase(t.gross, t.baseGross) });
+        continue;
+      }
+    }
+    out.push(p);
+  }
+  return out;
+}
+
 // A base-currency line of a receipt kept as printed (line.taxes, see
 // reports/expense-payload.js): one bill line for each part of it a tax was
 // charged on, at that part's amount with the tax as printed, and the rest on
-// a line of its own on the zero type. Taxes charged on the same part go
-// together, CGST with SGST, as one line at their combined rate. A KL hotel's
-// room line is the room's Service Tax 8% on one bill line and the tourism
-// tax, which no tax was charged on, on another; summed into one line at the
-// organisation's top rate, as it used to be, Xero coded the whole of it as
-// taxed. Null when the taxes do not say what they were charged on: the line
-// then goes as before.
+// a line of its own on the zero type. A KL hotel's room line is the room's
+// Service Tax 8% on one bill line and the tourism tax, which no tax was
+// charged on, on another; summed into one line at the organisation's top
+// rate, as it used to be, Xero coded the whole of it as taxed.
+//
+// A part is one bill line at its taxes' rate when they share one: a tax on
+// its own, or a pair split in two (CGST 9% and SGST 9%, at 18%). Taxes at
+// different rates on one part (a KL bill's SST 6% and Service Tax 8% read
+// without saying which items each was on, a Berlin hotel's 7% and 19%) are a
+// bill line each, its amount worked back from the tax and its rate, and never
+// more than the part between them: summed, they were 14%, coded as Sales Tax
+// 10%. A part with a tax of no printed rate is one line, as before. Null when
+// the taxes do not say what they were charged on: the line goes as before.
 function printedLines(l, item, { accountCode, accounts, active, zeroType }) {
   const taxes = l.taxes.filter(t => cents(t.amount) > 0);
   const total = cents(l.baseAmount);
   if (!taxes.length) return [item(total / 100, zeroType)];
   if (taxes.some(t => !(cents(t.gross) > 0))) return null;
-  const rate = Number(l.fxRate) > 0 ? Number(l.fxRate) : 1;
-  const inBase = (v, given) => (given !== null && given !== undefined ? cents(given) : Math.round(cents(v) * rate));
-  const parts = new Map();
-  for (const t of taxes) {
-    const key = cents(t.gross);
-    const p = parts.get(key) || { taxes: [], gross: inBase(t.gross, t.baseGross), tax: 0 };
-    p.taxes.push(t); p.tax += inBase(t.amount, t.baseAmount);
-    parts.set(key, p);
+  const fx = Number(l.fxRate) > 0 ? Number(l.fxRate) : 1;
+  const inBase = (v, given) => (given !== null && given !== undefined ? cents(given) : Math.round(cents(v) * fx));
+  const taxOf = t => inBase(t.amount, t.baseAmount);
+  const list = [];   // { gross, tax, rate, taxes }, amounts in cents
+  // An amount worked back from a tax rounded to the cent is only known to
+  // within half a cent of tax at its rate, 9 cents at 6%: that much off the
+  // line's own amount is rounding, not a part nobody taxed.
+  let slack = ROUNDING_CENTS;
+  for (const p of _parts(taxes, inBase)) {
+    const rates = p.taxes.map(_rateOf);
+    const tax = p.taxes.reduce((s, t) => s + taxOf(t), 0);
+    if (rates.some(r => r === null)) { list.push({ gross: p.gross, tax, rate: null, taxes: p.taxes }); continue; }
+    if (rates.every(r => _sameRate(r, rates[0]))) {
+      list.push({ gross: p.gross, tax, rate: Math.round(rates.reduce((a, b) => a + b, 0) * 10000) / 10000, taxes: p.taxes });
+      continue;
+    }
+    const each = p.taxes.map((t, i) => ({ t, tax: taxOf(t), rate: rates[i], gross: Math.round((taxOf(t) * (100 + rates[i])) / rates[i]) }));
+    const sum = each.reduce((s, x) => s + x.gross, 0);
+    if (sum > p.gross) {
+      let left = p.gross;
+      each.forEach((x, i) => { x.gross = i === each.length - 1 ? left : Math.round((x.gross * p.gross) / sum); left -= x.gross; });
+    }
+    for (const x of each) {
+      list.push({ gross: x.gross, tax: x.tax, rate: x.rate, taxes: [x.t] });
+      slack += Math.ceil((100 + x.rate) / (2 * x.rate));
+    }
   }
-  const list = [...parts.values()];
-  let rest = total - list.reduce((s, p) => s + p.gross, 0);
+  let rest = total - list.reduce((s, x) => s + x.gross, 0);
   // The receipt's own rounding (the nasi kandar's −0.02), or a cent from each
   // part rounding on its own, goes into the largest part: a bill line of
   // −0.02 tells finance nothing. More than that, either way, is a part of the
   // line no tax was charged on, and goes on its own.
-  if (rest && Math.abs(rest) <= ROUNDING_CENTS) {
+  if (rest && Math.abs(rest) <= slack) {
     list.reduce((a, b) => (b.gross > a.gross ? b : a)).gross += rest;
     rest = 0;
   }
-  if (list.some(p => p.gross <= 0)) return null;
-  const out = list.map(p => {
-    const rates = p.taxes.map(t => Number(t.rate));
-    const combined = rates.every(r => Number.isFinite(r) && r > 0) ? Math.round(rates.reduce((a, b) => a + b, 0) * 10000) / 10000 : null;
+  if (list.some(x => x.gross <= 0)) return null;
+  const out = list.map(x => {
     // No type to choose from: no tax type and no tax amount, so Xero applies
     // the account's own, as a taxed line always has.
-    const type = taxForRate(combined, p.taxes.map(t => t.label), accountCode, accounts, active) || purchaseTax(accountCode, accounts, active);
-    return item(p.gross / 100, type ? type.taxType : undefined, type ? p.tax / 100 : undefined, p.taxes.map(taxName).join(' + '));
+    const type = taxForRate(x.rate, x.taxes.map(t => t.label), accountCode, accounts, active) || purchaseTax(accountCode, accounts, active);
+    return item(x.gross / 100, type ? type.taxType : undefined, type ? x.tax / 100 : undefined, x.taxes.map(taxName).join(' + '));
   });
   if (rest) out.push(item(rest / 100, zeroType, undefined, 'not taxed'));
   return out;

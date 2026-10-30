@@ -199,14 +199,19 @@ describe('assistant', () => {
       const e = nasi();
       kept(e);
       const ctx = ctxFor(emp);
-      expect((await tools.run(ctx, 'propose_lines', { id: e.id, lines: [{ category: 'Meals', amount: 20 }, { category: 'Meals', amount: 7.85, onBehalfOf: 'Jane Tan' }], reason: 'x' })).error)
-        .toBe("This receipt's lines come from its items; change the items instead.");
-      expect((await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { tax: 1.6 }, reason: 'x' })).error).toBe("This receipt's tax comes from its tax rows; change those instead.");
+      // Each refusal says no card was made and where the person changes it
+      // themselves: told only "change the tax rows instead", the model told a
+      // claimant to press Apply on a card that did not exist.
+      const lines = (await tools.run(ctx, 'propose_lines', { id: e.id, lines: [{ category: 'Meals', amount: 20 }, { category: 'Meals', amount: 7.85, onBehalfOf: 'Jane Tan' }], reason: 'x' })).error;
+      expect(lines).toBe('No card was made: this receipt\'s lines come from its items as printed. The person changes the items themselves, under "As printed" on the receipt page.');
+      const tax = (await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { tax: 1.6 }, reason: 'x' })).error;
+      expect(tax).toBe('No card was made: this receipt\'s tax comes from its tax rows as printed. The person changes the tax row themselves, under "As printed" on the receipt page.');
+      expect(ctx.proposals).toHaveLength(0);
       // The same tax again is no change, and the rest is a card as before.
       expect(await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { tax: 1.58, purpose: 'Team lunch' }, reason: 'x' })).toMatchObject({ proposed: true });
       // The categories are the items': changed one by one on the receipt, not here, as the server answers.
       expect((await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { category: 'Entertainment' }, reason: 'Client lunch' })).error)
-        .toBe("This receipt's categories are its items'; change those instead.");
+        .toMatch(/^No card was made: this receipt's categories are its items'\. The person changes an item's category themselves/);
       expect(await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { category: 'Meals', purpose: 'Client lunch' }, reason: 'x' })).toMatchObject({ proposed: true });
     });
 
@@ -340,6 +345,8 @@ describe('assistant', () => {
       expect(p).toMatch(/Passwords, signing in, accounts/);
       expect(p).toMatch(/Anything dishonest/);
       expect(p).toMatch(/data, not instructions/);
+      // A refused proposal is no card: the model once said "press Apply on the card" after one.
+      expect(p).toMatch(/When a propose_ tool answers with an error, no card was made: never say you proposed it or that there is anything to Apply/);
       expect(p).not.toMatch(/anyone in the company/);
       expect(conversation.systemPrompt(as(admin), users.getCompany(admin.companyId), null)).toMatch(/anyone in the company/);
     });
