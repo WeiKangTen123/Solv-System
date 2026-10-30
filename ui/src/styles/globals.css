@@ -3047,12 +3047,17 @@ a.ca-receipt:focus-visible, .ca-receipts a:focus-visible { outline: 2px solid va
 /* Item, Qty, Amount, Category, Paid for, (Tax), the row's menu. */
 .pp-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 52px 92px 118px 104px 30px;
+  grid-template-columns: minmax(0, 1fr) 66px 92px 118px 104px 30px;
   gap: 4px 6px;
   align-items: center;
   padding: 2px 0;
 }
-.pp.has-tax .pp-row { grid-template-columns: minmax(0, 1fr) 52px 92px 118px 104px 62px 30px; }
+.pp.has-tax .pp-row { grid-template-columns: minmax(0, 1fr) 66px 92px 118px 104px 62px 30px; }
+/* Each row is a grid of its own, so an item's Qty can be narrower than the
+   Rate the other rows need for 8.625: the columns right of it are the same
+   widths, so the amounts still line up. */
+.pp-row.is-item, .pp-colhead { grid-template-columns: minmax(0, 1fr) 52px 92px 118px 104px 30px; }
+.pp.has-tax .pp-row.is-item, .pp.has-tax .pp-colhead { grid-template-columns: minmax(0, 1fr) 52px 92px 118px 104px 62px 30px; }
 .pp-colhead {
   padding-bottom: 4px;
   font-size: 10.5px;
@@ -3070,8 +3075,9 @@ a.ca-receipt:focus-visible, .ca-receipts a:focus-visible { outline: 2px solid va
 .pp input[type='number']::-webkit-inner-spin-button,
 .pp input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .pp-amt, .pp-num, .pp-rate .pp-in { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-.pp-rate { display: flex; align-items: center; gap: 2px; min-width: 0; }
-.pp-rate .pp-in { min-width: 0; padding-left: 4px; padding-right: 4px; }
+/* Room for a rate printed to three places, 8.625. */
+.pp-rate { display: flex; align-items: center; gap: 1px; min-width: 0; }
+.pp-rate .pp-in { min-width: 0; padding-left: 3px; padding-right: 3px; }
 .pp-pct { font-size: 12px; color: var(--text-muted); }
 .pp-paid { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .pp-paid-word { display: none; font-size: 12px; color: var(--text-muted); }
@@ -3139,14 +3145,16 @@ a.ca-receipt:focus-visible, .ca-receipts a:focus-visible { outline: 2px solid va
 /* Narrower than the whole table (the receipt page's column): "Paid for" goes
    under its row, and only on a row paid for someone. */
 @container (max-width: 600px) {
-  .pp-row { grid-template-columns: minmax(0, 1fr) 52px 88px 112px 30px; }
+  .pp-row { grid-template-columns: minmax(0, 1fr) 66px 88px 112px 30px; }
+  .pp-row.is-item, .pp-colhead { grid-template-columns: minmax(0, 1fr) 52px 88px 112px 30px; }
   .pp-paid, .pp-paid-head { display: none; }
   .pp-row.has-paid .pp-paid { display: flex; grid-row: 2; grid-column: 1 / -2; padding-left: 18px; }
   .pp-paid-word { display: inline; }
   .pp-row.has-paid .pp-paid .pp-in { max-width: 240px; }
 }
 @container (max-width: 660px) {
-  .pp.has-tax .pp-row { grid-template-columns: minmax(0, 1fr) 52px 88px 104px 56px 30px; }
+  .pp.has-tax .pp-row { grid-template-columns: minmax(0, 1fr) 66px 88px 104px 56px 30px; }
+  .pp.has-tax .pp-row.is-item, .pp.has-tax .pp-colhead { grid-template-columns: minmax(0, 1fr) 52px 88px 104px 56px 30px; }
   .pp.has-tax .pp-paid, .pp.has-tax .pp-paid-head { display: none; }
   .pp.has-tax .pp-row.has-paid .pp-paid { display: flex; grid-row: 2; grid-column: 1 / -2; padding-left: 18px; }
   .pp.has-tax .pp-paid-word { display: inline; }
@@ -3208,7 +3216,10 @@ button.pp-line:hover { background: var(--bg-hover); }
 .mobile-mode .pp-sheet-actions .btn { flex: 1 1 0; }
 
 /* ── A case's receipts: the tax under the amount ── */
-.pp-taxline { display: block; margin-top: 1px; font-size: 11.5px; font-weight: 400; color: var(--text-muted); white-space: nowrap; }
+/* In the words of the page, small and muted, and free to wrap: kept on one
+   line in the figures' font it widened Amount until the table ran out of its
+   card and cut Check off. */
+.pp-taxline { display: block; margin-top: 2px; font: 400 11.5px/1.35 var(--font-sans); color: var(--text-muted); white-space: normal; overflow-wrap: normal; }
 .cs-ritem-side .pp-taxline { text-align: right; }
 
 /* A link under the lines editor of a receipt read before it kept its rows. */
