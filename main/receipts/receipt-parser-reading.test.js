@@ -167,8 +167,8 @@ describe('P8 currencies are real ISO codes', () => {
 describe('P9 what is a payment and what is a charge', () => {
   test('a visa FEE is a charge; the Visa card is not', () => {
     const r = normalise({ total: 2816.5, lineItems: [li('Tourist Visa Fee (Single Entry)', 1800), li('VFS Service Fee', 950), li('VAT 7% on Service Fee', 66.5), li('Paid by VISA ****7731', 2816.5), li('VISA ****7731', 2816.5)] });
-    expect(r.lineItems.map(x => x.description)).toEqual(['Tourist Visa Fee (Single Entry)', 'VFS Service Fee', 'VAT on Service Fee']);
-    expect(r.rows[2]).toMatchObject({ kind: 'tax', label: 'VAT on Service Fee', rate: 7, amount: 66.5 });
+    expect(r.lineItems.map(x => x.description)).toEqual(['Tourist Visa Fee (Single Entry)', 'VFS Service Fee', 'VAT']);
+    expect(r.rows[2]).toMatchObject({ kind: 'tax', label: 'VAT', rate: 7, amount: 66.5 });
   });
 
   test('cash handed over and change given are not charges', () => {

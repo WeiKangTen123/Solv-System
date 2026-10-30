@@ -38,7 +38,7 @@ describe('the Kuala Lumpur nasi kandar bill, read as printed', () => {
   });
   test('its lines come from those rows to the cent', () => {
     expect(claimLines({ rows: r.rows, total: r.total }, 'Meals')).toEqual([{ category: 'Meals', description: 'Nasi Kandar Ayam Goreng +2 more', amount: 27.85, onBehalfOf: null,
-      taxes: [{ label: 'SST', rate: 6, amount: 1.58, included: false, gross: 27.87 }] }]);
+      taxes: [{ label: 'SST', rate: 6, amount: 1.58, included: false, gross: 27.87, basis: '0,1,2,3' }] }]);
   });
 });
 
@@ -61,14 +61,14 @@ describe('a folio with two rates and a tax summary', () => {
   test('the summary\'s repeats go, its total is the tax, and each night\'s charges sit under the night', () => {
     const r = normalise({ total: 441.75, currency: 'MYR', country: 'MY', category: 'Lodging', docType: 'hotel', rows });
     expect(shown(r)).toEqual([
-      ['item', '20/10 Room Charge', 280, null, false, null], ['charge', '20/10 Service Charge', 28, 10, false, 0], ['tax', '20/10 Service Tax', 24.64, 8, false, 0],
+      ['item', '20/10 Room Charge', 280, null, false, null], ['charge', '20/10 Service Charge', 28, 10, false, 0], ['tax', 'Service Tax', 24.64, 8, false, 0],
       ['charge', '20/10 Tourism Tax', 10, null, false, null], ['item', '20/10 Lounge Dinner', 85, null, false, null],
-      ['charge', '20/10 Service Charge', 8.5, 10, false, 4], ['tax', '20/10 SST (F&B)', 5.61, 6, false, 4],
+      ['charge', '20/10 Service Charge', 8.5, 10, false, 4], ['tax', 'SST', 5.61, 6, false, 4],
     ]);
     expect(r.tax).toBe(30.25);
     expect(claimLines({ rows: r.rows, total: r.total }, 'Lodging').map(l => [l.category, l.amount, l.taxes.map(t => `${t.label} ${t.rate}% ${t.amount} on ${t.gross}`)])).toEqual([
-      ['Lodging', 342.64, ['20/10 Service Tax 8% 24.64 on 332.64']],
-      ['Meals', 99.11, ['20/10 SST (F&B) 6% 5.61 on 99.11']],
+      ['Lodging', 342.64, ['Service Tax 8% 24.64 on 332.64']],
+      ['Meals', 99.11, ['SST 6% 5.61 on 99.11']],
     ]);
   });
   test('a row\'s `on` follows it when rows before it go', () => {
@@ -77,6 +77,28 @@ describe('a folio with two rates and a tax summary', () => {
     // A row under one that is not there, under itself or under a tax stands on its own.
     const bad = normalise({ total: 111, rows: [row('item', 'A', 100), row('tax', 'T', 10, { rate: 10, on: 7 }), row('charge', 'C', 1, { on: 1 })] });
     expect(bad.rows.map(x => x.on)).toEqual([null, null, null]);
+  });
+});
+
+describe('a tax is called by its own name', () => {
+  // The labels QA found reaching the case table and Xero: a date, a base, a
+  // folio's code beside the name made one tax look like several.
+  test.each([
+    ['20/10 Service Tax 8%', 'Service Tax'], ['21/10 Service Tax 8%', 'Service Tax'], ['SST 6% on 40.80', 'SST'], ['SST 8% on 12.00', 'SST'],
+    ['CGST 9%- Rooms-(New) -[Add. udf.]', 'CGST'], ['CGST 9%- Rooms-(New) -[Add: udf.]', 'CGST'], ['JW Cafe SGST 9% -[Add: 9%.(B)]', 'SGST'],
+    ['enth. MwSt 7% (Logis 360,00)', 'MwSt'], ['12/10 GST 9% included', 'GST'], ['消費税(10%)', '消費税'], ['PB1 10%', 'PB1'],
+  ])('"%s" is %s, in the case it is printed', (printedLabel, name) => {
+    expect(normalise({ total: 1000, rows: [row('item', 'Room', 900), row('tax', printedLabel, 81, { rate: 9 })] }).rows[1].label).toBe(name);
+  });
+  test('a name it does not know is kept, without its rate', () => {
+    expect(normalise({ total: 1000, rows: [row('item', 'Room', 900), row('tax', 'Kommunalabgabe 9%', 81, { rate: 9 })] }).rows[1].label).toBe('Kommunalabgabe');
+  });
+  test('two nights\' dated GST read as one tax on the line, charged on both nights', () => {
+    const r = normalise({ total: 400, currency: 'SGD', country: 'SG', docType: 'hotel', category: 'Lodging', rows: [
+      row('item', '12/10 Room Charge', 200, { category: 'Lodging' }), row('tax', '12/10 GST 9% incl.', 16.51, { rate: 9, included: true, on: 0 }),
+      row('item', '13/10 Room Charge', 200, { category: 'Lodging' }), row('tax', '13/10 GST 9% incl.', 16.51, { rate: 9, included: true, on: 2 }),
+    ] });
+    expect(claimLines({ rows: r.rows, total: r.total }, 'Lodging')[0].taxes).toEqual([{ label: 'GST', rate: 9, amount: 33.02, included: true, gross: 400, basis: '0,2' }]);
   });
 });
 
@@ -149,7 +171,7 @@ describe('what the reader has always protected, on rows', () => {
       row('item', 'Standard Retail [NA Room] LIM WEI JIE #126=>Rahman Aisha #110', 10450, { category: 'Lodging' }),
       row('tax', 'CGST ROOM 9%', 940.5, { rate: 9 }), row('tax', 'SGST ROOM 9%', 940.5, { rate: 9 }),
     ] });
-    expect(r.rows.map(x => [x.label, x.onBehalfOf, x.on])).toEqual([['Standard Retail [NA Room]', 'Lim Wei Jie', null], ['CGST ROOM', 'Lim Wei Jie', 0], ['SGST ROOM', 'Lim Wei Jie', 0]]);
+    expect(r.rows.map(x => [x.label, x.onBehalfOf, x.on])).toEqual([['Standard Retail [NA Room]', 'Lim Wei Jie', null], ['CGST', 'Lim Wei Jie', 0], ['SGST', 'Lim Wei Jie', 0]]);
   });
   test('a refund keeps no rows, and no tax, however its tax total was read', () => {
     const r = normalise({ total: -43.44, taxTotal: 3.45, subTotal: 39.99, rows: [row('item', 'Ink', -39.99), row('tax', 'Sales Tax', -3.45, { rate: 8.625 })] });

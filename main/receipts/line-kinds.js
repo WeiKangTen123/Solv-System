@@ -40,6 +40,19 @@ function taxLine(description) {
   return { included: INCLUDED_RE.test(s) };
 }
 
+// The tax's own name in a row's words, as it is printed: "Service Tax" in
+// "20/10 Service Tax 8%", "SST" in "SST 6% on 40.80", "CGST" in "JW Cafe CGST
+// 9% -[Add: 9%.(B)]", "MwSt" in "enth. MwSt 7% (Logis 360,00)". The rest is
+// a date, a base, a rate or a folio's code, and kept in the name it made one
+// tax look like several: the JW folio's CGST read as "CGST [Add. udf.]" and
+// "CGST [Add: udf.]" showed as six taxes, and two nights' "12/10 GST" and
+// "13/10 GST" went to Xero as two. null when no tax is named.
+const NAME_RE = new RegExp(`(?<![A-Za-z])(?:${TAX_NAME})`, 'i');
+function taxName(description) {
+  const m = NAME_RE.exec(String(description || '').replace(/\s+/g, ' ').trim());
+  return m ? m[0].trim() : null;
+}
+
 // ── Payments and restated totals ────────────────────────────────────────────
 //
 // A folio ends with the payment that settled it ("Manual MasterCard / Euro
@@ -82,4 +95,4 @@ const levyLine = d => LEVY_RE.test(String(d || '').replace(/\s+/g, ' ').trim());
 const ROUNDING_RE = /\brounding\b|\bround(?:ed|ing)?[\s-]*(?:adj(?:ustment)?|off)\b|penggenapan|pembulatan|端数/i;
 const roundingLine = d => ROUNDING_RE.test(String(d || ''));
 
-module.exports = { taxLine, paymentLine, totalLine, serviceLine, tipLine, adjustmentLine, levyLine, roundingLine };
+module.exports = { taxLine, taxName, paymentLine, totalLine, serviceLine, tipLine, adjustmentLine, levyLine, roundingLine };

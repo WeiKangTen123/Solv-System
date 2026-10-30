@@ -54,7 +54,7 @@ describe('routes/expenses — a receipt kept as printed', () => {
     const r = await api().get(`/api/expenses/${e.id}`).set(as(emp)).expect(200);
     expect(r.body.expense.printed.rows).toHaveLength(6);
     expect(r.body.expense.aiRead.printed.rows[4]).toMatchObject({ kind: 'tax', label: 'SST', rate: 6, amount: 1.58 });
-    expect(r.body.expense.lines).toEqual([expect.objectContaining({ category: 'Meals', amount: 27.85, taxes: [{ label: 'SST', rate: 6, amount: 1.58, included: false, gross: 27.87 }] })]);
+    expect(r.body.expense.lines).toEqual([expect.objectContaining({ category: 'Meals', amount: 27.85, taxes: [{ label: 'SST', rate: 6, amount: 1.58, included: false, gross: 27.87, basis: '0,1,2,3' }] })]);
   });
 
   test('PUT /printed saves the record, sets the total, tax and subtotal from it, makes the lines and logs each row', async () => {
@@ -76,6 +76,16 @@ describe('routes/expenses — a receipt kept as printed', () => {
       newValue: 'Teh Tarik now for Jane Tan · Added Teh O Ais 2.50 · SST 6% 1.58 → 1.60' });
     expect(log.body.changes.find(c => c.field === 'total')).toMatchObject({ oldValue: '27.85', newValue: '30.37' });
     expect(log.body.changes.find(c => c.field === 'tax')).toMatchObject({ oldValue: '1.58', newValue: '1.60' });
+  });
+
+  // Only the reader's names are cleaned to the tax's own name; what a person
+  // types is theirs.
+  test('a tax\'s name typed by a person stays as typed', async () => {
+    const e = seed();
+    const next = nasiKandar(); next.rows[4].label = '08/10 SST 6% on 26.29';
+    const r = await api().put(`/api/expenses/${e.id}/printed`).set(as(emp)).send({ printed: next }).expect(200);
+    expect(r.body.expense.printed.rows[4].label).toBe('08/10 SST 6% on 26.29');
+    expect(r.body.expense.lines[0].taxes[0]).toMatchObject({ label: '08/10 SST 6% on 26.29', basis: '0,1,2,3' });
   });
 
   test('a record whose tax rows are unchanged keeps the tax it was read with', async () => {

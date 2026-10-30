@@ -211,13 +211,17 @@ function taxOf(record, { summary = null, was = null, tax = null } = {}) {
 // One line per (category, person), as the lines have always been, each with
 // the taxes inside its amount:
 //
-//   line.taxes = [{ label, rate, amount, included, gross }]
+//   line.taxes = [{ label, rate, amount, included, gross, basis }]
 //
 // amount is the line's share of that tax; gross the part of the line's amount
 // the tax was charged on, with the tax when it was added, which is what Xero
-// takes as an inclusive line. Taxes charged on the same amount (CGST and SGST
-// on one room) share a gross. The shares of one tax add up to the amount
-// printed, to the cent; the lines add up to the total, to the cent.
+// takes as an inclusive line; basis the rows of this line it was charged on,
+// as a key (_basis). Taxes charged on the same rows (CGST and SGST on one
+// room) share a basis and a gross, so Xero can put them on one line at their
+// combined rate, and keep a 6% and an 8% that share nothing apart. One tax
+// printed on several rows (each night's GST) is one entry, its basis all of
+// them. The shares of one tax add up to the amount printed, to the cent; the
+// lines add up to the total, to the cent.
 //
 // Where each row goes:
 //   item       its own (category, person).
@@ -228,7 +232,7 @@ function taxOf(record, { summary = null, was = null, tax = null } = {}) {
 //   rounding   the claimant's own line in the receipt's category.
 //   tax        the items whose tax rate is its rate (or, for a pair printed
 //              together such as CGST 9% and SGST 9%, their sum); every item
-//              when no item shows a tax rate. By what it was charged on.
+//              when no item shows its rate. By what it was charged on.
 // An added tax adds to the line's amount; an included one is already in it
 // and is only recorded.
 //
@@ -244,6 +248,28 @@ function taxOf(record, { summary = null, was = null, tax = null } = {}) {
 // the receipt's category, as the lines did before the record.
 
 const _near = (a, b) => a !== null && b !== null && a !== undefined && b !== undefined && Math.abs(Number(a) - Number(b)) < 0.0005;
+
+// ── India's split tax ───────────────────────────────────────────────────────
+//
+// India charges its GST in two halves printed side by side, CGST with SGST
+// (UTGST in a union territory; IGST is paired the same way), each at half the
+// rate: CGST 9% and SGST 9% are one tax of 18%, the rate an item of that
+// receipt shows. Only those halves are one tax at their sum. Two other taxes
+// at one rate are two: a hotel's Service Tax printed under each night is not
+// a split tax, and adding their rates said 16% for an 8% tax.
+//
+// The two are halves when one name starts with the word CGST and the other
+// with SGST, UTGST or IGST (either order, any case, after trimming), at the
+// same rate, both inside the prices or both added. The screen's taxSummary
+// and rateGroups (ui/src/utils/printed.js) ask the same.
+const SPLIT_CENTRAL = /^cgst\b/i;
+const SPLIT_STATE = /^(?:sgst|utgst|igst)\b/i;
+function splitPair(a, b) {
+  if (!a || !b) return false;
+  const [x, y] = [String(a.label || '').trim(), String(b.label || '').trim()];
+  const halves = (SPLIT_CENTRAL.test(x) && SPLIT_STATE.test(y)) || (SPLIT_CENTRAL.test(y) && SPLIT_STATE.test(x));
+  return halves && a.rate !== null && a.rate !== undefined && _near(a.rate, b.rate) && !!a.included === !!b.included;
+}
 
 // Splits `cents` over the keys of `weights` in proportion, to the cent, the
 // last share taking what rounding leaves. With nothing to weigh by, evenly.
@@ -262,6 +288,14 @@ function _split(cents, weights) {
   });
   return out;
 }
+
+// The rows a tax was charged on, as a key: their positions in rows, sorted
+// and joined ("0,1,3"), or "receipt" for a receipt that itemises nothing.
+// Taxes charged on the same rows have the same key.
+const _basis = set => {
+  const list = [...set].sort((a, b) => a - b);
+  return list.length && list.every(i => i >= 0) ? list.join(',') : 'receipt';
+};
 
 function claimLines(printed, fallbackCategory, { description = null } = {}) {
   if (!printed || !Array.isArray(printed.rows)) return [];
@@ -322,55 +356,56 @@ function claimLines(printed, fallbackCategory, { description = null } = {}) {
 
   // What each item carries from the charges and discounts on it, in cents
   // (fractions while they are spread): { discount, rated, unrated }.
+  // And which of those rows touch it, by the same three kinds.
   const carried = new Map(items.map(it => [it, { discount: 0, rated: 0, unrated: 0 }]));
+  const touching = new Map(items.map(it => [it, { discount: [], rated: [], unrated: [] }]));
   for (const r of rows) {
     if (r.kind !== 'charge' && r.kind !== 'discount') continue;
+    const kind = r.kind === 'discount' ? 'discount' : r.rate !== null && r.rate !== undefined ? 'rated' : 'unrated';
     for (const [it, w] of placement(r)) {
-      const c = carried.get(it);
-      if (!c) continue;
-      if (r.kind === 'discount') c.discount += r.c * w;
-      else if (r.rate !== null && r.rate !== undefined) c.rated += r.c * w;
-      else c.unrated += r.c * w;
+      if (!carried.has(it)) continue;
+      carried.get(it)[kind] += r.c * w;
+      touching.get(it)[kind].push(r.i);
     }
   }
 
   // ── The taxes: which items each is on, and on how much of them ──
   const taxes = rows.filter(r => r.kind === 'tax');
   const loose = taxes.filter(t => !anchor(t));
-  // A pair printed together: neighbouring whole-receipt tax rows at one rate
-  // under different names (CGST 9% and SGST 9%), whose rate group is their sum.
+  // India's split tax printed together: neighbouring whole-receipt tax rows
+  // that are its two halves (splitPair), whose rate group is their sum.
   const groupRate = new Map();
   for (const t of loose) groupRate.set(t, t.rate);
   for (let k = 0; k + 1 < loose.length; k++) {
     const [p, q] = [loose[k], loose[k + 1]];
-    if (q.i === p.i + 1 && p.rate !== null && _near(p.rate, q.rate) && !!p.included === !!q.included
-        && String(p.label).toLowerCase() !== String(q.label).toLowerCase()) {
-      groupRate.set(p, p.rate + q.rate); groupRate.set(q, p.rate + q.rate);
-    }
+    if (q.i === p.i + 1 && splitPair(p, q)) { groupRate.set(p, p.rate + q.rate); groupRate.set(q, p.rate + q.rate); }
   }
   const rated = items.filter(it => it.taxRate !== null && it.taxRate !== undefined);
+  // A tax whose rate no item shows (a rate changed on the page, an item added
+  // with none) is on every item, by amount. An item that shows no rate is
+  // never its home only for that: when a car park was moved from 8% to 6% and
+  // a colleague's tea added unmarked, the SST 8% of 0.96 went wholly on the
+  // 3.00 of tea.
   const looseTargets = t => {
-    let list;
-    if (!rated.length) list = items;
-    else {
-      list = rated.filter(it => _near(it.taxRate, groupRate.get(t)) || _near(it.taxRate, t.rate));
-      if (!list.length) list = items.filter(it => it.taxRate === null || it.taxRate === undefined);
-      if (!list.length) list = rated.filter(it => it.taxRate > 0);
-      if (!list.length) list = items;
-    }
+    let list = rated.filter(it => _near(it.taxRate, groupRate.get(t)) || _near(it.taxRate, t.rate));
+    if (!list.length) list = items;
     return byPerson(list, t);
   };
 
-  // For each tax: Map(item → cents it was charged on), and a name for that
-  // set of items and amounts, which taxes on the same amount share.
+  // For each tax: Map(item → cents it was charged on), a name for that set of
+  // items and amounts, which taxes on the same amount share, and the rows it
+  // was charged on through each item (the item, and the charges and
+  // discounts on it that its rate bears out).
+  const KINDS_IN = { a: ['discount'], b: ['discount', 'rated'], c: ['discount', 'rated', 'unrated'] };
   const bases = new Map();
   for (const t of taxes) {
     const direct = at(t.on);
-    let base, sig;
+    let base, sig, rowsOf;
     if (direct && direct.kind !== 'item') {
       // A tax on a charge (a folio's CGST on its service charge) is on that charge.
       base = new Map([...placement(direct)].map(([it, w]) => [it, direct.c * w]));
       sig = `row${direct.i}`;
+      rowsOf = () => [direct.i];
     } else {
       const list = direct ? [direct] : looseTargets(t);
       const sum = f => list.reduce((s, it) => s + f(it), 0);
@@ -391,8 +426,9 @@ function claimLines(printed, fallbackCategory, { description = null } = {}) {
       }
       base = new Map(list.map(it => [it, cands[pick](it)]));
       sig = `${list.map(it => it.i).join(',')}:${pick}`;
+      rowsOf = it => [it.i, ...KINDS_IN[pick].flatMap(k => touching.get(it)[k])];
     }
-    bases.set(t, { base, sig });
+    bases.set(t, { base, sig, rowsOf });
   }
 
   // ── Every row's share of every line, to the cent ──
@@ -425,13 +461,14 @@ function claimLines(printed, fallbackCategory, { description = null } = {}) {
     }
   }
   for (const t of taxes) {
-    const { base, sig } = bases.get(t);
+    const { base, sig, rowsOf } = bases.get(t);
     const weights = byLine(base);
     const shares = _split(t.c, weights);
     for (const [key, share] of shares) {
       const l = line(key);
       if (!t.included) l.cents += share;
-      l.taxes.push({ t, sig, line: key, share, base: weights.get(key) || 0 });
+      const basis = new Set([...base.keys()].filter(it => it.key === key).flatMap(rowsOf));
+      l.taxes.push({ t, sig, line: key, share, base: weights.get(key) || 0, basis });
     }
   }
 
@@ -443,11 +480,12 @@ function claimLines(printed, fallbackCategory, { description = null } = {}) {
       const added = l.taxes.filter(y => y.line === x.line && y.sig === x.sig && !y.t.included).reduce((s, y) => s + y.share, 0);
       const gross = Math.round(x.base) + added;
       const k = `${String(x.t.label).toLowerCase()}|${x.t.rate}|${!!x.t.included}`;
-      const e = out.get(k) || { label: x.t.label, rate: x.t.rate ?? null, amount: 0, included: !!x.t.included, gross: 0 };
+      const e = out.get(k) || { label: x.t.label, rate: x.t.rate ?? null, amount: 0, included: !!x.t.included, gross: 0, basis: new Set() };
       e.amount += x.share; e.gross += gross;
+      for (const i of x.basis) e.basis.add(i);
       out.set(k, e);
     }
-    return [...out.values()].map(e => ({ ...e, amount: _dollars(e.amount), gross: _dollars(e.gross) }));
+    return [...out.values()].map(e => ({ ...e, amount: _dollars(e.amount), gross: _dollars(e.gross), basis: _basis(e.basis) }));
   };
   const merge = (into, from) => { into.cents += from.cents; into.count += from.count; into.taxes.push(...from.taxes); if (!into.names.length) into.names.push(...from.names); };
 
@@ -568,4 +606,4 @@ function describeChange(before, after) {
   return was ? said : `Kept as printed: ${said}`;
 }
 
-module.exports = { validate, step, rowsSum, addsUp, taxOf, claimLines, rowChanges, describeChange, KINDS, MAX_ROWS, MAX_LABEL };
+module.exports = { validate, step, rowsSum, addsUp, taxOf, claimLines, splitPair, rowChanges, describeChange, KINDS, MAX_ROWS, MAX_LABEL };

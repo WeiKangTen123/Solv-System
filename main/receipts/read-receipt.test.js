@@ -401,8 +401,8 @@ describe('receipts/read-receipt', () => {
     expect(after.printed).toEqual({ v: 1, rows, subtotal: null, total: 441.75 });
     expect(after.aiRead.printed).toEqual(after.printed);
     expect(after.lines.map(l => [l.category, l.amount, l.taxes])).toEqual([
-      ['Lodging', 342.64, [{ label: 'Service Tax', rate: 8, amount: 24.64, included: false, gross: 332.64 }]],
-      ['Meals', 99.11, [{ label: 'SST', rate: 6, amount: 5.61, included: false, gross: 99.11 }]],
+      ['Lodging', 342.64, [{ label: 'Service Tax', rate: 8, amount: 24.64, included: false, gross: 332.64, basis: '0,1' }]],
+      ['Meals', 99.11, [{ label: 'SST', rate: 6, amount: 5.61, included: false, gross: 99.11, basis: '4,5' }]],
     ]);
   });
 

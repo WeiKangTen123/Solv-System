@@ -1,4 +1,4 @@
-const { taxLine, paymentLine, totalLine, serviceLine, tipLine, adjustmentLine, levyLine, roundingLine } = require('./line-kinds');
+const { taxLine, taxName, paymentLine, totalLine, serviceLine, tipLine, adjustmentLine, levyLine, roundingLine } = require('./line-kinds');
 
 describe('receipts/line-kinds', () => {
   test.each([
@@ -28,6 +28,14 @@ describe('receipts/line-kinds', () => {
     expect([serviceLine('Service 5%'), serviceLine('Service Charge 10%'), serviceLine('Service Tax 6%'), serviceLine('VFS Service Fee')]).toEqual([true, true, false, false]);
     expect([tipLine('Tip'), tipLine('Gratuity 18%'), tipLine('Tipping point café')]).toEqual([true, true, false]);
     expect([adjustmentLine('SF Mandate 4%'), adjustmentLine('Rounding Adj'), adjustmentLine('Tourism Tax'), adjustmentLine('SST 6%')]).toEqual([true, true, true, false]);
+  });
+
+  test('a tax\'s own name, as printed, out of whatever is printed with it', () => {
+    const names = ['20/10 Service Tax 8%', 'SST 6% on 40.80', 'CGST 9%- Rooms-(New) -[Add. udf.]', 'JW Cafe SGST 9% -[Add: 9%.(B)]', 'enth. MwSt 7% (Logis 360,00)',
+                   'GST/HST', '(内消費税等 ¥278)', 'Pajak Restoran 10%', 'Total GST', 'VAT 7% on Service Fee'].map(taxName);
+    expect(names).toEqual(['Service Tax', 'SST', 'CGST', 'SGST', 'MwSt', 'GST/HST', '消費税', 'Pajak Restoran', 'GST', 'VAT']);
+    // Not inside another word, and nothing for a row that names no tax.
+    expect([taxName('Private room'), taxName('Must pay'), taxName('Service Charge'), taxName(null)]).toEqual([null, null, null, null]);
   });
 
   test('a levy is named like a tax and is the city\'s, never the tax on the sale', () => {
