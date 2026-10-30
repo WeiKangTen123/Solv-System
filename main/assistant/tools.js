@@ -213,14 +213,13 @@ function _readerRead(e) {
   const { printed: _printed, ...rest } = e.aiRead;
   return rest;
 }
-// A receipt kept as printed has its lines made from its items and its tax
-// from its tax rows (receipts/edit.js): neither is proposed on its own. A new
-// category moves its items with it only while they are all in the receipt's
-// one category, as on the page.
+// A receipt kept as printed has its lines made from its items, its categories
+// from theirs and its tax from its tax rows (receipts/edit.js refuses each):
+// none is proposed on its own. A card the server would turn down at Apply is
+// not a card worth showing.
 function _printedPatchOk(e, patch) {
   if (patch.tax !== undefined) no(edit.TAX_FROM_ROWS);
-  const sorted = (e.printed.rows || []).filter(r => ['item', 'charge', 'discount'].includes(r.kind));
-  if (patch.category && !sorted.every(r => !r.category || r.category === e.category)) no("This receipt's categories come from its items; change the items instead.");
+  if (patch.category && patch.category !== e.category) no(edit.CATEGORY_FROM_ITEMS);
 }
 
 // ── Reading tools ────────────────────────────────────────────────────────────

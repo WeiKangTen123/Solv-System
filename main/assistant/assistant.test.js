@@ -204,13 +204,10 @@ describe('assistant', () => {
       expect((await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { tax: 1.6 }, reason: 'x' })).error).toBe("This receipt's tax comes from its tax rows; change those instead.");
       // The same tax again is no change, and the rest is a card as before.
       expect(await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { tax: 1.58, purpose: 'Team lunch' }, reason: 'x' })).toMatchObject({ proposed: true });
-      // Its items all in the receipt's category: a new one moves them, as on the page; applied, the lines follow.
-      expect((await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { category: 'Entertainment' }, reason: 'Client lunch' })).summary).toMatch(/Category Meals → Entertainment$/);
-      expect(await actions.apply(ctx.proposals[1].id, as(emp))).toMatchObject({ status: 'applied' });
-      expect(store.getExpense(e.id).lines.map(l => l.category)).toEqual(['Entertainment', 'Entertainment']);
-      // Items in two categories: changed one by one on the receipt, not here.
-      const mixed = kept(nasi(), { ...PRINTED, rows: PRINTED.rows.map(r => (r.label === 'Teh Tarik' ? { ...r, category: 'Entertainment' } : r)) });
-      expect((await tools.run(ctx, 'propose_receipt_changes', { id: mixed.id, changes: { category: 'Other' }, reason: 'x' })).error).toMatch(/categories come from its items/);
+      // The categories are the items': changed one by one on the receipt, not here, as the server answers.
+      expect((await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { category: 'Entertainment' }, reason: 'Client lunch' })).error)
+        .toBe("This receipt's categories are its items'; change those instead.");
+      expect(await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { category: 'Meals', purpose: 'Client lunch' }, reason: 'x' })).toMatchObject({ proposed: true });
     });
 
     test('a split card made before the receipt was read again as printed does not apply', async () => {
