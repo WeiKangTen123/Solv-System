@@ -89,6 +89,110 @@ describe('xero/bills — buildBill', () => {
   });
 });
 
+// Receipts kept as printed carry each line's taxes (line.taxes): the bill
+// codes each tax at its own rate, on the part of the line it was charged on.
+describe('xero/bills — tax as printed', () => {
+  const { buildBill, taxForRate } = require('./bills');
+  // A Malaysian organisation's purchase rates, and a Singapore one's.
+  const MY = [
+    { name: 'Service Tax 6%', taxType: 'TAX006', status: 'ACTIVE', displayTaxRate: 6, canApplyToExpenses: true },
+    { name: 'Service Tax 8%', taxType: 'TAX008', status: 'ACTIVE', displayTaxRate: 8, canApplyToExpenses: true },
+    { name: 'Imported Service Tax 8%', taxType: 'TAX018', status: 'ACTIVE', displayTaxRate: 8, canApplyToExpenses: true },
+    { name: 'Sales Tax 5%', taxType: 'TAX005', status: 'ACTIVE', displayTaxRate: 5, canApplyToExpenses: true },
+    { name: 'Sales Tax 10%', taxType: 'TAX010', status: 'ACTIVE', displayTaxRate: 10, canApplyToExpenses: true },
+    { name: 'Tax Exempt', taxType: 'NONE', status: 'ACTIVE', displayTaxRate: 0, canApplyToExpenses: true },
+  ];
+  const SG = [
+    { name: 'Blocked Input Tax 9%', taxType: 'BLINPUT3', status: 'ACTIVE', displayTaxRate: 9, canApplyToExpenses: true },
+    { name: 'Imports', taxType: 'IMINPUT2', status: 'ACTIVE', displayTaxRate: 9, canApplyToExpenses: true },
+    { name: 'Standard-Rated Purchases', taxType: 'TXINPUT9', status: 'ACTIVE', displayTaxRate: 9, canApplyToExpenses: true },
+    { name: 'Standard-Rated Purchases 8%', taxType: 'TXINPUT8', status: 'DELETED', displayTaxRate: 8, canApplyToExpenses: true },
+    { name: 'No Tax', taxType: 'NONE', status: 'ACTIVE', displayTaxRate: 0, canApplyToExpenses: true },
+  ];
+  const tax = (label, rate, amount, gross, extra = {}) => ({ label, rate, amount, included: false, gross, ...extra });
+  const line = (extra) => ({ ref: 'R1', date: '2026-10-12', merchant: 'Hotel Stripes Kuala Lumpur', purpose: 'Client visit', fxRate: 1, fxSource: 'base', onBehalfOf: null, ...extra });
+  const myCase = lines => ({ ...payload, company: { ...payload.company, baseCurrency: 'MYR', timezone: 'Asia/Kuala_Lumpur' }, lines, receipts: [{ ref: 'R1', title: 'Hotel', pages: [] }] });
+  const sgCase = lines => ({ ...payload, lines, receipts: [{ ref: 'R1', title: 'Toast Box', pages: [] }] });
+  const shape = b => b.invoice.lineItems.map(l => [l.unitAmount, l.taxType, l.taxAmount, l.description.split(' · ').at(-1)]);
+
+  test('a KL hotel: the room at Service Tax 8% with the tourism tax on a line of its own, the breakfast at SST 6%', () => {
+    const b = buildBill(myCase([
+      line({ category: 'Lodging', currency: 'MYR', amount: 342.64, baseAmount: 342.64, taxes: [tax('Service Tax', 8, 24.64, 332.64)] }),
+      line({ category: 'Meals', currency: 'MYR', amount: 99.11, baseAmount: 99.11, taxes: [tax('SST', 6, 5.61, 99.11)] }),
+    ]), { taxRates: MY });
+    expect(shape(b)).toEqual([
+      [332.64, 'TAX008', 24.64, 'Service Tax 8%'],
+      [10, 'NONE', undefined, 'not taxed'],
+      [99.11, 'TAX006', 5.61, 'SST 6%'],
+    ]);
+    expect(b.invoice.lineAmountTypes).toBe('Inclusive');
+    expect(b.total).toBe(441.75);
+    expect(b.invoice.lineItems[0].description).toBe('12 Oct 2026 · Hotel Stripes Kuala Lumpur · Lodging · Client visit · Service Tax 8%');
+  });
+
+  test("the nasi kandar shop's 5-sen rounding stays inside the taxed line, a colleague's share is its own line", () => {
+    const b = buildBill(myCase([
+      line({ merchant: 'Restoran Nasi Kandar Pelita', category: 'Meals', currency: 'MYR', amount: 21.32, baseAmount: 21.32, taxes: [tax('SST', 6, 1.21, 21.34)] }),
+      line({ merchant: 'Restoran Nasi Kandar Pelita', category: 'Meals', currency: 'MYR', amount: 6.53, baseAmount: 6.53, onBehalfOf: 'Jane Tan', taxes: [tax('SST', 6, 0.37, 6.53)] }),
+    ]), { taxRates: MY });
+    expect(shape(b)).toEqual([[21.32, 'TAX006', 1.21, 'SST 6%'], [6.53, 'TAX006', 0.37, 'SST 6%']]);
+    expect(b.invoice.lineItems[1].description).toContain('on behalf of Jane Tan');
+    expect(b.total).toBe(27.85);
+  });
+
+  test('CGST and SGST charged on the same part are one line at their combined rate', () => {
+    const IN = [{ name: 'GST 18%', taxType: 'GST18', status: 'ACTIVE', displayTaxRate: 18 }, { name: 'GST 9%', taxType: 'GST9', status: 'ACTIVE', displayTaxRate: 9 }, { name: 'No Tax', taxType: 'NONE', status: 'ACTIVE', displayTaxRate: 0 }];
+    const b = buildBill({ ...payload, company: { ...payload.company, baseCurrency: 'INR' }, lines: [
+      line({ merchant: 'JW Marriott Mumbai Sahar', category: 'Lodging', currency: 'INR', amount: 22420, baseAmount: 22420, taxes: [tax('CGST', 9, 1710, 22420), tax('SGST', 9, 1710, 22420)] }),
+    ] }, { taxRates: IN });
+    expect(shape(b)).toEqual([[22420, 'GST18', 3420, 'CGST 9% + SGST 9%']]);
+  });
+
+  test('Singapore: GST 9% as printed, included or worked out, to standard-rated purchases; a rate the organisation no longer has, as before', () => {
+    const b = buildBill(sgCase([
+      line({ merchant: 'Toast Box', category: 'Meals', currency: 'SGD', amount: 21.8, baseAmount: 21.8, taxes: [tax('GST', 9, 1.8, 21.8, { included: true, worked: true })] }),
+      // A 2023 receipt at 7%: no 7% type, so today's choice, with the tax it printed.
+      line({ merchant: 'Kopitiam', category: 'Meals', currency: 'SGD', amount: 10.7, baseAmount: 10.7, taxes: [tax('GST', 7, 0.7, 10.7, { included: true })] }),
+      // No tax printed, and a receipt from before: as they always were.
+      line({ merchant: 'Grab', category: 'Air & Transport', currency: 'SGD', amount: 18.4, baseAmount: 18.4, taxes: [] }),
+      line({ merchant: 'Old', category: 'Meals', currency: 'SGD', amount: 50, baseAmount: 50, taxes: null, tax: 4.13, baseTax: 4.13 }),
+    ]), { taxRates: SG });
+    expect(shape(b)).toEqual([
+      [21.8, 'TXINPUT9', 1.8, 'GST 9%'],
+      [10.7, 'TXINPUT9', 0.7, 'GST 7%'],
+      [18.4, 'NONE', undefined, 'Client visit'],
+      [50, 'TXINPUT9', 4.13, 'Client visit'],
+    ]);
+  });
+
+  test('a foreign receipt kept as printed stays one line on the zero type: its tax is not input tax here', () => {
+    const b = buildBill(sgCase([
+      line({ category: 'Lodging', currency: 'MYR', amount: 342.64, fxRate: 0.3049, baseAmount: 104.47, taxes: [tax('Service Tax', 8, 24.64, 332.64)], tax: 24.64, baseTax: 7.51 }),
+    ]), { taxRates: SG });
+    expect(shape(b)).toEqual([[104.47, 'NONE', undefined, 'MYR 342.64 × 0.3049']]);
+  });
+
+  test('taxes that do not say what they were charged on go as before; a part beyond the rounding is its own line, either way', () => {
+    const noGross = buildBill(myCase([line({ category: 'Lodging', currency: 'MYR', amount: 100, baseAmount: 100, taxes: [tax('SST', 6, 5.66, null)], tax: 5.66, baseTax: 5.66 })]), { taxRates: MY });
+    // Today's choice: the highest rate that is not a special kind.
+    expect(shape(noGross)).toEqual([[100, 'TAX010', 5.66, 'Client visit']]);
+    // A voucher off the whole bill after the tax: the taxed part is more than the line.
+    const voucher = buildBill(myCase([line({ category: 'Meals', currency: 'MYR', amount: 90, baseAmount: 90, taxes: [tax('SST', 6, 5.66, 100)] })]), { taxRates: MY });
+    expect(shape(voucher)).toEqual([[100, 'TAX006', 5.66, 'SST 6%'], [-10, 'NONE', undefined, 'not taxed']]);
+    expect(voucher.total).toBe(90);
+  });
+
+  test('the tax type for a rate: the account\'s own, then one named like the tax, then standard-rated, never a special kind', () => {
+    expect(taxForRate(8, ['Service Tax'], null, [], MY).taxType).toBe('TAX008');
+    expect(taxForRate(6, ['SST'], null, [], MY).taxType).toBe('TAX006');
+    expect(taxForRate(8, ['Service Tax'], '420', [{ code: '420', taxType: 'TAX018' }], MY).taxType).toBe('TAX018');
+    expect(taxForRate(9, ['GST'], null, [], SG.filter(r => r.status === 'ACTIVE')).taxType).toBe('TXINPUT9');
+    expect(taxForRate(9, ['GST'], null, [], SG.filter(r => /Blocked|Imports/.test(r.name)))).toBeNull();
+    expect(taxForRate(7, ['GST'], null, [], SG)).toBeNull();
+    expect(taxForRate(null, ['VAT'], null, [], SG)).toBeNull();
+  });
+});
+
 describe('xero/bills — postReport', () => {
   let users, store, reports, wf, bills, admin, emp, report;
   beforeEach(async () => {
@@ -118,6 +222,22 @@ describe('xero/bills — postReport', () => {
     expect(out.bill.invoice.lineItems[0]).toMatchObject({ unitAmount: 1.34, accountCode: '494' });
     expect(mockCreateInvoices).not.toHaveBeenCalled();
     expect(reports.getReport(report.id).status).toBe('claimed');
+  });
+
+  // From the store, through the payload, to the bill: a Singapore receipt
+  // kept as printed, its GST worked out because it prints only "includes GST".
+  test('a receipt kept as printed posts its tax as printed, from the record the store keeps', async () => {
+    const row = (kind, label, amount, extra = {}) => ({ kind, label, qty: null, unitPrice: null, amount, rate: null, included: false, worked: false, category: null, onBehalfOf: null, taxRate: null, on: null, ...extra });
+    const e = store.createExpense({ companyId: admin.companyId, userId: emp.id, status: 'reviewed', merchant: 'Toast Box', currency: 'SGD', total: 21.8, tax: 1.8, receiptDate: '2026-09-05', category: 'Meals',
+      printed: { v: 1, subtotal: null, total: 21.8, rows: [row('item', 'Kaya toast set', 21.8, { qty: 2, category: 'Meals' }), row('tax', 'GST', 1.8, { rate: 9, included: true, worked: true })] } });
+    require('../receipts/edit').linesFromRecord(e.id);
+    const l = store.getExpense(e.id).lines[0];
+    store.updateLine(l.id, { fxRate: 1, fxRateDate: '2026-09-05', fxSource: 'base', baseAmount: 21.8 });
+    reports.addExpense(report.id, e.id);
+    wf.markClaimed(report.id, emp);
+    const out = await bills.postReport(report.id, admin, { dryRun: true });
+    expect(out.bill.invoice.lineItems[1]).toMatchObject({ unitAmount: 21.8, taxType: 'INPUT', taxAmount: 1.8, description: expect.stringMatching(/Toast Box · Meals · GST 9%$/) });
+    expect(out.bill.total).toBe(23.14);
   });
 
   test('posts the bill, attaches the receipt, records the Xero id and an event', async () => {

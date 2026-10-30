@@ -230,6 +230,29 @@ describe('case activity', () => {
       ]);
     });
 
+    // A receipt kept as printed logs its changes in words already
+    // (store/changes.js). They are said as written: "SST" is not "sST".
+    test('a change to what a receipt printed is said in its own words', async () => {
+      clock();
+      step(); const r = open();
+      step(); const e = seed(r, { merchant: 'Restoran Nasi Kandar Pelita', currency: 'MYR', total: 23.88, category: 'Meals', lines: [{ category: 'Meals', amount: 23.88 }] });
+      const row = (kind, label, amount, extra = {}) => ({ kind, label, qty: null, unitPrice: null, amount, rate: null, included: false, worked: false, category: null, onBehalfOf: null, taxRate: null, on: null, ...extra });
+      const bill = { v: 1, subtotal: 20.3, total: 23.88, rows: [
+        row('item', 'Nasi Kandar Ayam', 12.5, { category: 'Meals' }), row('item', 'Roti Canai', 4, { qty: 2, category: 'Meals' }), row('item', 'Air Limau', 1.8, { category: 'Meals' }),
+        row('charge', 'Service Charge', 2.03, { rate: 10 }), row('tax', 'SST', 1.34, { rate: 6 }), row('rounding', 'Rounding Adj', 0.01),
+      ] };
+      step(); await edit.editPrinted(e.id, bill, actor(emp));
+      const rows = [...bill.rows.slice(0, 4), { ...bill.rows[4], amount: 1.36 }, bill.rows[5], row('item', 'Teh Tarik', 5.6, { qty: 2, category: 'Meals', onBehalfOf: 'Jane Tan' })];
+      step(); await edit.editPrinted(e.id, { ...bill, total: 29.5, rows }, actor(admin));
+      const items = feed(r).items.filter(x => x.field === 'printed');
+      // Said as written, after who and what: not "As printed set to …", and "SST" stays "SST".
+      expect(items.map(x => [x.text, x.detail])).toEqual([
+        ['Edited Restoran Nasi Kandar Pelita as printed: SST 6% 1.34 → 1.36 · Added Teh Tarik 5.60', 'SST 6% 1.34 → 1.36 · Added Teh Tarik 5.60'],
+        ['Kept Restoran Nasi Kandar Pelita as printed: 3 items · Service Charge 10% 2.03 · SST 6% 1.34 · Rounding Adj 0.01', 'Kept as printed: 3 items · Service Charge 10% 2.03 · SST 6% 1.34 · Rounding Adj 0.01'],
+      ]);
+      expect(items[0]).toMatchObject({ action: 'edited', old: null, actor: { role: 'admin' } });
+    });
+
     test('the currency an amount was in is the one it had at the time', async () => {
       clock();
       step(); const r = open();

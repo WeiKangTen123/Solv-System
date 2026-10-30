@@ -9,10 +9,11 @@ const { canView } = require('../middleware/roles');
 const { CATEGORY_NAMES, canonicalCategory } = require('../intake/categories');
 const { localDate } = require('../utils/zone-date');
 const astore  = require('./store');
-const { rateBasis } = require('./actions');
+const { rateBasis, categoryNow } = require('./actions');
 const { caseSuggestion, purposeDraft } = require('../reports/cover-help');
 const { coverPatch, sameCover } = require('../reports/cover-patch');
 const { changeNote } = require('../reports/cover-auto');
+const { taxName } = require('../reports/expense-doc');
 
 // What the assistant can do, as tools the model calls. Every tool runs as the
 // person in the conversation and is held to exactly what that person could do
@@ -94,7 +95,7 @@ function _receipt(ctx, id) {
   if (!e || !canView(ctx.actor, e.userId, e.companyId)) no('No receipt with that id that this person can see.');
   return e;
 }
-const _category = e => (e.lines.length > 1 ? 'split across lines' : edit.categoryOf(e));
+const _category = e => categoryNow(e) || (e.lines.length > 1 ? 'split across lines' : null);
 // Today in the company's zone, worked out once per turn rather than once for
 // every receipt checked.
 const _today = ctx => ctx.today || (ctx.today = localDate(ctx.company.timezone));
@@ -166,7 +167,6 @@ function _issues(ctx, e, twins) {
     if (l) out.push(`Exchange rate note: ${l.fxCheck}`);
     if (e.lines.some(x => x.fxNotOnTheDay)) out.push(`The rate is from ${e.lines[0].fxRateDate}, not the receipt date, because none is published for ${e.currency} that day.`);
   }
-  if (e.tax !== null && e.tax !== undefined && e.total > 0 && e.tax > e.total) out.push('The tax is more than the total.');
   if (e.receiptDate) {
     const today = _today(ctx);
     if (e.receiptDate > today) out.push('The date is in the future.');
@@ -175,8 +175,10 @@ function _issues(ctx, e, twins) {
   }
   if (!e.purpose && e.status !== 'duplicate') out.push('No business purpose.');
   if (e.errorMsg) out.push(`Reader's note: ${e.errorMsg}`);
+  // Not the tax: it is what the receipt printed, row by row, and is never
+  // second-guessed against one figure the reader once took for it.
   if (e.aiRead) {
-    for (const k of ['merchant', 'receiptDate', 'currency', 'total', 'tax', 'invoiceNo']) {
+    for (const k of ['merchant', 'receiptDate', 'currency', 'total', 'invoiceNo']) {
       const read = e.aiRead[k];
       if (read === null || read === undefined || read === '') continue;
       if (!_same(k, read, e[k])) out.push(`${changes.LABEL[k]} is ${e[k] ?? 'empty'} but the reader read ${read} off the receipt.`);
@@ -187,6 +189,38 @@ function _issues(ctx, e, twins) {
   const twin = _twin(ctx, e, twins);
   if (twin) out.push(`Looks like a duplicate of another receipt from ${twin.merchant} on ${twin.receiptDate} for the same amount${twin.userId !== e.userId ? `, claimed by ${_who(ctx, twin.userId)}` : ''}.`);
   return out;
+}
+
+// A receipt kept as printed (receipts/printed.js), for the model to read: its
+// rows in printed order, each with what it is, its name, its amount and its
+// rate as printed, and the lines come from them. A row says only what it has.
+function _asPrinted(p) {
+  const rows = (Array.isArray(p.rows) ? p.rows : []).map(r => ({
+    kind: r.kind, label: r.label, amount: r.amount,
+    ...(r.rate !== null && r.rate !== undefined ? { rate: r.rate } : {}),
+    ...(r.qty !== null && r.qty !== undefined ? { qty: r.qty } : {}),
+    ...(r.included ? { included: true } : {}),
+    ...(r.worked ? { workedOut: true } : {}),
+    ...(r.category ? { category: r.category } : {}),
+    ...(r.onBehalfOf ? { onBehalfOf: r.onBehalfOf } : {}),
+  }));
+  return { rows, subtotal: p.subtotal ?? null, total: p.total, note: 'The lines are made from these rows; an included tax is already in the item prices.' };
+}
+// What the reader first read, without its own copy of the rows: they are on
+// the receipt already, and twice is a long answer.
+function _readerRead(e) {
+  if (!e.aiRead) return null;
+  const { printed: _printed, ...rest } = e.aiRead;
+  return rest;
+}
+// A receipt kept as printed has its lines made from its items and its tax
+// from its tax rows (receipts/edit.js): neither is proposed on its own. A new
+// category moves its items with it only while they are all in the receipt's
+// one category, as on the page.
+function _printedPatchOk(e, patch) {
+  if (patch.tax !== undefined) no(edit.TAX_FROM_ROWS);
+  const sorted = (e.printed.rows || []).filter(r => ['item', 'charge', 'discount'].includes(r.kind));
+  if (patch.category && !sorted.every(r => !r.category || r.category === e.category)) no("This receipt's categories come from its items; change the items instead.");
 }
 
 // ── Reading tools ────────────────────────────────────────────────────────────
@@ -232,9 +266,11 @@ const READ = {
         id: e.id, owner: _who(ctx, e.userId), merchant: e.merchant, date: e.receiptDate, time: e.receiptTime, invoiceNo: e.invoiceNo,
         currency: e.currency, total: e.total, tax: e.tax, subTotal: e.subTotal, [`total_${ctx.base}`]: e.baseTotal,
         category: _category(e), purpose: e.purpose, readerDescription: e.description, readerNote: e.errorMsg,
-        status: e.status, readerConfidence: e.aiConfidence, readerRead: e.aiRead || null,
+        status: e.status, readerConfidence: e.aiConfidence, readerRead: _readerRead(e),
         case: _case(ctx, e.reportId), claimed: !!e.claimed, inXero: perm.posted,
-        lines: e.lines.map(l => ({ category: l.category, description: l.description, amount: l.amount, [ctx.base]: l.baseAmount, onBehalfOf: l.onBehalfOf || undefined })),
+        ...(e.printed ? { asPrinted: _asPrinted(e.printed) } : {}),
+        lines: e.lines.map(l => ({ category: l.category, description: l.description, amount: l.amount, [ctx.base]: l.baseAmount, onBehalfOf: l.onBehalfOf || undefined,
+          ...(Array.isArray(l.taxes) && l.taxes.length ? { taxes: l.taxes.map(t => `${taxName(t)} ${money(t.amount)}${t.included ? ' included' : ''}`) } : {}) })),
         exchangeRate: l0 && l0.fxRate && l0.fxSource !== 'base'
           ? { rate: l0.fxRate, date: l0.fxRateDate, source: l0.fxSource, typedBy: l0.fxSource === 'manual' ? l0.fxOverrideBy : undefined, reason: l0.fxOverrideReason || undefined, note: l0.fxCheck || undefined }
           : null,
@@ -472,13 +508,14 @@ const PROPOSE = {
       try { patch = edit.cleanPatch(a.changes && typeof a.changes === 'object' ? a.changes : {}); }
       catch (err) { no(err.message); }
       // A receipt split across lines takes its category from the lines.
-      if (patch.category && e.lines.length > 1) no('This receipt is split across lines; change the categories with propose_lines.');
+      if (patch.category && e.lines.length > 1 && !e.printed) no('This receipt is split across lines; change the categories with propose_lines.');
       const from = {};
       for (const k of Object.keys(patch)) {
         if (_same(k, patch[k], e[k]) && k !== 'category') { delete patch[k]; continue; }
         if (k === 'category' && _same(k, patch[k], _category(e))) { delete patch[k]; continue; }
         from[k] = k === 'category' ? _category(e) : (e[k] ?? null);
       }
+      if (e.printed) _printedPatchOk(e, patch);
       if (!Object.keys(patch).length) no('Those are already the values on the receipt.');
       const summary = `${_label(ctx, e)}: ${Object.keys(patch).map(k => `${changes.LABEL[k] || k} ${_show(k, from[k])} → ${_show(k, patch[k])}`).join('; ')}`;
       return _propose(ctx, { expense: e, kind: 'edit_details', payload: { expenseId: e.id, patch, from, reason: String(a.reason || '').slice(0, 300) }, summary });
@@ -486,7 +523,7 @@ const PROPOSE = {
   },
 
   propose_lines: {
-    description: 'Propose a new split of a receipt into lines (one per category, or per colleague paid for). They must add up exactly to the receipt total.',
+    description: 'Propose a new split of a receipt into lines (one per category, or per colleague paid for). They must add up exactly to the receipt total. Not for a receipt kept as printed (get_receipt shows asPrinted): its lines come from its items.',
     parameters: { type: 'object', properties: {
       id: { type: 'string' },
       lines: { type: 'array', items: { type: 'object', properties: {
@@ -498,6 +535,7 @@ const PROPOSE = {
     run(ctx, a) {
       const e = _receipt(ctx, a.id);
       _detailsOk(ctx, e);
+      if (e.printed) no(edit.LINES_FROM_ITEMS);
       const lines = Array.isArray(a.lines) ? a.lines : [];
       if (!lines.length || lines.length > 50) no('Give between one and fifty lines.');
       const clean = lines.map(l => {

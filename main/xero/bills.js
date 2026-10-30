@@ -5,7 +5,7 @@ const users   = require('../store/users');
 const { reportPayload } = require('../reports/expense-payload');
 const { getOrCreateContact } = require('./contacts');
 const { accountForCategory, getAccounts, getTaxRates } = require('./category-account');
-const { fmtRate } = require('../reports/expense-doc');
+const { fmtRate, taxName } = require('../reports/expense-doc');
 const attachments = require('./attachments');
 const { withRetry, xeroErrMsg } = require('./xero-utils');
 const { _fmtDate: fmtDate } = require('../reports/expense-doc');
@@ -41,6 +41,75 @@ function purchaseTax(accountCode, accounts, active) {
   return byRate(positive.filter(r => !SPECIAL_TAX.test(r.name || '')));
 }
 
+// The purchase tax for a tax as a receipt printed it, by its rate: SST 6% to
+// the organisation's 6% type, a KL hotel room's Service Tax 8% to its 8% one,
+// CGST 9% and SGST 9% charged together to an 18% one. Of several at that
+// rate, the account's own, then one named like the tax ("Service Tax 8%" for
+// "Service Tax"), then standard-rated purchases, never one of the special
+// kinds. Nothing at that rate: null, and the caller goes on as before.
+function taxForRate(rate, labels, accountCode, accounts, active) {
+  if (!(rate > 0)) return null;
+  const same = active.filter(r => Math.abs(Number(r.displayTaxRate) - rate) < 0.0001);
+  if (!same.length) return null;
+  const account = accountCode ? accounts.find(a => String(a.code) === String(accountCode)) : null;
+  const own = account && account.taxType ? same.find(r => r.taxType === account.taxType) : null;
+  if (own) return own;
+  const plain = same.filter(r => !SPECIAL_TAX.test(r.name || ''));
+  const words = labels.map(s => String(s || '').trim().toLowerCase()).filter(Boolean);
+  return plain.find(r => words.some(w => String(r.name || '').toLowerCase().includes(w)))
+    || plain.find(r => /standard[- ]rated purchases/i.test(r.name || '') || r.taxType === 'INPUT')
+    || plain[0] || null;
+}
+
+const cents = n => Math.round(Number(n || 0) * 100);
+const ROUNDING_CENTS = 5;
+// A base-currency line of a receipt kept as printed (line.taxes, see
+// reports/expense-payload.js): one bill line for each part of it a tax was
+// charged on, at that part's amount with the tax as printed, and the rest on
+// a line of its own on the zero type. Taxes charged on the same part go
+// together, CGST with SGST, as one line at their combined rate. A KL hotel's
+// room line is the room's Service Tax 8% on one bill line and the tourism
+// tax, which no tax was charged on, on another; summed into one line at the
+// organisation's top rate, as it used to be, Xero coded the whole of it as
+// taxed. Null when the taxes do not say what they were charged on: the line
+// then goes as before.
+function printedLines(l, item, { accountCode, accounts, active, zeroType }) {
+  const taxes = l.taxes.filter(t => cents(t.amount) > 0);
+  const total = cents(l.baseAmount);
+  if (!taxes.length) return [item(total / 100, zeroType)];
+  if (taxes.some(t => !(cents(t.gross) > 0))) return null;
+  const rate = Number(l.fxRate) > 0 ? Number(l.fxRate) : 1;
+  const inBase = (v, given) => (given !== null && given !== undefined ? cents(given) : Math.round(cents(v) * rate));
+  const parts = new Map();
+  for (const t of taxes) {
+    const key = cents(t.gross);
+    const p = parts.get(key) || { taxes: [], gross: inBase(t.gross, t.baseGross), tax: 0 };
+    p.taxes.push(t); p.tax += inBase(t.amount, t.baseAmount);
+    parts.set(key, p);
+  }
+  const list = [...parts.values()];
+  let rest = total - list.reduce((s, p) => s + p.gross, 0);
+  // The receipt's own rounding (the nasi kandar's −0.02), or a cent from each
+  // part rounding on its own, goes into the largest part: a bill line of
+  // −0.02 tells finance nothing. More than that, either way, is a part of the
+  // line no tax was charged on, and goes on its own.
+  if (rest && Math.abs(rest) <= ROUNDING_CENTS) {
+    list.reduce((a, b) => (b.gross > a.gross ? b : a)).gross += rest;
+    rest = 0;
+  }
+  if (list.some(p => p.gross <= 0)) return null;
+  const out = list.map(p => {
+    const rates = p.taxes.map(t => Number(t.rate));
+    const combined = rates.every(r => Number.isFinite(r) && r > 0) ? Math.round(rates.reduce((a, b) => a + b, 0) * 10000) / 10000 : null;
+    // No type to choose from: no tax type and no tax amount, so Xero applies
+    // the account's own, as a taxed line always has.
+    const type = taxForRate(combined, p.taxes.map(t => t.label), accountCode, accounts, active) || purchaseTax(accountCode, accounts, active);
+    return item(p.gross / 100, type ? type.taxType : undefined, type ? p.tax / 100 : undefined, p.taxes.map(taxName).join(' + '));
+  });
+  if (rest) out.push(item(rest / 100, zeroType, undefined, 'not taxed'));
+  return out;
+}
+
 // Pure: the bill as Xero will receive it, minus the contact id.
 function buildBill(payload, { accounts = [], defaultAccountCode = null, advancesAccountCode = null, taxRates = [] } = {}) {
   const { company, report, owner = {}, lines = [], receipts = [] } = payload;
@@ -49,14 +118,21 @@ function buildBill(payload, { accounts = [], defaultAccountCode = null, advances
   const zero = active.find(r => Number(r.displayTaxRate || 0) === 0) || null;
   const zeroType = zero ? zero.taxType : 'NONE';
 
-  const lineItems = lines.map(l => {
+  const lineItems = lines.flatMap(l => {
     const accountCode = accountForCategory(l.category, accounts) || defaultAccountCode || undefined;
     const foreign = !!l.currency && l.currency !== base;
     const description = [
       fmtDate(l.date), l.merchant, l.category, l.purpose,
       l.onBehalfOf ? `on behalf of ${l.onBehalfOf}` : null,
       foreign ? `${l.currency} ${money(l.amount)} × ${fmtRate(l.fxRate)}` : null,
-    ].filter(Boolean).join(' · ').slice(0, 4000);
+    ].filter(Boolean).join(' · ');
+    const item = (unitAmount, taxType, taxAmount, said) => ({
+      description: (said ? `${description} · ${said}` : description).slice(0, 4000), quantity: 1, unitAmount,
+      ...(accountCode ? { accountCode } : {}), ...(taxType ? { taxType } : {}),
+      ...(taxAmount ? { taxAmount: Math.round(taxAmount * 100) / 100 } : {}),
+    });
+    const printed = !foreign && Array.isArray(l.taxes) ? printedLines(l, item, { accountCode, accounts, active, zeroType }) : null;
+    if (printed) return printed;
     // Local GST only where the receipt shows tax in the base currency; foreign tax is never input tax.
     const wantsTax = !foreign && Number(l.tax) > 0;
     const gst = wantsTax ? purchaseTax(accountCode, accounts, active) : null;
@@ -66,8 +142,7 @@ function buildBill(payload, { accounts = [], defaultAccountCode = null, advances
     // from the rate, which is only right when the receipt was taxed at exactly
     // the organisation's top rate.
     const taxAmount = taxed ? Number(l.baseTax ?? l.tax ?? 0) : undefined;
-    return { description, quantity: 1, unitAmount: Number(l.baseAmount || 0), ...(accountCode ? { accountCode } : {}), ...(taxType ? { taxType } : {}),
-             ...(taxAmount ? { taxAmount: Math.round(taxAmount * 100) / 100 } : {}) };
+    return [item(Number(l.baseAmount || 0), taxType, taxAmount)];
   });
   // The cover deducts any advance already paid, and the PDF prints the smaller
   // figure as TOTAL REIMBURSEMENT. The bill has to agree, or finance pays the
@@ -300,4 +375,4 @@ async function postReport(reportId, actor, { dryRun = false } = {}) {
   return { dryRun: false, tenantId: tenant.tenantId, tenantName: tenant.tenantName, xeroInvoiceId: created.invoiceID, warnings, bill };
 }
 
-module.exports = { buildBill, postReport, postProblems, purchaseTax, idempotencyKey, DUE_DAYS };
+module.exports = { buildBill, postReport, postProblems, purchaseTax, taxForRate, idempotencyKey, DUE_DAYS };

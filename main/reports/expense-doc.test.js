@@ -35,16 +35,48 @@ describe('reports/expense-doc', () => {
     expect(m.rateNotes[1]).toMatch(/INR→SGD 0\.0135 entered by aisha@solv\.sg on 4 Sep 2026: card statement/);
     expect(m.notes.join(' ')).toMatch(/rounded to the cent/);
     expect(m.notes.join(' ')).toMatch(/Lim Wei Jie/);
-    expect(m.notes.join(' ')).toMatch(/foreign tax/i);
+    // Each line names its own tax now; a note calling every foreign tax "GST/VAT" is gone.
+    expect(m.notes.join(' ')).not.toMatch(/foreign tax/i);
   });
 
   test('the CSV has one row per line with the base amount, and the workbook model has four sheets', () => {
     const csv = doc.expenseReportCsv(payload);
-    expect(csv.split('\n')[0]).toBe('Report,Line,Date,Merchant,Description,Purpose,On behalf of,Category,Currency,Amount,Rate,Rate date,Rate source,SGD,Receipt');
+    expect(csv.split('\n')[0]).toBe('Report,Line,Date,Merchant,Description,Purpose,On behalf of,Category,Currency,Amount,Tax as printed,Tax,Rate,Rate date,Rate source,Tax (SGD),SGD,Receipt');
     expect(csv.split('\n')).toHaveLength(5);
-    expect(csv).toContain('EXP-2026-0007,1,2026-09-01,JW Marriott Mumbai Sahar,Rooms,Client visit,,Lodging,INR,20738.50,0.01341,2026-09-01,frankfurter,278.10,R1');
+    // A line from before receipts were kept as printed has its share of the tax and no rate.
+    expect(csv).toContain('EXP-2026-0007,1,2026-09-01,JW Marriott Mumbai Sahar,Rooms,Client visit,,Lodging,INR,20738.50,Tax (rate not kept),3379.50,0.01341,2026-09-01,frankfurter,,278.10,R1');
+    expect(csv).toContain(',Software/Utilities,SGD,18.40,,,1,2026-09-02,base,,18.40,R3');
     expect(doc.workbookModel(payload).sheets.map(s => s.name)).toEqual(['Cover', 'Lines', 'Rates', 'Receipts']);
     expect(doc.exportFilename(payload)).toBe('EXP-2026-0007_Aisha-Mei-Ling-Rahman');
+  });
+
+  test('each line says its tax as printed, in its own currency and the base; several taxes are joined', () => {
+    const p = { ...payload, lines: [
+      { ref: 'R1', date: '2026-10-12', merchant: 'Hotel Stripes Kuala Lumpur', category: 'Lodging', currency: 'MYR', amount: 342.64, fxRate: 0.3049, fxRateDate: '2026-10-12', fxSource: 'frankfurter', baseAmount: 104.47,
+        taxes: [{ label: 'Service Tax', rate: 8, amount: 24.64, included: false, gross: 332.64, baseAmount: 7.51 }], tax: 24.64, baseTax: 7.51 },
+      { ref: 'R2', date: '2026-10-13', merchant: 'JW Marriott Mumbai', category: 'Lodging', currency: 'INR', amount: 22420, fxRate: 0.01541, fxRateDate: '2026-10-13', fxSource: 'frankfurter', baseAmount: 345.49,
+        taxes: [{ label: 'CGST', rate: 9, amount: 1710, gross: 22420, baseAmount: 26.35 }, { label: 'SGST', rate: 9, amount: 1710, gross: 22420, baseAmount: 26.35 }], tax: 3420, baseTax: 52.7 },
+      { ref: 'R3', date: '2026-10-14', merchant: 'Grab', category: 'Air & Transport', currency: 'MYR', amount: 25, fxRate: 0.3049, fxRateDate: '2026-10-14', fxSource: 'frankfurter', baseAmount: 7.62, taxes: [], tax: 0, baseTax: 0 },
+    ] };
+    const rows = doc.expenseReportCsv(p).split('\n');
+    expect(rows[1]).toContain(',MYR,342.64,Service Tax 8%,24.64,0.3049,2026-10-12,frankfurter,7.51,104.47,R1');
+    expect(rows[2]).toContain(',INR,22420.00,CGST 9% + SGST 9%,3420.00,0.01541,2026-10-13,frankfurter,52.70,345.49,R2');
+    // No tax printed is a blank, not a tax of 0.00.
+    expect(rows[3]).toContain(',MYR,25.00,,,0.3049,2026-10-14,frankfurter,,7.62,R3');
+    const lines = doc.workbookModel(p).sheets.find(s => s.name === 'Lines');
+    expect(lines.header.slice(8, 17)).toEqual(['Amount', 'Tax as printed', 'Tax', 'Rate', 'Rate date', 'Rate source', 'Tax (SGD)', 'SGD', 'Receipt']);
+    expect(lines.rows[1].slice(8, 16)).toEqual([22420, 'CGST 9% + SGST 9%', 3420, 0.01541, '2026-10-13', 'frankfurter', 52.7, 345.49]);
+    expect(lines.money).toEqual([9, 11, 15, 16]);
+    expect(doc.buildModel(p).notes.join(' ')).not.toMatch(/GST\/VAT/);
+  });
+
+  test('a tax is said by the name and rate its receipt printed', () => {
+    expect(doc.taxName({ label: 'SST', rate: 6 })).toBe('SST 6%');
+    expect(doc.taxName({ label: 'MwSt', rate: 19.0 })).toBe('MwSt 19%');
+    expect(doc.taxName({ label: 'VAT', rate: null })).toBe('VAT');
+    expect(doc.taxSaid({ label: 'SST', rate: 6, amount: 1.58 }, 'MYR')).toBe('incl. SST 6% · MYR 1.58');
+    expect(doc.taxSaid({ label: 'GST', rate: 9, amount: 1.8, included: true, worked: true }, 'SGD')).toBe('incl. GST 9% · SGD 1.80, worked out');
+    expect(doc.taxSaid(null, 'SGD', 1.52)).toBe('incl. tax · SGD 1.52');
   });
 
 });
