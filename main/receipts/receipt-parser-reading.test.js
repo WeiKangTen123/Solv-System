@@ -42,12 +42,20 @@ describe('P1 tax lines: a tax by its own name, at the start of the line', () => 
   });
 });
 
-describe('P2 a tax already inside the prices is not a line of its own', () => {
-  test('the hawker\'s "GST 9% (incl.)" leaves the lines and stays the tax', () => {
+describe('P2 a tax already inside the prices is a row, and is not added again', () => {
+  test('the hawker\'s "GST 9% (incl.)" is kept as an included row, out of the lines, and is the tax', () => {
     const r = normalise({ total: 13.8, tax: 1.14, subTotal: 13.8, category: 'Meals', lineItems: [li('Chicken Rice', 11, 'Meals'), li('Barley', 1.8, 'Meals'), li('Egg', 1, 'Meals'), li('GST 9% (incl.)', 1.14, 'Meals')] });
     expect(r.lineItems.map(x => x.description)).toEqual(['Chicken Rice', 'Barley', 'Egg']);
-    expect(r).toMatchObject({ tax: 1.14, subTotal: 12.66 });
+    expect(r.rows[3]).toMatchObject({ kind: 'tax', label: 'GST', rate: 9, amount: 1.14, included: true });
+    // The subtotal as printed, not total − tax.
+    expect(r).toMatchObject({ tax: 1.14, subTotal: 13.8 });
     expect(lines(r)).toEqual(['Meals=13.8']);
+  });
+
+  test('a tax inside the prices read as added is put inside them, when the rest adds up without it', () => {
+    const r = normalise({ total: 13.8, currency: 'SGD', rows: [{ kind: 'item', label: 'Chicken Rice', amount: 13.8 }, { kind: 'tax', label: 'GST', rate: 9, amount: 1.14, included: false }] });
+    expect(r.rows[1]).toMatchObject({ included: true });
+    expect(r.tax).toBe(1.14);
   });
 
   test('a Berlin hotel\'s two "enth. MwSt" lines leave the lines; room and breakfast keep their own amounts', () => {
@@ -63,8 +71,8 @@ describe('P2 a tax already inside the prices is not a line of its own', () => {
     expect(r.lineItems).toHaveLength(4);
   });
 
-  test('the prompt says not to list an included tax', () => {
-    expect(SYSTEM_PROMPT).toMatch(/Do not list a tax that is already inside the prices/);
+  test('the prompt asks for an included tax as a row, marked included', () => {
+    expect(SYSTEM_PROMPT).toMatch(/a tax already inside\s+the prices too \(marked included\)/);
   });
 });
 
@@ -135,11 +143,18 @@ describe('P6 a tip is part of the amount charged', () => {
   });
 });
 
-describe('P7 the subtotal is worked out from the final tax', () => {
-  test('a tax taken from the lines makes the inclusive subtotal', () => {
-    expect(normalise({ total: 100, subTotal: 100, tax: null, lineItems: [li('Room', 91.74), li('GST 9%', 8.26)] })).toMatchObject({ tax: 8.26, subTotal: 91.74 });
-    expect(normalise({ total: 13.8, subTotal: 13.8, tax: 1.14 }).subTotal).toBe(12.66);
+// The subtotal used to be rewritten as total − tax whenever it equalled the
+// total, which put a figure on the receipt that it never printed.
+describe('P7 the subtotal is as printed, never worked out', () => {
+  test('a subtotal equal to the total stays the total; none printed is none', () => {
+    expect(normalise({ total: 100, subTotal: 100, tax: null, lineItems: [li('Room', 91.74), li('GST 9%', 8.26)] })).toMatchObject({ tax: 8.26, subTotal: 100 });
+    expect(normalise({ total: 13.8, subTotal: 13.8, tax: 1.14 }).subTotal).toBe(13.8);
     expect(normalise({ total: 109, subTotal: 100, tax: 9 }).subTotal).toBe(100);
+    expect(normalise({ total: 109, tax: 9 }).subTotal).toBeNull();
+  });
+  test('above the total only when something came off after it', () => {
+    expect(normalise({ total: 80, subTotal: 100, rows: [{ kind: 'item', label: 'Lunch', amount: 100 }, { kind: 'discount', label: 'Voucher', amount: -20 }] }).subTotal).toBe(100);
+    expect(normalise({ total: 80, subTotal: 100, rows: [{ kind: 'item', label: 'Lunch', amount: 80 }] }).subTotal).toBeNull();
   });
 });
 
@@ -152,7 +167,8 @@ describe('P8 currencies are real ISO codes', () => {
 describe('P9 what is a payment and what is a charge', () => {
   test('a visa FEE is a charge; the Visa card is not', () => {
     const r = normalise({ total: 2816.5, lineItems: [li('Tourist Visa Fee (Single Entry)', 1800), li('VFS Service Fee', 950), li('VAT 7% on Service Fee', 66.5), li('Paid by VISA ****7731', 2816.5), li('VISA ****7731', 2816.5)] });
-    expect(r.lineItems.map(x => x.description)).toEqual(['Tourist Visa Fee (Single Entry)', 'VFS Service Fee', 'VAT 7% on Service Fee']);
+    expect(r.lineItems.map(x => x.description)).toEqual(['Tourist Visa Fee (Single Entry)', 'VFS Service Fee', 'VAT on Service Fee']);
+    expect(r.rows[2]).toMatchObject({ kind: 'tax', label: 'VAT on Service Fee', rate: 7, amount: 66.5 });
   });
 
   test('cash handed over and change given are not charges', () => {

@@ -5,6 +5,7 @@ const { canEditDetails, isOwner } = require('../middleware/roles');
 const { canonicalCategory } = require('../intake/categories');
 const { applyFx, overrideFx } = require('../fx/apply');
 const { withoutCurrencyNote } = require('./read-receipt');
+const printed = require('./printed');
 
 // Changing a receipt: the one way it is done, by a person on the page or by
 // the assistant on their behalf. Every function here checks who may, applies
@@ -107,32 +108,114 @@ function cleanPatch(body = {}) {
   return patch;
 }
 
+// ── The receipt as printed ───────────────────────────────────────────────────
+//
+// A receipt read since the record was kept carries every row it printed
+// (receipts/printed.js), and its lines are made from those rows, never typed:
+// a line typed over would say one thing and the rows another, and the PDF and
+// the Xero bill take their taxes from the lines. The total, the tax and the
+// subtotal follow the record for the same reason, so the CSV, the assistant
+// and everything written before the record still read one story.
+
+const LINES_FROM_ITEMS = 'This receipt\'s lines come from its items; change the items instead.';
+const TAX_FROM_ROWS = 'This receipt\'s tax comes from its tax rows; change those instead.';
+const CATEGORY_FROM_ITEMS = 'This receipt\'s categories are its items\'; change those instead.';
+// A per diem and a mileage claim have no receipt behind them
+// (reports/allowances.js), so there is nothing printed to keep.
+const ALLOWANCES = new Set(['per_diem', 'mileage']);
+
+// A rate somebody typed for this receipt was typed for the receipt, not for
+// one way of splitting it; lines made again keep it rather than quietly going
+// back to the provider's.
+function _typedRate(e) {
+  const typed = e.lines.find(l => l.fxOverrideBy && l.fxRate > 0);
+  return typed ? { fxRate: typed.fxRate, fxRateDate: typed.fxRateDate, fxSource: typed.fxSource, fxFetchedAt: typed.fxFetchedAt,
+                   fxPolicy: typed.fxPolicy, fxOverrideBy: typed.fxOverrideBy, fxOverrideReason: typed.fxOverrideReason } : {};
+}
+
+// The lines made again from the record the expense now holds, keeping a typed
+// rate. `typedFrom` is the expense as it was, whose lines held that rate.
+function linesFromRecord(expenseId, typedFrom = null) {
+  const e = store.getExpense(expenseId);
+  if (!e || !e.printed) return e ? e.lines : [];
+  const keep = _typedRate(typedFrom || e);
+  const lines = printed.claimLines(e.printed, e.category, { description: e.description || e.merchant });
+  return store.replaceLines(e.id, lines.map(l => ({ ...l, currency: e.currency, ...keep })));
+}
+
+// The record, edited: a row's name, rate or amount typed over, a row added,
+// moved under another or removed. Saved as sent once it is a record
+// (printed.validate says why when it is not); the total, tax and subtotal
+// are set from it, the lines made from it, and the change written in words.
+async function editPrinted(expenseId, input, actor, { via = 'app' } = {}) {
+  const e = store.getExpense(expenseId);
+  _assertDetails(e, actor);
+  if (ALLOWANCES.has(e.source)) fail(400, 'A per diem or mileage claim has no receipt to keep as printed.');
+  const record = printed.validate(input);
+  const tax = printed.taxOf(record, { was: e.printed, tax: e.tax });
+  store.updateExpense(e.id, { printed: record, total: record.total, tax, subTotal: record.subtotal });
+  linesFromRecord(e.id, e);
+  await applyFx(e.id);
+  const after = store.getExpense(e.id);
+  _record(e, after, actor, via);
+  return after;
+}
+
+// What a detail edit does to a record: a new total or subtotal is the
+// record's too, so the two never differ. The tax is the tax rows' and the
+// categories are the items', so neither is typed here: a change to either is
+// refused with a sentence that says where to make it, and the same value sent
+// again (a page that sends every field) is let be.
+function _recordPatch(e, patch) {
+  if (patch.tax !== undefined) {
+    if (!sameValue('tax', patch.tax, e.tax)) fail(409, TAX_FROM_ROWS);
+    delete patch.tax;
+  }
+  if (patch.category !== undefined) {
+    if (!sameValue('category', patch.category, e.category)) fail(409, CATEGORY_FROM_ITEMS);
+    delete patch.category;
+  }
+  if (patch.total !== undefined || patch.subTotal !== undefined) {
+    patch.printed = { ...e.printed };
+    if (patch.total !== undefined) patch.printed.total = patch.total === null ? 0 : patch.total;
+    if (patch.subTotal !== undefined) patch.printed.subtotal = patch.subTotal;
+  }
+}
+
 // Merchant, date, amounts and the rest. Returns the updated expense.
 async function editDetails(expenseId, body, actor, { via = 'app' } = {}) {
   const e = store.getExpense(expenseId);
   _assertDetails(e, actor);
   const patch = cleanPatch(body);
+  if (e.printed) _recordPatch(e, patch);
   if (!Object.keys(patch).length) return e;
   // Setting the currency answers the reader's note that it was assumed.
   const currencyChanged = patch.currency !== undefined && patch.currency !== e.currency;
   if (currencyChanged && e.errorMsg) patch.errorMsg = withoutCurrencyNote(e.errorMsg);
   const updated = store.updateExpense(e.id, patch);
-  // A single line follows the total; a split is the claimant's to redo.
-  if (patch.total !== undefined && updated.lines.length === 1) {
+  let remade = false;
+  if (updated.printed) {
+    // The lines are the record's: made again whenever what they are made
+    // from moved (the total, the currency). A rate typed for the old
+    // currency goes with it, as below.
+    remade = !!(patch.printed || patch.currency !== undefined);
+    if (remade) linesFromRecord(e.id, currencyChanged ? { lines: [] } : e);
+  } else if (patch.total !== undefined && updated.lines.length === 1) {
+    // A single line follows the total; a split is the claimant's to redo.
     store.replaceLines(e.id, [{ ...updated.lines[0], amount: updated.total, currency: updated.currency }]);
   } else if (patch.currency && updated.lines.length) {
     store.replaceLines(e.id, updated.lines.map(l => ({ ...l, currency: updated.currency })), { force: true });
   }
   // So does a single line's category: the report's columns come from the
   // lines, so a category set only on the receipt would never reach the case.
-  if (patch.category) {
+  if (patch.category && !updated.printed) {
     const lines = store.getLines(e.id);
     if (lines.length === 1 && lines[0].category !== patch.category) store.updateLine(lines[0].id, { category: patch.category });
   }
   // A new currency, date or amount changes what the base figure is. A rate
   // somebody typed was typed for the OLD currency, so a currency change drops
   // it and fetches afresh; a new date or total keeps it.
-  if (patch.currency !== undefined || patch.receiptDate !== undefined || patch.total !== undefined) await applyFx(e.id, { force: currencyChanged });
+  if (remade || patch.currency !== undefined || patch.receiptDate !== undefined || patch.total !== undefined) await applyFx(e.id, { force: currencyChanged });
   // A new total on a split leaves the lines behind. A receipt whose lines no
   // longer add up is not checked any more, whatever it was before; in a
   // claimed case it keeps its status and posting refuses it until the lines
@@ -149,6 +232,7 @@ async function editDetails(expenseId, body, actor, { via = 'app' } = {}) {
 async function editLines(expenseId, lines, actor, { via = 'app' } = {}) {
   const e = store.getExpense(expenseId);
   _assertDetails(e, actor);
+  if (e.printed) fail(409, LINES_FROM_ITEMS);
   if (!Array.isArray(lines) || !lines.length) fail(400, 'Send at least one line');
   if (lines.length > 100) fail(400, 'A receipt has at most 100 lines');
   for (const l of lines) {
@@ -157,12 +241,8 @@ async function editLines(expenseId, lines, actor, { via = 'app' } = {}) {
     if (!(n > 0) || n > MAX_AMOUNT) fail(400, 'Every line needs an amount above zero');
     if (l.category && !canonicalCategory(l.category)) fail(400, `Unknown category "${l.category}"`);
   }
-  // A rate somebody typed for this receipt was typed for the receipt, not for
-  // one way of splitting it; a re-split keeps it rather than quietly going
-  // back to the provider's.
-  const typed = e.lines.find(l => l.fxOverrideBy && l.fxRate > 0);
-  const keep = typed ? { fxRate: typed.fxRate, fxRateDate: typed.fxRateDate, fxSource: typed.fxSource, fxFetchedAt: typed.fxFetchedAt,
-                         fxPolicy: typed.fxPolicy, fxOverrideBy: typed.fxOverrideBy, fxOverrideReason: typed.fxOverrideReason } : {};
+  // A re-split keeps a typed rate (_typedRate says why).
+  const keep = _typedRate(e);
   try {
     store.replaceLines(e.id, lines.map(l => ({
       category: canonicalCategory(l.category) || e.category || 'Other',
@@ -310,5 +390,5 @@ function permissions(e, actor) {
   };
 }
 
-module.exports = { editDetails, editLines, setRate, refreshRate, cleanPatch, detailsBlocked, permissions, sameValue, categoryOf,
-                   setStatus, fileInCase, actionBlocked, reviewBlocked, EDITABLE, MAX_AMOUNT };
+module.exports = { editDetails, editLines, editPrinted, linesFromRecord, setRate, refreshRate, cleanPatch, detailsBlocked, permissions, sameValue, categoryOf,
+                   setStatus, fileInCase, actionBlocked, reviewBlocked, EDITABLE, MAX_AMOUNT, LINES_FROM_ITEMS, TAX_FROM_ROWS, CATEGORY_FROM_ITEMS };

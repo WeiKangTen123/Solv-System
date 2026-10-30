@@ -65,20 +65,11 @@ describe('receipts/flags', () => {
     expect(codes(good({ errorMsg: 'Faded.' }))).toEqual([]);
   });
 
-  test('GST that is not 9/109 of a Singapore total from 2024', () => {
-    // 109.00 holds 9.00 of GST; two per cent either way, or five cents on a small bill, is rounding
-    expect(codes(good({ total: 109, tax: 9, lines: [{ amount: 109, baseAmount: 109 }], aiRead: null }))).toEqual([]);
-    expect(codes(good({ total: 109, tax: 9.17, lines: [{ amount: 109, baseAmount: 109 }], aiRead: null }))).toEqual([]);
-    expect(codes(good({ total: 109, tax: 9.2, lines: [{ amount: 109, baseAmount: 109 }], aiRead: null }))).toEqual(['gst-mismatch']);
-    expect(codes(good({ total: 2.18, tax: 0.22, lines: [{ amount: 2.18, baseAmount: 2.18 }], aiRead: null }))).toEqual([]);
-    expect(codes(good({ total: 2.18, tax: 0.24, lines: [{ amount: 2.18, baseAmount: 2.18 }], aiRead: null }))).toEqual(['gst-mismatch']);
-    const f = flagsFor(good({ total: 107, tax: 7, lines: [{ amount: 107, baseAmount: 107 }], aiRead: null }), null, opts);
-    expect(f).toEqual([{ code: 'gst-mismatch', level: 'yellow', text: 'The GST of 7.00 is not 9% of the total; about 8.83 was expected.', field: 'tax' }]);
-    // 7% was the rate in 2023; no tax shown, another currency: nothing to say
-    expect(codes(good({ total: 107, tax: 7, receiptDate: '2023-12-31', lines: [{ amount: 107, baseAmount: 107 }], aiRead: null }))).toEqual([]);
-    expect(codes(good({ tax: null }))).toEqual([]);
-    expect(codes(good({ tax: 0 }))).toEqual([]);
-    expect(codes(good({ currency: 'MYR', tax: 0.6, fxPending: false }))).toEqual([]);
+  // The printed tax is the receipt's record (receipts/printed.js): a GST that
+  // is not 9/109 of the total, in any year, is not doubted.
+  test('a printed GST is never second-guessed', () => {
+    expect(codes(good({ total: 109, tax: 9.2, lines: [{ amount: 109, baseAmount: 109 }], aiRead: null }))).toEqual([]);
+    expect(codes(good({ total: 107, tax: 7, lines: [{ amount: 107, baseAmount: 107 }], aiRead: null }))).toEqual([]);
   });
 
   test('a total that is not what the reader read', () => {
@@ -109,7 +100,7 @@ describe('receipts/flags', () => {
 
 describe('receipts/flags, from what the reader saw', () => {
   // A receipt read with checks (aiRead.checks, read-receipt.js) that found nothing.
-  const none = { subtotalMismatch: null, chargedTwice: [], people: [], adjusted: null, dateOrder: null };
+  const none = { chargedTwice: [], people: [], adjusted: null, dateOrder: null };
   const read = (checks, extra = {}) => good({ aiRead: { total: 10.9, checks: { ...none, ...checks } }, ...extra });
 
   test('checks that found nothing, or a receipt read before there were checks, say nothing', () => {
@@ -126,12 +117,12 @@ describe('receipts/flags, from what the reader saw', () => {
     expect(codes(good({ lines: [{ amount: 10.9, baseAmount: 10.9 }], aiRead: { total: 10.9, checks: { ...none, people: ['Tan Suan Kuan'] } } }))).toEqual([]);
   });
 
-  test('subtotal-mismatch, in any currency, while the figures are the ones read', () => {
-    const e = read({ subtotalMismatch: { subtotal: 2780, tax: 300, total: 3058 } }, { currency: 'JPY', subTotal: 2780, tax: 300, total: 3058, lines: [{ amount: 3058, baseAmount: 27.4 }], aiRead: undefined });
+  // A receipt read before the subtotal and tax stopped being held against
+  // the total still carries the check; it says nothing now.
+  test('a subtotal and tax that do not come to the total say nothing', () => {
+    const e = read({ subtotalMismatch: { subtotal: 2780, tax: 300, total: 3058 } }, { currency: 'JPY', subTotal: 2780, tax: 300, total: 3058, lines: [{ amount: 3058, baseAmount: 27.4 }] });
     e.aiRead = { total: 3058, checks: { ...none, subtotalMismatch: { subtotal: 2780, tax: 300, total: 3058 } } };
-    expect(flagsFor(e, null, opts)).toEqual([{ code: 'subtotal-mismatch', level: 'yellow', text: 'The subtotal of 2,780.00 and the tax of 300.00 do not come to the total of 3,058.00, even with the charges on the receipt; check the figures.', field: 'total' }]);
-    // Somebody corrected the tax: they have looked.
-    expect(codes({ ...e, tax: 278 })).toEqual([]);
+    expect(codes(e)).toEqual([]);
   });
 
   test('charged-twice names the charge and how often it appears', () => {
@@ -157,11 +148,11 @@ describe('receipts/flags, from what the reader saw', () => {
   });
 
   test('a per diem or mileage claim has none of them', () => {
-    const all = { subtotalMismatch: { subtotal: 1, tax: 1, total: 10.9 }, chargedTwice: [{ description: 'x', amount: 1, count: 2 }], people: ['A'], adjusted: { amount: 1, pct: 9 }, dateOrder: { read: '2026-09-04', other: '2026-04-09' } };
+    const all = { chargedTwice: [{ description: 'x', amount: 1, count: 2 }], people: ['A'], adjusted: { amount: 1, pct: 9 }, dateOrder: { read: '2026-09-04', other: '2026-04-09' } };
     const lines = [{ amount: 10.9, baseAmount: 10.9, onBehalfOf: 'A' }];
     expect(codes(good({ source: 'per_diem', lines, subTotal: 1, tax: 1, aiRead: { checks: all } }))).toEqual([]);
     expect(codes(good({ source: 'mileage', lines, subTotal: 1, tax: 1, aiRead: { checks: all } }))).toEqual([]);
-    expect(codes(good({ lines, subTotal: 1, tax: 1, aiRead: { total: 10.9, checks: all } }))).toEqual(['gst-mismatch', 'split-people', 'subtotal-mismatch', 'charged-twice', 'lines-adjusted', 'date-order']);
+    expect(codes(good({ lines, subTotal: 1, tax: 1, aiRead: { total: 10.9, checks: all } }))).toEqual(['split-people', 'charged-twice', 'lines-adjusted', 'date-order']);
   });
 });
 
@@ -263,6 +254,6 @@ describe('receipts/flags, from the company policy', () => {
       lines: [{ category: 'Fuel/Mileage', amount: 107, baseAmount: 107 }] });
     expect(pcodes(km)).toEqual(['over-limit', 'too-old', 'weekend']);
     // the same as a receipt says all of it
-    expect(pcodes({ ...km, source: 'upload' })).toEqual(['gst-mismatch', 'edited-amount', 'over-limit', 'too-old', 'weekend']);
+    expect(pcodes({ ...km, source: 'upload' })).toEqual(['edited-amount', 'over-limit', 'too-old', 'weekend']);
   });
 });

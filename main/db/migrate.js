@@ -245,6 +245,19 @@ function run() {
     if (!has || /'draft'/.test(has.sql)) return;
     _rebuild('expense_reports');
   });
+
+  // 9. A receipt keeps what it printed (receipts/printed.js): every item,
+  // charge and tax with its name and rate, and the rounding, as the receipt
+  // shows them, where five figures and one line per category used to be all
+  // that survived the read. Each claim line keeps the taxes inside its amount,
+  // so the PDF and the Xero bill name the tax the receipt names: a Kuala
+  // Lumpur hotel that printed Service Tax 8% of 24.64 and 6% of 5.61 went to
+  // Xero as 23.46 and 6.79. Both nullable: null is a receipt from before
+  // this, or one typed in, and it stays as it is.
+  _step(9, 'a receipt keeps what it printed', () => {
+    _ensureColumn('expenses', 'printed', 'printed TEXT');
+    _ensureColumn('expense_lines', 'taxes', 'taxes TEXT');
+  });
 }
 
 // Rebuilds one table to the shape schema.sql now gives it, carrying every row

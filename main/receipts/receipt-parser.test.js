@@ -15,7 +15,7 @@ beforeEach(() => jest.clearAllMocks());
 describe('receipts/receipt-parser', () => {
   describe('normalise — where a bad model response is made harmless', () => {
     test('passes a clean response through', () => {
-      expect(parser.normalise(good)).toEqual({ ...good, invoiceNumber: null, lineItems: [], box: null, city: null, country: null, docType: null });
+      expect(parser.normalise(good)).toEqual({ ...good, invoiceNumber: null, rows: [], lineItems: [], box: null, city: null, country: null, docType: null });
     });
 
     // A case is named and dated from these, so a made-up value names it wrongly.
@@ -57,10 +57,12 @@ describe('receipts/receipt-parser', () => {
         ],
       };
       const res = parser.normalise(withItems);
+      // 2 × 12.50 is a 25.00 row that keeps its quantity and unit price, as
+      // printed; they used to be folded into its name.
+      expect(res.rows.filter(r => r.kind === 'item').map(r => [r.label, r.qty, r.unitPrice, r.amount])).toEqual([['Burger', 2, 12.5, 25], ['Fries', null, null, 4.5]]);
       expect(res.lineItems).toEqual([
-        // 2 × 12.50 is a 25.00 line; the quantity rides in the text.
-        { description: 'Burger — 2 × 12.50', unitAmount: 25, discountRate: 0, category: null, onBehalfOf: null },
-        { description: 'Fries', unitAmount: 4.5, discountRate: 10, category: null, onBehalfOf: null },
+        { description: 'Burger', unitAmount: 25, discountRate: 0, category: null, onBehalfOf: null },
+        { description: 'Fries', unitAmount: 4.5, discountRate: 0, category: null, onBehalfOf: null },
       ]);
     });
 
@@ -730,6 +732,18 @@ describe('receipt-parser — a folio\'s payment line is not a charge', () => {
       ['Lodging', null, 43131.36], ['Lodging', 'Lim Wei Jie', 36713.34], ['Meals', null, 6426.57], ['Meals', 'Lim Wei Jie', 1917.5],
     ]);
     expect(lines.reduce((s, l) => s + Math.round(l.amount * 100), 0)).toBe(8818877);
+    // Kept as printed, each CGST and SGST sits under the charge it is printed
+    // under (its 9% is that charge's), so the lines from the record are the
+    // same four, and each carries its taxes.
+    expect(r.rows.filter(x => x.kind === 'tax').every(x => x.on !== null && r.rows[x.on].kind === 'item')).toBe(true);
+    const fromRecord = require('./printed').claimLines({ rows: r.rows, total: r.total }, 'Lodging');
+    expect(fromRecord.map(l => [l.category, l.onBehalfOf, l.amount])).toEqual([
+      ['Lodging', null, 43131.36], ['Lodging', 'Lim Wei Jie', 36713.34], ['Meals', null, 6426.57], ['Meals', 'Lim Wei Jie', 1917.5],
+    ]);
+    expect(fromRecord[1].taxes).toEqual([
+      { label: 'CGST ROOM [Add; udf.]', rate: 9, amount: 2800.17, included: false, gross: 36713.34 },
+      { label: 'SGST ROOM [Add; udf.]', rate: 9, amount: 2800.17, included: false, gross: 36713.34 },
+    ]);
   });
 
   test('a genuine charge that happens to equal the total is kept when it is the only line', () => {

@@ -1,7 +1,9 @@
 // Reads every eval receipt through the real reader, as a re-read reads one
-// (readOne, then buildLines, then the read-time checks where this version of
-// the code has them), and keeps for each what came back: the model's raw
-// replies, the normalised read, the report lines and the checks.
+// (readOne, then the record of the receipt as printed and the claim lines
+// made from it, then the read-time checks), and keeps for each what came
+// back: the model's raw replies, the normalised read, the record, the report
+// lines and the checks. A version of the code from before the record makes
+// its lines with buildLines, as it did then, so two runs can be compared.
 //
 // It calls the live model, so it is never part of the test suite, and it
 // counts every request so a run can be held to a budget. Nothing is written
@@ -61,6 +63,9 @@ async function run({ env, out, tag, only = null, samplesDir, maxCalls = 30, log 
   _loadKey(env);
   const calls = _countCalls();
   const reader = require('../../receipts/read-receipt');
+  const { canonicalCategory } = require('../../intake/categories');
+  let claimLines = null;
+  try { ({ claimLines } = require('../../receipts/printed')); } catch { /* a version from before the record */ }
 
   const items = _items({ only, samplesDir, synthDir: path.join(out, 'synth') });
   const skipped = [];
@@ -72,14 +77,18 @@ async function run({ env, out, tag, only = null, samplesDir, maxCalls = 30, log 
     let r = null, error = null;
     try { r = await reader.readOne(null, fs.readFileSync(it.file), it.mime); } catch (err) { error = err.message; }
     const mine = calls.slice(before);
-    const lines = r ? reader.buildLines(r, 'Other') : [];
+    // The record and its lines as applyRead makes them, from the receipt's
+    // own category.
+    const printed = r && typeof reader.recordOf === 'function' ? reader.recordOf(r) : null;
+    const category = r ? (canonicalCategory(r.category) || 'Other') : 'Other';
+    const lines = !r ? [] : printed && claimLines ? claimLines(printed, category, { description: r.description || r.merchant }) : reader.buildLines(r, 'Other');
     // The checks arrived with this harness's first use; a reader from before
     // them has none to give.
     const checks = r && typeof reader.readChecks === 'function' ? reader.readChecks(r, lines) : null;
     const record = {
       name: it.name, tag, seconds: (Date.now() - t0) / 1000,
       modelCalls: mine.map(c => ({ model: c.model, ms: c.ms, status: c.status, finish: c.finish, error: c.error, usage: c.usage })),
-      result: r, lines, checks, raw: mine.map(c => c.content ?? null), error,
+      result: r, printed, lines, checks, raw: mine.map(c => c.content ?? null), error,
     };
     fs.writeFileSync(path.join(out, tag, `${it.name}.json`), JSON.stringify(record, null, 2));
     log(`${it.name.padEnd(26)} ${record.seconds.toFixed(1).padStart(5)}s  calls=${mine.length} ${mine.map(c => `${c.model}:${c.status}`).join(' ')}  total=${r ? r.total : '-'} ${r ? r.currency : ''}${error ? `  error: ${error}` : ''}`);

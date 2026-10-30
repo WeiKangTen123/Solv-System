@@ -7,6 +7,7 @@ const { canonicalCategory } = require('../intake/categories');
 const logger    = require('../utils/logger');
 const { firstReceipt, readSomething, overlapFraction } = require('./parse-result');
 const lineKinds = require('./line-kinds');
+const printed   = require('./printed');
 const { isoDate } = require('../intake/document');
 
 // The one place that decides HOW a stored file is read and what the read does
@@ -55,6 +56,10 @@ function _groups(r, cat) {
   return { lines, sum: lines.reduce((s, g) => s + g.cents, 0) };
 }
 
+// The lines of a read that has no rows to keep as printed (a reply in the
+// older shape, a script's own read); a read with rows takes its lines from
+// the record (receipts/printed.js claimLines), which groups the same way.
+//
 // One line per (category, on-behalf-of), summing exactly to the total. The
 // reader's items rarely add up to the cent, and the difference goes to the
 // claimant's own line in the receipt's category, made if there is none. It
@@ -93,27 +98,28 @@ function buildLines(r, fallbackCategory) {
 // ── What the reader saw that is worth a look ────────────────────────────────
 //
 // Worked out when the receipt is read and kept in aiRead.checks, beside what
-// the reader read: the reader's items are not kept on the expense, and once
-// somebody edits the lines nothing would remain to judge them by. The flags
-// (flags.js) say these in words. All money is as printed, in the receipt's
-// own currency.
+// the reader read, so the flags (flags.js) can say them in words however the
+// receipt is edited afterwards. All money is as printed, in the receipt's own
+// currency. The read's rows are judged where it has them (the receipt as
+// printed, receipt-parser.js), its line items where it has only those.
 //
-//   subtotalMismatch  the subtotal and the tax do not come to the total, with
-//                     or without the service charges, tips, levies, rounding
-//                     and discounts on the receipt: { subtotal, tax, total }
 //   chargedTwice      the same charge for the same person, at the same amount,
 //                     more than once: [{ description, amount, count }]
 //   people            the other people whose charges the lines carry
-//   adjusted          the items were more than 2% off the total, and the
+//   adjusted          the rows were more than 2% off the total, and the
 //                     difference was made up on a line: { amount, pct }, the
-//                     amount added to the items (negative when taken off)
+//                     amount added to the rows (negative when taken off)
 //   dateOrder         a month-first date whose day could be its month:
 //                     { read, other }
+//
+// The subtotal and tax are no longer held against the total. What a receipt
+// prints is its record, and a check that second-guessed a printed figure
+// (GST that is not 9/109 of the total, a subtotal and tax that do not come to
+// it) asked a person to doubt the one thing on the page that was certain.
 const ADJUSTED_SHARE = 0.02;
 function readChecks(r, lines) {
   if (!r) return null;
   return {
-    subtotalMismatch: _subtotalMismatch(r),
     chargedTwice: _chargedTwice(r),
     people: [...new Set((lines || []).map(l => l.onBehalfOf).filter(Boolean))],
     adjusted: _adjusted(r),
@@ -122,29 +128,25 @@ function readChecks(r, lines) {
 }
 
 const _c = v => Math.round(Number(v) * 100);
-function _subtotalMismatch(r) {
-  if (r.subTotal == null || r.tax == null || !(Number(r.total) > 0)) return null;
-  const items = Array.isArray(r.lineItems) ? r.lineItems : [];
-  const extra = items.filter(li => lineKinds.adjustmentLine(li.description)).reduce((s, li) => s + _c(li.unitAmount), 0);
-  const off = items.filter(li => Number(li.unitAmount) < 0 && !lineKinds.adjustmentLine(li.description) && !lineKinds.taxLine(li.description)).reduce((s, li) => s + _c(li.unitAmount), 0);
-  const base = _c(r.subTotal) + _c(r.tax);
-  // Whether a discount or a service charge sits above the subtotal or below
-  // it is not something the lines say, so each way is allowed.
-  const total = _c(r.total);
-  if ([base, base + extra, base + off, base + extra + off].some(x => Math.abs(x - total) <= 2)) return null;
-  return { subtotal: Number(r.subTotal), tax: Number(r.tax), total: Number(r.total) };
+// The charges a read holds, as { description, cents, onBehalfOf }: its items
+// and charges when it has rows, its lines that are not tax when it has not.
+function _charges(r) {
+  if (Array.isArray(r.rows) && r.rows.length) {
+    return r.rows.filter(x => x.kind === 'item' || x.kind === 'charge').map(x => ({ description: x.label, cents: _c(x.amount), onBehalfOf: x.onBehalfOf }));
+  }
+  return (Array.isArray(r.lineItems) ? r.lineItems : []).filter(li => !lineKinds.taxLine(li.description))
+    .map(li => ({ description: li.description, cents: _c(li.unitAmount), onBehalfOf: li.onBehalfOf }));
 }
 
-// A tax line repeats with the charge it is on; only the charge is named.
+// A tax repeats with the charge it is on; only the charge is named.
 function _chargedTwice(r) {
   const seen = new Map();
-  for (const li of Array.isArray(r.lineItems) ? r.lineItems : []) {
-    const cents = _c(li.unitAmount);
-    if (!(cents > 0) || lineKinds.taxLine(li.description)) continue;
-    const description = String(li.description || '').replace(/\s+/g, ' ').trim();
+  for (const x of _charges(r)) {
+    if (!(x.cents > 0)) continue;
+    const description = String(x.description || '').replace(/\s+/g, ' ').trim();
     if (!description) continue;
-    const key = `${description.toLowerCase()}|${cents}|${li.onBehalfOf || ''}`;
-    const s = seen.get(key) || { description, amount: cents / 100, count: 0 };
+    const key = `${description.toLowerCase()}|${x.cents}|${x.onBehalfOf || ''}`;
+    const s = seen.get(key) || { description, amount: x.cents / 100, count: 0 };
     s.count++;
     seen.set(key, s);
   }
@@ -154,8 +156,14 @@ function _chargedTwice(r) {
 function _adjusted(r) {
   const total = _c(r.total);
   if (!(total > 0)) return null;
-  const { lines, sum } = _groups(r, canonicalCategory(r.category) || 'Other');
-  if (!lines.length || Math.abs(total - sum) <= total * ADJUSTED_SHARE) return null;
+  let sum;
+  if (Array.isArray(r.rows) && r.rows.length) sum = _c(printed.rowsSum({ rows: r.rows }));
+  else {
+    const g = _groups(r, canonicalCategory(r.category) || 'Other');
+    if (!g.lines.length) return null;
+    sum = g.sum;
+  }
+  if (Math.abs(total - sum) <= total * ADJUSTED_SHARE) return null;
   return { amount: (total - sum) / 100, pct: Math.round((Math.abs(total - sum) / total) * 1000) / 10 };
 }
 
@@ -173,6 +181,15 @@ function _dateOrderCheck(r) {
   if (Number(m) > 12 || Number(d) > 12 || m === d) return null;
   const other = isoDate(`${y}-${d}-${m}`);
   return other ? { read: r.date, other } : null;
+}
+
+// The record a read makes (receipts/printed.js), or null: it takes the rows
+// and an amount to claim, so a refund, a read with no total and one that
+// listed nothing keep none. Read as the record a person would send.
+function recordOf(r) {
+  if (!r || r.refund || !Array.isArray(r.rows) || !r.rows.length || !(Number(r.total) > 0)) return null;
+  try { return printed.validate({ v: 1, rows: r.rows, subtotal: r.subTotal ?? null, total: r.total }); }
+  catch (err) { logger.warn('A read could not be kept as printed', { error: err.message }); return null; }
 }
 
 // What a read that saw a refund says on the receipt, in place of an amount.
@@ -198,10 +215,20 @@ async function applyRead(expenseId, r, { reread = false } = {}) {
       if (rep?.purpose) purpose = rep.purpose;
     } catch {}
   }
+  // The receipt as printed (receipts/printed.js), when the read has its rows
+  // and an amount: kept on the expense, its lines made from it, and a copy
+  // beside what else the reader read, so a row changed away from the paper
+  // can say what was read. A refund, or a read with no amount, keeps none.
+  const record = recordOf(r);
+  const category = canonicalCategory(r.category) || exp.category;
+  const readLines = record ? printed.claimLines(record, category, { description: r.description || r.merchant })
+                           : buildLines(r, category);
   const patch = {
     merchant: r.merchant ?? undefined, receiptDate: r.date ?? undefined, receiptTime: r.time ?? undefined,
     invoiceNo: r.invoiceNumber ?? undefined, currency: r.currency ?? undefined,
-    total: r.total ?? undefined, tax: r.tax ?? undefined, subTotal: r.subTotal ?? undefined,
+    // With a record the tax and subtotal are its own, printed or not.
+    total: r.total ?? undefined,
+    tax: record ? (r.tax ?? null) : (r.tax ?? undefined), subTotal: record ? record.subtotal : (r.subTotal ?? undefined),
     purpose: purpose ?? undefined,
     description: r.description ?? undefined, category: canonicalCategory(r.category) ?? undefined,
     city: r.city ?? undefined, country: r.country ?? undefined, docType: r.docType ?? undefined,
@@ -212,17 +239,22 @@ async function applyRead(expenseId, r, { reread = false } = {}) {
     // receipt is a refund and so has no amount to claim.
     errorMsg: [r.refund ? REFUND_NOTE : null, r.currency == null && r.total != null && exp?.currency ? currencyNote(exp.currency) : null].filter(Boolean).join(' ') || null,
     aiConfidence: r.confidence || 'low', aiReadAt: new Date().toISOString(),
+    ...(record ? { printed: record } : {}),
     // What the reader saw on the paper, kept beside whatever the fields say
     // later, so a total that was changed away from the receipt shows; and
-    // what in it was worth a look, judged then, from the reader's own items.
+    // what in it was worth a look, judged then, from the reader's own rows.
     aiRead: { merchant: r.merchant ?? null, receiptDate: r.date ?? null, currency: r.currency ?? null, total: r.total ?? null,
               tax: r.tax ?? null, invoiceNo: r.invoiceNumber ?? null, category: canonicalCategory(r.category) ?? null,
               city: r.city ?? null, country: r.country ?? null, docType: r.docType ?? null,
-              checks: readChecks(r, buildLines(r, canonicalCategory(r.category) || exp.category)) },
+              printed: record, checks: readChecks(r, readLines) },
   };
   const updated = store.updateExpense(expenseId, patch);
   if (!updated) return null;
-  const lines = buildLines({ ...r, total: updated.total }, updated.category);
+  // A receipt that keeps a record takes its lines from it, even when this
+  // read made none (no amount read: the one there stays, as any field does).
+  const lines = updated.printed
+    ? printed.claimLines(updated.printed, updated.category, { description: updated.description || updated.merchant })
+    : buildLines({ ...r, total: updated.total }, updated.category);
   if (lines.length) store.replaceLines(expenseId, lines.map(l => ({ ...l, currency: updated.currency })));
   // The rate is applied here, once the lines exist, so a read never leaves a
   // foreign expense without its base figure (or an honest 'rate pending').
@@ -533,4 +565,4 @@ async function readOne(userId, buffer, mime, { page = null, box = null } = {}) {
   return mine || _scannedPage(userId, buffer, page, box);
 }
 
-module.exports = { readReceipt, readParts, readOne, applyRead, buildLines, readChecks, flagIfSuspected, currencyNote, withoutCurrencyNote, CURRENCY_NOTE_RE, MAX_PAGES_ONE_DOC, UNAVAILABLE_NOTE, REFUND_NOTE };
+module.exports = { readReceipt, readParts, readOne, applyRead, buildLines, recordOf, readChecks, flagIfSuspected, currencyNote, withoutCurrencyNote, CURRENCY_NOTE_RE, MAX_PAGES_ONE_DOC, UNAVAILABLE_NOTE, REFUND_NOTE };
