@@ -17,7 +17,7 @@ const { runs, plain } = require('./pdf-text');
 const { declarationFor, currentClaim, DECLARED_NOTE } = require('./declaration');
 const { localDate } = require('../utils/zone-date');
 const { SOURCE_LONG, SOURCE_VIA } = require('../fx/sources');
-const { fmtRate, fmtDate, fmtStamp, POLICY_LABEL } = doc;
+const { fmtRate, fmtDate, fmtStamp, POLICY_LABEL, taxName, taxSaid, TAX_NOT_KEPT } = doc;
 
 const money = n => require('../utils/money').formatAmount(n);
 const cents = n => Math.round(Number(n || 0) * 100);
@@ -45,7 +45,6 @@ function said(e) {
   const word = SAID[e.action] || String(e.action || '').replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
   return e.note ? `${word}: ${e.note}` : word;
 }
-const TAX_NAME = { SGD: 'GST', MYR: 'SST' };
 
 // Text from people and receipts, as runs pdfmake can draw (pdf-text.js).
 const R = v => { const r = runs(v); return Array.isArray(r) ? r : [r]; };
@@ -101,7 +100,7 @@ function pdfModel(payload) {
       date: l.date, merchant: l.merchant || 'No merchant', description, purpose: l.purpose || null, onBehalfOf: l.onBehalfOf || null,
       category: l.category || 'Other', currency: l.currency || base, amount: Number(l.amount) || 0,
       rate: l.fxRate, foreign: (l.currency || base) !== base, pending, base: pending ? null : Number(l.baseAmount),
-      tax: Number(l.tax) || 0, baseTax: Number(l.baseTax) || 0, line: l,
+      tax: Number(l.tax) || 0, baseTax: Number(l.baseTax) || 0, taxes: Array.isArray(l.taxes) ? l.taxes : null, line: l,
     };
   });
 
@@ -146,7 +145,7 @@ function pdfModel(payload) {
     .map(c => ({ code: c.code, amount: c.cents / 100, base: c.baseCents / 100, pending: c.pending, rates: [...c.rates].sort((a, b) => a - b) }));
 
   return { m, rows, notes, flagged, categories, currencies, rateNotes: rateNotes(rows, base, company), base, tz,
-    tax: taxTotals(rows, base), allowances: rows.filter(r => r.allowance), receipts, company, report, owner };
+    tax: taxByRate(rows, base), allowances: rows.filter(r => r.allowance), receipts, company, report, owner };
 }
 
 // One note per currency and source: a week of ringgit receipts priced at the
@@ -180,12 +179,39 @@ function rateNotes(rows, base, company) {
   return out;
 }
 
-// The tax printed on the receipts, in the base currency: the local tax a
-// company may be able to reclaim, and foreign tax, which it cannot.
-function taxTotals(rows, base) {
-  const local = rows.filter(r => !r.foreign && !r.allowance).reduce((s, r) => s + cents(r.tax), 0) / 100;
-  const foreign = rows.filter(r => r.foreign && !r.pending).reduce((s, r) => s + cents(r.baseTax), 0) / 100;
-  return { local, foreign, name: TAX_NAME[base] || 'Tax' };
+// The tax printed on the receipts, one row per tax by its printed name and
+// rate in each currency: a KL hotel's Service Tax 8% on the room and SST 6% on
+// the restaurant are two rows, and an Indian folio's CGST and SGST are two
+// more, each with how many receipts carry it. It used to be one figure under
+// a name guessed from the company's currency, so a Singapore company's
+// ringgit and rupee receipts all said "GST". The base currency's own come
+// first, being the tax a company may be able to reclaim; tax in any other
+// currency it cannot. A line from before receipts were kept as printed knows
+// its share of the tax and not the rate: "Tax (rate not kept)".
+function taxByRate(rows, base) {
+  const groups = new Map(), taxed = new Set(), receipts = new Set();
+  const add = (r, key, name, amount, baseAmount) => {
+    const g = groups.get(key) || { name, currency: r.currency, local: r.currency === base, kept: name !== TAX_NOT_KEPT, receipts: new Set(), cents: 0, baseCents: 0, pending: 0 };
+    g.receipts.add(r.key); g.cents += cents(amount);
+    if (baseAmount === null || baseAmount === undefined || r.pending) g.pending++; else g.baseCents += cents(baseAmount);
+    groups.set(key, g); taxed.add(r.key);
+  };
+  for (const r of rows) {
+    if (r.allowance) continue;
+    if (r.ref) receipts.add(r.key);
+    if (r.taxes) {
+      for (const t of r.taxes) {
+        if (!(cents(t.amount) > 0)) continue;
+        const rate = Number.isFinite(Number(t.rate)) && t.rate !== null && t.rate !== '' ? Number(t.rate) : '';
+        add(r, `${r.currency}|${String(t.label || '').trim().toLowerCase()}|${rate}`, taxName(t), t.amount, t.baseAmount);
+      }
+    } else if (r.tax > 0) add(r, `${r.currency}|~`, TAX_NOT_KEPT, r.tax, r.baseTax);
+  }
+  const list = [...groups.values()].map(g => ({ name: g.name, currency: g.currency, local: g.local, kept: g.kept, receipts: g.receipts.size,
+    amount: g.cents / 100, base: g.baseCents / 100, pending: g.pending }))
+    .sort((a, b) => (a.local !== b.local ? (a.local ? -1 : 1) : a.currency !== b.currency ? a.currency.localeCompare(b.currency)
+      : a.kept !== b.kept ? (a.kept ? -1 : 1) : a.name.localeCompare(b.name, 'en', { numeric: true })));
+  return { local: list.filter(g => g.local), foreign: list.filter(g => !g.local), untaxed: [...receipts].filter(k => !taxed.has(k)).length };
 }
 
 // ── Building blocks ─────────────────────────────────────────────────────────
@@ -308,12 +334,27 @@ function summaryPage(x, st) {
   x.rateNotes.forEach((t, i) => out.push({ text: R(t), style: 'note', margin: [0, i ? 1 : 4, 0, 0] }));
   if (!x.rateNotes.length && currencies.every(c => c.code === base)) out.push({ text: `Every line is in ${base}; no exchange rate was needed.`, style: 'note', margin: [0, 3, 0, 0] });
 
-  if (tax.local || tax.foreign) {
-    const parts = [];
-    if (tax.local) parts.push([`${tax.name} on ${base} receipts`, `${base} ${money(tax.local)}`]);
-    if (tax.foreign) parts.push([`Tax on receipts in other currencies${base === 'SGD' ? ' (not Singapore input tax)' : ''}`, `${base} ${money(tax.foreign)}`]);
-    out.push(subheading('Tax shown on the receipts'), { table: { widths: ['*', 'auto'], body: parts.map(([k, v]) => [{ text: k, style: 'body' }, { text: v, style: 'body', alignment: 'right' }]) }, layout: noBorders([0, 1, 0, 1]) },
-      { text: 'Included in the amounts above, as printed on each receipt.', style: 'note', margin: [0, 1, 0, 0] });
+  if (tax.local.length || tax.foreign.length) {
+    const row = g => [
+      { text: R(g.name), style: g.kept ? 'cell' : 'cellMuted' },
+      { text: String(g.receipts), style: 'cell', alignment: 'right' },
+      { text: `${g.currency} ${money(g.amount)}`, style: 'cell', alignment: 'right' },
+      g.pending && !g.base ? { text: 'rate pending', style: 'cell', color: C.warn, alignment: 'right' }
+        : { text: g.pending ? `${money(g.base)} + ${g.pending} pending` : money(g.base), style: 'cell', alignment: 'right' },
+    ];
+    const body = [head(['Tax', 'Receipts', 'Amount', base], 1), ...tax.local.map(row)];
+    if (tax.foreign.length) {
+      body.push([{ text: `Receipts in other currencies${base === 'SGD' ? ' (not Singapore input tax)' : ''}`, style: 'cellGroup', colSpan: 4, margin: [0, tax.local.length ? 3 : 0, 0, 0] }, {}, {}, {}],
+        ...tax.foreign.map(row));
+    }
+    // Rows a little tighter than the other tables: a trip through three
+    // countries prints six or seven taxes, and at full height they pushed the
+    // box for finance onto a page of its own.
+    out.push(subheading('Tax by rate, as printed'), { table: { headerRows: 1, dontBreakRows: true, widths: ['*', 46, 96, 72], body },
+      layout: { ...gridLayout, paddingTop: () => 1.6, paddingBottom: () => 1.6 } });
+    const says = ['Included in the amounts above, as printed on each receipt.'];
+    if (tax.untaxed) says.push(`No tax printed: ${plural(tax.untaxed, 'receipt')}.`);
+    out.push({ text: says.join(' '), style: 'note', margin: [0, 4, 0, 0] });
   }
 
   // The declaration: said as made only when the claim window showed it.
@@ -339,6 +380,15 @@ function summaryPage(x, st) {
   return out;
 }
 
+// A line's tax under its description, one per tax as its receipt printed it:
+// "incl. Service Tax 8% · MYR 24.64". It used to be "tax 30.25" under the
+// amount, with neither the name nor the rate, the two taxes of a KL hotel
+// summed into one figure.
+function taxLines(r) {
+  if (r.taxes) return r.taxes.filter(t => cents(t.amount) > 0).map(t => taxSaid(t, r.currency));
+  return r.tax > 0 ? [taxSaid(null, r.currency, r.tax)] : [];
+}
+
 function detailsPage(x) {
   const { rows, flagged, m, base } = x;
   const body = [head(['#', 'Date', 'Rcpt', 'Merchant', 'Category', 'Amount', 'Rate', base], 5)];
@@ -352,21 +402,20 @@ function detailsPage(x) {
       { stack: [
         { text: R(r.merchant), style: 'cellStrong' },
         ...(what ? [{ text: R(what), style: 'cellSub' }] : []),
+        ...taxLines(r).map(t => ({ text: R(t), style: 'cellSub' })),
         ...(r.allowance ? [{ text: 'Allowance, at the company\'s rates', style: 'cellSub', color: C.accent }] : []),
         ...(r.onBehalfOf ? [{ text: R(`Paid for ${r.onBehalfOf}`), style: 'cellSub' }] : []),
       ] },
       { text: R(r.category), style: 'cell' },
-      { stack: [
-        { text: `${r.currency} ${money(r.amount)}`, style: 'cell', alignment: 'right' },
-        ...(r.tax > 0 ? [{ text: `tax ${money(r.tax)}`, style: 'cellSub', alignment: 'right' }] : []),
-      ] },
+      { text: `${r.currency} ${money(r.amount)}`, style: 'cell', alignment: 'right' },
       { text: r.foreign && Number(r.rate) > 0 ? fmtRate(r.rate) : '', style: 'cell', alignment: 'right' },
       r.pending ? { text: 'rate pending', style: 'cell', color: C.warn, alignment: 'right' } : { text: money(r.base), style: 'cellStrong', alignment: 'right' },
     ]);
   }
   body.push([{ text: `Total ${base}`, style: 'cellStrong', colSpan: 7, alignment: 'right' }, {}, {}, {}, {}, {}, {}, { text: money(m.total), style: 'cellStrong', alignment: 'right' }]);
   return [
-    heading('sec-details', 'Expense details', { pageBreak: 'before' }),
+    // A page of its own, but by detailsBreak below rather than pageBreak.
+    heading('sec-details', 'Expense details', { margin: [0, 24, 0, 10] }),
     { table: { headerRows: 1, dontBreakRows: true, widths: [20, 48, 24, '*', 66, 72, 40, 56], body }, layout: {
       ...gridLayout,
       hLineWidth: (i, node) => (i === 0 ? 0 : i === 1 ? 0.8 : i === node.table.body.length - 1 || i === node.table.body.length ? 0.8 : 0.4),
@@ -463,6 +512,16 @@ function receiptNodes(x, rc, { first = false } = {}) {
   return out;
 }
 
+// The expense details start a page of their own, as the summary does, unless
+// the summary ran over onto the page they would start on: then they follow it
+// there. A trip through three countries prints six or seven taxes in the
+// summary, and its box for finance went over onto a page with nothing else on
+// it. pdfmake asks this of each node once it has laid them out, and lays the
+// document out again when the answer is yes.
+function detailsBreak(node, followingNodesOnPage, nodesOnNextPage, previousNodesOnPage) {
+  return node.id === 'sec-details' && previousNodesOnPage.some(n => n.id === 'sec-summary');
+}
+
 // ── The document ────────────────────────────────────────────────────────────
 // The document in parts, for the export and for Xero (xero/attachments.js,
 // which cuts a long case into several files between receipts):
@@ -509,6 +568,7 @@ function caseParts(payload) {
     background: page => (cover && page === 1 ? { canvas: [{ type: 'rect', x: 0, y: 0, w: PAGE.width, h: 8, color: C.accent }] } : null),
     header: page => (cover && page === 1 ? null : header()),
     footer: (page, pages) => (cover && page === 1 ? coverFoot() : pageFoot(page, pages)),
+    pageBreakBefore: detailsBreak,
     styles: STYLES,
   });
   return {
@@ -541,6 +601,7 @@ const STYLES = {
   totalLabel: { fontSize: 11, bold: true, color: C.ink }, totalAmount: { fontSize: 13, bold: true, color: C.ink },
   colHead: { fontSize: 7, bold: true, color: C.muted, characterSpacing: 0.4 },
   cell: { fontSize: 8 }, cellStrong: { fontSize: 8, bold: true, color: C.ink }, cellSub: { fontSize: 7, color: C.muted },
+  cellMuted: { fontSize: 8, color: C.muted }, cellGroup: { fontSize: 7, bold: true, color: C.muted, characterSpacing: 0.3 },
   capTitle: { fontSize: 12, bold: true, color: C.ink }, capSub: { fontSize: 8, color: C.muted, margin: [0, 2, 0, 0] },
   capLink: { fontSize: 8, bold: true, color: C.accent, margin: [0, 2, 0, 0] }, capSmall: { fontSize: 9, bold: true, color: C.ink },
   hOrg: { fontSize: 9, bold: true, color: C.accent }, hRight: { fontSize: 8, color: C.muted },

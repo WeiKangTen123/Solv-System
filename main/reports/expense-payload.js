@@ -4,7 +4,32 @@ const receiptStore = require('../receipts/receipt-store');
 const pdfRender = require('../pdf/render');
 const { flagsFor } = require('../receipts/flags');
 const { localDate } = require('../utils/zone-date');
+const { taxSaid } = require('./expense-doc');
 const logger = require('../utils/logger');
+
+const cents = n => Math.round(Number(n || 0) * 100);
+
+// One line's taxes as its receipt printed them, each also in the base
+// currency at the line's own rate (null while the line has none). The line's
+// `tax` and `baseTax` are their sums, so what reads only those two still
+// adds up to what was printed. `gross` is the part of the line's amount the
+// tax was charged on, tax included, which is what Xero takes as an inclusive
+// line (xero/bills.js).
+function printedTaxes(list, currency, rate) {
+  const taxes = list.map(t => {
+    const amount = cents(t.amount) / 100;
+    const gross = t.gross === null || t.gross === undefined ? null : cents(t.gross) / 100;
+    return { label: t.label || null, rate: t.rate ?? null, amount, included: !!t.included, gross, ...(t.worked ? { worked: true } : {}),
+      baseAmount: rate ? Math.round(cents(amount) * rate) / 100 : null,
+      baseGross: rate && gross !== null ? Math.round(cents(gross) * rate) / 100 : null };
+  });
+  return {
+    taxes,
+    tax: taxes.reduce((s, t) => s + cents(t.amount), 0) / 100,
+    baseTax: rate ? taxes.reduce((s, t) => s + cents(t.baseAmount), 0) / 100 : null,
+    taxText: taxes.length ? taxes.map(t => taxSaid(t, currency)).join('; ') : null,
+  };
+}
 
 // Receipt pages as JPEG data URIs for a portrait A4 page. sharp is loaded
 // lazily, as in the thumbnailer, so a missing native module degrades to "no
@@ -72,27 +97,39 @@ async function reportPayload(reportId, { withReceipts = true } = {}) {
         receipts.push({ ref, title: e.merchant || e.receipt.originalName || 'Receipt', date: e.receiptDate || null, receipt: e.receipt, pages: [] });
       }
     }
-    // The receipt's tax belongs to the receipt, not to each of its lines. It
-    // used to be copied whole onto every line, so a folio split into four
-    // categories looked like it carried four times the GST it printed. Split
-    // it in proportion to the amounts instead, with the last line taking the
-    // rounding residual so the parts still add up to what was printed.
-    const taxCents = Math.round(Number(e.tax || 0) * 100);
+    // A receipt kept as printed gives each line its own taxes (line.taxes,
+    // receipts/printed.js): the Service Tax on a KL hotel's room and the SST
+    // on its restaurant stay two taxes at their own rates, on the lines they
+    // were charged on. An older receipt has only the one tax figure, and that
+    // belongs to the receipt, not to each of its lines. It used to be copied
+    // whole onto every line, so a folio split into four categories looked like
+    // it carried four times the GST it printed. It is split in proportion to
+    // the amounts instead, with the last line taking the rounding residual so
+    // the parts still add up to what was printed.
+    const kept = e.lines.some(l => Array.isArray(l.taxes));
+    const taxCents = kept ? 0 : Math.round(Number(e.tax || 0) * 100);
     const lineCents = e.lines.map(l => Math.round(Number(l.amount || 0) * 100));
     const totalCents = lineCents.reduce((a, b) => a + b, 0);
     let spread = 0;
     e.lines.forEach((l, i) => {
-      const share = !taxCents || !totalCents ? 0
-        : i === e.lines.length - 1 ? taxCents - spread
-        : Math.round(taxCents * lineCents[i] / totalCents);
-      spread += share;
+      const currency = l.currency || e.currency;
       const rate = Number(l.fxRate) > 0 ? Number(l.fxRate) : null;
-      lines.push({ ref, expenseId: e.id, source: e.source || null, date: e.receiptDate, merchant: e.merchant, purpose: e.purpose, description: l.description, category: l.category, currency: l.currency || e.currency, amount: l.amount,
+      const line = { ref, expenseId: e.id, source: e.source || null, date: e.receiptDate, merchant: e.merchant, purpose: e.purpose, description: l.description, category: l.category, currency, amount: l.amount,
         fxRate: l.fxRate, fxRateDate: l.fxRateDate, fxSource: l.fxSource, fxFetchedAt: l.fxFetchedAt, fxOverrideBy: l.fxOverrideBy, fxOverrideReason: l.fxOverrideReason,
         fxAskedDate: l.fxAskedDate, fxNotOnTheDay: l.fxNotOnTheDay,
-        baseAmount: l.baseAmount, onBehalfOf: l.onBehalfOf,
-        tax: Math.round(share) / 100,
-        baseTax: rate ? Math.round(share * rate) / 100 : Math.round(share) / 100 });
+        baseAmount: l.baseAmount, onBehalfOf: l.onBehalfOf };
+      if (kept) {
+        Object.assign(line, printedTaxes(Array.isArray(l.taxes) ? l.taxes : [], currency, rate || (currency === company.baseCurrency ? 1 : null)));
+      } else {
+        const share = !taxCents || !totalCents ? 0
+          : i === e.lines.length - 1 ? taxCents - spread
+          : Math.round(taxCents * lineCents[i] / totalCents);
+        spread += share;
+        Object.assign(line, { taxes: null, tax: Math.round(share) / 100,
+          baseTax: rate ? Math.round(share * rate) / 100 : Math.round(share) / 100,
+          taxText: share ? taxSaid(null, currency, share / 100) : null });
+      }
+      lines.push(line);
     });
   }
   if (withReceipts) for (const r of receipts) r.pages = await _pagesFor(r.receipt);

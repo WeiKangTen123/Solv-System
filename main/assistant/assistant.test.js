@@ -151,6 +151,75 @@ describe('assistant', () => {
     });
   });
 
+  // A receipt kept as printed (receipts/printed.js): its rows are what the
+  // receipt says, its lines are made from them, and its tax from its tax rows.
+  describe('a receipt kept as printed', () => {
+    const PRINTED = { v: 1, subtotal: 23.9, total: 27.85, rows: [
+      { kind: 'item', label: 'Nasi Kandar Ayam', qty: 1, unitPrice: 12.5, amount: 12.5, rate: null, included: false, worked: false, category: 'Meals', onBehalfOf: null, taxRate: null, on: null },
+      { kind: 'item', label: 'Teh Tarik', qty: 2, unitPrice: 2.8, amount: 5.6, rate: null, included: false, worked: false, category: 'Meals', onBehalfOf: 'Jane Tan', taxRate: null, on: null },
+      { kind: 'charge', label: 'Service Charge', qty: null, unitPrice: null, amount: 2.39, rate: 10, included: false, worked: false, category: null, onBehalfOf: null, taxRate: null, on: null },
+      { kind: 'tax', label: 'SST', qty: null, unitPrice: null, amount: 1.58, rate: 6, included: false, worked: false, category: null, onBehalfOf: null, taxRate: null, on: null },
+      { kind: 'rounding', label: 'Rounding Adj', qty: null, unitPrice: null, amount: -0.02, rate: null, included: false, worked: false, category: null, onBehalfOf: null, taxRate: null, on: null },
+    ] };
+    // Until the store keeps the record, the receipt is given one as the store will.
+    const kept = e => {
+      const real = store.getExpense;
+      jest.spyOn(store, 'getExpense').mockImplementation(id => {
+        const x = real(id);
+        if (!x || x.id !== e.id) return x;
+        return { ...x, printed: PRINTED, aiRead: { ...(x.aiRead || {}), printed: PRINTED },
+          lines: x.lines.map(l => ({ ...l, taxes: [{ label: 'SST', rate: 6, amount: 1.58, included: false, gross: 27.87 }] })) };
+      });
+    };
+    afterEach(() => jest.restoreAllMocks());
+
+    test('get_receipt gives its rows as printed, and the reader\'s first read without a second copy of them', async () => {
+      const e = seed(emp, { merchant: 'Restoran Nasi Kandar Pelita', currency: 'MYR', total: 27.85, lines: [{ category: 'Meals', amount: 27.85 }] });
+      store.updateExpense(e.id, { aiRead: { merchant: 'Restoran Nasi Kandar Pelita', total: 27.85 } });
+      kept(e);
+      const out = await tools.run(ctxFor(emp), 'get_receipt', { id: e.id });
+      expect(out.asPrinted.rows).toEqual([
+        { kind: 'item', label: 'Nasi Kandar Ayam', amount: 12.5, qty: 1, category: 'Meals' },
+        { kind: 'item', label: 'Teh Tarik', amount: 5.6, qty: 2, category: 'Meals', onBehalfOf: 'Jane Tan' },
+        { kind: 'charge', label: 'Service Charge', amount: 2.39, rate: 10 },
+        { kind: 'tax', label: 'SST', amount: 1.58, rate: 6 },
+        { kind: 'rounding', label: 'Rounding Adj', amount: -0.02 },
+      ]);
+      expect(out.asPrinted).toMatchObject({ subtotal: 23.9, total: 27.85 });
+      expect(out.readerRead).toEqual({ merchant: 'Restoran Nasi Kandar Pelita', total: 27.85 });
+      expect(out.lines[0].taxes).toEqual(['SST 6% 1.58']);
+      // A receipt from before has no rows to give.
+      expect((await tools.run(ctxFor(emp), 'get_receipt', { id: seed(emp).id })).asPrinted).toBeUndefined();
+    });
+
+    test('its lines are not proposed apart from its items, nor its tax apart from its tax rows', async () => {
+      const e = seed(emp, { merchant: 'Restoran Nasi Kandar Pelita', currency: 'MYR', total: 27.85, tax: 1.58, lines: [{ category: 'Meals', amount: 27.85 }] });
+      kept(e);
+      const ctx = ctxFor(emp);
+      expect((await tools.run(ctx, 'propose_lines', { id: e.id, lines: [{ category: 'Meals', amount: 20 }, { category: 'Meals', amount: 7.85, onBehalfOf: 'Jane Tan' }], reason: 'x' })).error)
+        .toBe("This receipt's lines come from its items; change the items instead.");
+      expect((await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { tax: 1.6 }, reason: 'x' })).error).toMatch(/tax from its tax rows/);
+      expect((await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { category: 'Entertainment' }, reason: 'x' })).error).toMatch(/category comes from its items/);
+      // The same tax again is no change, and the rest is a card as before.
+      expect(await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { tax: 1.58, purpose: 'Team lunch' }, reason: 'x' })).toMatchObject({ proposed: true });
+    });
+
+    test('a split card made before the receipt was read again as printed does not apply', async () => {
+      const e = seed(emp, { currency: 'MYR', total: 27.85, lines: [{ category: 'Meals', amount: 27.85 }] });
+      const ctx = ctxFor(emp);
+      await tools.run(ctx, 'propose_lines', { id: e.id, lines: [{ category: 'Meals', amount: 20 }, { category: 'Meals', amount: 7.85, onBehalfOf: 'Jane Tan' }], reason: 'x' });
+      kept(e);
+      expect(await actions.apply(ctx.proposals[0].id, as(emp))).toMatchObject({ status: 'failed', result: "This receipt's lines come from its items; change the items instead." });
+    });
+
+    test('the tax is never second-guessed against what the reader once read, or against the total', async () => {
+      const e = seed(emp, { tax: 130, purpose: 'Visit' });
+      store.updateExpense(e.id, { aiRead: { merchant: 'Courtyard', tax: 10.9 } });
+      const out = await tools.run(ctxFor(emp), 'check_receipt', { id: e.id });
+      expect(out.issues.join(' | ')).not.toMatch(/tax/i);
+    });
+  });
+
   describe('applying a card', () => {
     test('Apply makes the change through the page\'s rules and logs it as the assistant\'s', async () => {
       const e = seed(emp);

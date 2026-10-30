@@ -51,11 +51,16 @@ async function _do(a, actor) {
         const now = k === 'category' ? edit.categoryOf(cur) : cur[k];
         if (!edit.sameValue(k, now, was)) _stale(`${changes.LABEL[k] || k} is now ${now ?? 'empty'}`);
       }
+      const patch = p.patch || {};
+      if (cur.printed && (patch.tax !== undefined || patch.category)) fail(409, "This receipt's category comes from its items and its tax from its tax rows; change those on the receipt instead.");
       return edit.editDetails(p.expenseId, p.patch, actor, opts);
     }
     case 'edit_lines': {
       const cur = store.getExpense(p.expenseId);
       if (!cur) fail(404, 'The receipt is gone.');
+      // Read again as printed since the card was made: its lines come from
+      // its items now (receipts/printed.js), as the page says.
+      if (cur.printed) fail(409, "This receipt's lines come from its items; change the items instead.");
       if (p.basis !== undefined && changes.linesSummary(cur.lines) !== p.basis) _stale('its lines are not the ones the card was made for');
       if (p.total !== undefined && !edit.sameValue('total', cur.total, p.total)) _stale(`the total is now ${cur.total}`);
       return edit.editLines(p.expenseId, p.lines, actor, opts);

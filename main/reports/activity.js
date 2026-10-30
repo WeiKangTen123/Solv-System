@@ -39,7 +39,7 @@ const AFTER_CLAIM_MS = 2000;   // and the claimed-case note straight after the r
 const LABEL = {
   merchant: 'Merchant', receiptDate: 'Date', receiptTime: 'Time', invoiceNo: 'Invoice no.', currency: 'Currency',
   total: 'Total', tax: 'Tax', subTotal: 'Subtotal', purpose: 'Purpose', description: 'Description', category: 'Category',
-  lines: 'Lines', rate: 'Exchange rate', status: 'Status', case: 'Case',
+  lines: 'Lines', rate: 'Exchange rate', status: 'Status', case: 'Case', printed: 'As printed',
 };
 const MONEY = new Set(['total', 'tax', 'subTotal']);
 const CHECKED = changes.STATUS_WORDS.reviewed, TO_CHECK = changes.STATUS_WORDS['review-needed'];
@@ -165,6 +165,14 @@ function _rowItem(row, side, receipt, currency) {
   if (row.field === 'case') {
     if (side === 'in') return oldV ? set('moved_in', `Moved ${m} here from ${oldV}`) : set('filed', `Added ${m} to the case`);
     return newV ? set('moved_out', `Moved ${m} to ${newV}`) : set('taken_out', `Took ${m} out of the case`);
+  }
+  if (row.field === 'printed') {
+    // A receipt kept as printed logs a change to it already in words
+    // (store/changes.js): "SST 6% 1.58 → 1.60", "Added Teh tarik 5.60". They
+    // are said as written. Put through the other fields' wording they read
+    // "as printed set to …", with the first letter lowered: "sST 6%".
+    const said = oldV && newV ? `${oldV} → ${newV}` : newV || oldV || 'Changed what the receipt printed';
+    return set('edited', `Edited ${m} as printed: ${said}`, said);
   }
   if (row.field === 'status') {
     if (newV === CHECKED) return set('checked', `Checked ${m}`);

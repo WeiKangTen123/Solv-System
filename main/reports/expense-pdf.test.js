@@ -14,7 +14,7 @@ const base = () => ({
     { ref: 'R1', expenseId: 'e1', date: '2026-09-01', merchant: 'JW Marriott Mumbai Sahar', purpose: 'Client visit', description: 'Rooms', category: 'Lodging', currency: 'INR', amount: 20738.5, fxRate: 0.01341, fxRateDate: '2026-09-01', fxSource: 'frankfurter', baseAmount: 278.1, tax: 3379.5, baseTax: 45.32 },
     { ref: 'R1', expenseId: 'e1', date: '2026-09-01', merchant: 'JW Marriott Mumbai Sahar', purpose: 'Client visit', description: 'Room for a colleague', category: 'Lodging', currency: 'INR', amount: 20737.5, fxRate: 0.01341, fxRateDate: '2026-09-02', fxSource: 'frankfurter', baseAmount: 278.09, onBehalfOf: 'Lim Wei Jie' },
     { ref: 'R2', expenseId: 'e2', date: '2026-09-04', merchant: 'Courtyard Pune', description: 'Dinner', category: 'Meals', currency: 'INR', amount: 6426.57, fxRate: 0.0135, fxRateDate: '2026-09-04', fxSource: 'manual', fxOverrideBy: 'aisha@solv.sg', fxOverrideReason: 'card statement', baseAmount: 86.76 },
-    { ref: 'R3', expenseId: 'e3', date: '2026-09-02', merchant: 'Grab', description: 'Airport', category: 'Air & Transport', currency: 'SGD', amount: 18.4, fxRate: 1, fxSource: 'base', baseAmount: 18.4, tax: 1.52 },
+    { ref: 'R3', expenseId: 'e3', date: '2026-09-02', merchant: 'Grab', description: 'Airport', category: 'Air & Transport', currency: 'SGD', amount: 18.4, fxRate: 1, fxSource: 'base', baseAmount: 18.4, tax: 1.52, baseTax: 1.52 },
     { ref: null, expenseId: 'e4', source: 'per_diem', date: '2026-08-31', merchant: 'Per diem', description: 'India: 5 days × INR 4,000', category: 'Meals', currency: 'INR', amount: 20000, fxRate: 0.01341, fxRateDate: '2026-08-31', fxSource: 'frankfurter', baseAmount: 268.2 },
     { ref: null, expenseId: 'e5', date: '2026-09-03', merchant: 'Auto rickshaw', category: 'Phone', currency: 'SGD', amount: 4, fxRate: 1, fxSource: 'base', baseAmount: 4 },
   ],
@@ -109,8 +109,87 @@ describe('reports/expense-pdf — the document', () => {
   test('the summary groups by category as the company lists them, the rest under Other, with the tax printed on the receipts', () => {
     const m = pdf.pdfModel(base());
     expect(m.categories.map(c => [c.name, c.lines, c.amount])).toEqual([['Air & Transport', 1, 18.4], ['Lodging', 2, 556.19], ['Meals', 2, 354.96], ['Other', 1, 4]]);
-    expect(m.tax).toEqual({ local: 1.52, foreign: 45.32, name: 'GST' });
-    expect(text(pdf.expenseReportDoc(base()))).toContain('(not Singapore input tax)');
+    // Lines from before receipts were kept as printed: an amount and no rate.
+    expect(m.tax).toEqual({
+      local: [{ name: 'Tax (rate not kept)', currency: 'SGD', local: true, kept: false, receipts: 1, amount: 1.52, base: 1.52, pending: 0 }],
+      foreign: [{ name: 'Tax (rate not kept)', currency: 'INR', local: false, kept: false, receipts: 1, amount: 3379.5, base: 45.32, pending: 0 }],
+      untaxed: 1,
+    });
+    const t = text(pdf.expenseReportDoc(base()));
+    expect(t).toContain('(not Singapore input tax)');
+    expect(t).toContain('No tax printed: 1 receipt.');
+    expect(t).not.toContain('GST on SGD receipts');
+  });
+
+  // Receipts kept as printed: a KL hotel with Service Tax 8% on the room and
+  // SST 6% on the restaurant, a nasi kandar shop's SST 6% shared with a
+  // colleague's drinks, an Indian folio's CGST and SGST, a Singapore receipt
+  // that prints only "includes GST", and a KL taxi with no tax.
+  const printed = () => {
+    const p = base();
+    const myr = { currency: 'MYR', fxRate: 0.3049, fxRateDate: '2026-10-12', fxSource: 'frankfurter' };
+    const tax = (label, rate, amount, gross, baseAmount, extra = {}) => ({ label, rate, amount, included: false, gross, baseAmount, ...extra });
+    p.lines = [
+      { ref: 'R1', expenseId: 'h', date: '2026-10-12', merchant: 'Hotel Stripes Kuala Lumpur', description: 'Room', category: 'Lodging', ...myr, amount: 342.64, baseAmount: 104.47,
+        taxes: [tax('Service Tax', 8, 24.64, 332.64, 7.51)], tax: 24.64, baseTax: 7.51 },
+      { ref: 'R1', expenseId: 'h', date: '2026-10-12', merchant: 'Hotel Stripes Kuala Lumpur', description: 'Breakfast', category: 'Meals', ...myr, amount: 99.11, baseAmount: 30.22,
+        taxes: [tax('SST', 6, 5.61, 99.11, 1.71)], tax: 5.61, baseTax: 1.71 },
+      { ref: 'R2', expenseId: 'n', date: '2026-10-13', merchant: 'Restoran Nasi Kandar Pelita', description: 'Nasi Kandar Ayam +2 more', category: 'Meals', ...myr, amount: 21.32, baseAmount: 6.5,
+        taxes: [tax('SST', 6, 1.21, 21.34, 0.37)], tax: 1.21, baseTax: 0.37 },
+      { ref: 'R2', expenseId: 'n', date: '2026-10-13', merchant: 'Restoran Nasi Kandar Pelita', description: 'Teh Tarik', category: 'Meals', ...myr, amount: 6.53, baseAmount: 1.99, onBehalfOf: 'Jane Tan',
+        taxes: [tax('SST', 6, 0.37, 6.53, 0.11)], tax: 0.37, baseTax: 0.11 },
+      { ref: 'R3', expenseId: 'j', date: '2026-10-15', merchant: 'JW Marriott Mumbai Sahar', description: 'Room', category: 'Lodging', currency: 'INR', fxRate: 0.01541, fxRateDate: '2026-10-15', fxSource: 'frankfurter', amount: 22420, baseAmount: 345.49,
+        taxes: [tax('CGST', 9, 1710, 22420, 26.35), tax('SGST', 9, 1710, 22420, 26.35)], tax: 3420, baseTax: 52.7 },
+      { ref: 'R4', expenseId: 't', date: '2026-10-16', merchant: 'Toast Box', category: 'Meals', currency: 'SGD', fxRate: 1, fxSource: 'base', amount: 21.8, baseAmount: 21.8,
+        taxes: [tax('GST', 9, 1.8, 21.8, 1.8, { included: true, worked: true })], tax: 1.8, baseTax: 1.8 },
+      { ref: 'R5', expenseId: 'g', date: '2026-10-14', merchant: 'Grab', category: 'Air & Transport', ...myr, amount: 25, baseAmount: 7.62, taxes: [], tax: 0, baseTax: 0 },
+    ];
+    p.receipts = ['R1', 'R2', 'R3', 'R4', 'R5'].map(ref => ({ ref, title: ref, pages: [] }));
+    p.flags = {};
+    return p;
+  };
+
+  test('tax by rate, as printed: one row per name and rate in each currency, with its receipts, the base currency first', () => {
+    const m = pdf.pdfModel(printed());
+    expect(m.tax.local.map(g => [g.name, g.receipts, g.amount, g.base])).toEqual([['GST 9%', 1, 1.8, 1.8]]);
+    // Two receipts printed SST 6%; the hotel's Service Tax 8% is a row of its own, not summed into it.
+    expect(m.tax.foreign.map(g => [g.currency, g.name, g.receipts, g.amount, g.base])).toEqual([
+      ['INR', 'CGST 9%', 1, 1710, 26.35], ['INR', 'SGST 9%', 1, 1710, 26.35],
+      ['MYR', 'Service Tax 8%', 1, 24.64, 7.51], ['MYR', 'SST 6%', 2, 7.19, 2.19],
+    ]);
+    expect(m.tax.untaxed).toBe(1);
+    const t = text(pdf.expenseReportDoc(printed()));
+    expect(t).toContain('TAX BY RATE, AS PRINTED');
+    expect(t).toContain('Receipts in other currencies (not Singapore input tax)');
+    expect(t).toContain('Included in the amounts above, as printed on each receipt. No tax printed: 1 receipt.');
+    // A Malaysian company's own receipts have no "not Singapore input tax" to say.
+    const my = printed(); my.company.baseCurrency = 'MYR';
+    expect(text(pdf.expenseReportDoc(my))).not.toContain('not Singapore input tax');
+  });
+
+  // The details start a page of their own, unless the summary ran over onto
+  // that page: then they follow it, rather than leave its last box alone there.
+  test('the details start a page, unless the summary ran over onto it', () => {
+    const { pageBreakBefore } = pdf.expenseReportDoc(base());
+    expect(pageBreakBefore({ id: 'sec-details' }, [], [], [{ id: 'sec-summary' }, { text: 'Declaration' }])).toBe(true);
+    expect(pageBreakBefore({ id: 'sec-details' }, [], [], [{ text: 'FOR FINANCE USE' }])).toBe(false);
+    expect(pageBreakBefore({ id: 'sec-notes' }, [], [], [{ id: 'sec-summary' }])).toBe(false);
+  });
+
+  test('each line shows its tax as printed under the description, and no bare "tax" under the amount', () => {
+    const d = pdf.expenseReportDoc(printed());
+    const table = d.content.find(c => c.table && c.table.headerRows === 1 && c.table.body[0].length === 8).table;
+    const merchant = n => JSON.stringify(table.body[n][3]);
+    expect(merchant(1)).toContain('incl. Service Tax 8% · MYR 24.64');
+    expect(merchant(2)).toContain('incl. SST 6% · MYR 5.61');
+    expect(merchant(5)).toContain('incl. CGST 9% · INR 1,710.00');
+    expect(merchant(5)).toContain('incl. SGST 9% · INR 1,710.00');
+    expect(merchant(6)).toContain('incl. GST 9% · SGD 1.80, worked out');
+    expect(merchant(7)).not.toContain('incl.');
+    expect(table.body[1][5]).toMatchObject({ text: 'MYR 342.64' });
+    expect(JSON.stringify(table.body)).not.toMatch(/"tax [\d,.]+"/);
+    // The old figure-only line says what it has.
+    expect(JSON.stringify(pdf.expenseReportDoc(base()).content)).toContain('incl. tax · SGD 1.52');
   });
 
   test('the declaration is said as made only when the claim window showed it; an open case says it is not claimed yet', () => {

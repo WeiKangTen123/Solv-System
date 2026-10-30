@@ -4,6 +4,7 @@
 // Nothing here renders a byte.
 const { SOURCE_LONG: SOURCE_LABEL, SOURCE_VIA: VIA } = require('../fx/sources');
 const POLICY_LABEL = { receipt_date: 'rate on the receipt date', submission_date: 'rate on the submission date', monthly_fixed: 'monthly fixed rate table' };
+const { formatAmount: money } = require('../utils/money');
 
 // A rate printed to six significant figures. The stored number keeps every
 // digit the provider gave — a rupiah rate is 0.0000717308657915501, and the
@@ -34,6 +35,30 @@ function fmtStamp(iso, tz) {
   const text = `${Number(parts.day)} ${MONTHS[Number(parts.month) - 1]} ${parts.year} ${parts.hour}:${parts.minute}`;
   return zone === 'Asia/Singapore' ? `${text} SGT` : text;
 }
+
+// A tax by the name and rate its receipt printed: "SST 6%", "CGST 9%",
+// "VAT" when no rate is printed. The name is never guessed from the
+// company's currency: a ringgit receipt in a Singapore company's case printed
+// SST, and the case PDF used to call it GST.
+function taxName(t) {
+  const rate = t && t.rate !== null && t.rate !== undefined && t.rate !== '' && Number.isFinite(Number(t.rate)) ? ` ${Number(t.rate)}%` : '';
+  return `${(t && t.label) || 'Tax'}${rate}`;
+}
+// "incl. SST 6% · MYR 1.58": how much of a line's amount is one tax. Said
+// "incl." for a tax added on top as well, because the amount claimed is what
+// was paid, the tax in it either way. A line from before receipts were kept
+// as printed knows its share of the receipt's tax and nothing else
+// (`t` null): "incl. tax · SGD 1.52".
+function taxSaid(t, currency, amount = t && t.amount) {
+  return `incl. ${t ? taxName(t) : 'tax'} · ${currency ? `${currency} ` : ''}${money(amount)}${t && t.worked ? ', worked out' : ''}`;
+}
+// "Service Tax 8% + SST 6%": a line's taxes by name, for a column of their own.
+// One from before receipts were kept as printed has an amount and no name.
+function taxesNamed(l) {
+  if (Array.isArray(l.taxes)) return l.taxes.map(taxName).join(' + ');
+  return Number(l.tax) > 0 ? TAX_NOT_KEPT : '';
+}
+const TAX_NOT_KEPT = 'Tax (rate not kept)';
 
 function buildModel(payload) {
   const { company, report, lines = [] } = payload;
@@ -83,8 +108,16 @@ function buildModel(payload) {
   if (notOnTheDay.length) {
     notes.push(`${notOnTheDay.join(' and ')} ${notOnTheDay.length === 1 ? 'has' : 'have'} no published rate for the receipt date; those lines use the rate on the day the report was priced, shown above.`);
   }
-  if (lines.some(l => l.currency !== base && l.tax > 0)) notes.push(`Foreign tax (GST/VAT) is included in the amounts and is not ${base === 'SGD' ? 'Singapore' : 'local'} input tax.`);
   return { base, columns, rows, categoryTotals, total, advances, reimbursement, rateNotes, notes };
+}
+
+// A line's tax, or its base figure, as a cell: blank when the receipt prints
+// none, or for an older line that kept none, rather than a 0.00 that reads
+// as a tax of nothing. A foreign line waiting for its rate has no base figure yet.
+function _taxCell(l, k, as) {
+  const v = l[k];
+  if (v === null || v === undefined || !(Number(l.tax) > 0)) return '';
+  return as(v);
 }
 
 function expenseReportCsv(payload) {
@@ -101,10 +134,14 @@ function expenseReportCsv(payload) {
     if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = `'${s}`;
     return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const out = [['Report', 'Line', 'Date', 'Merchant', 'Description', 'Purpose', 'On behalf of', 'Category', 'Currency', 'Amount', 'Rate', 'Rate date', 'Rate source', m.base, 'Receipt'].join(',')];
+  // The tax columns sit with the figures they are in: the receipt's own
+  // currency beside the amount, the base beside the base amount.
+  const fixed = v => (v === null || v === undefined || v === '' ? '' : Number(v).toFixed(2));
+  const out = [['Report', 'Line', 'Date', 'Merchant', 'Description', 'Purpose', 'On behalf of', 'Category', 'Currency', 'Amount', 'Tax as printed', 'Tax', 'Rate', 'Rate date', 'Rate source', `Tax (${m.base})`, m.base, 'Receipt'].join(',')];
   lines.forEach((l, i) => out.push([
     report.number, i + 1, l.date, l.merchant, l.description, l.purpose, l.onBehalfOf, l.category, l.currency, Number(l.amount).toFixed(2),
-    l.fxRate === null || l.fxRate === undefined ? '' : fmtRate(l.fxRate), l.fxRateDate ?? '', l.fxSource ?? '', l.baseAmount === null || l.baseAmount === undefined ? '' : Number(l.baseAmount).toFixed(2), l.ref,
+    taxesNamed(l), _taxCell(l, 'tax', fixed),
+    l.fxRate === null || l.fxRate === undefined ? '' : fmtRate(l.fxRate), l.fxRateDate ?? '', l.fxSource ?? '', _taxCell(l, 'baseTax', fixed), fixed(l.baseAmount), l.ref,
   ].map(esc).join(',')));
   return out.join('\n');
 }
@@ -116,9 +153,11 @@ function workbookModel(payload) {
     { name: 'Cover', rows: [['Case', report.number], ['Company', company.name], ['Employee', owner.name || owner.email], ['Employee ID', owner.employeeId], ['Department', owner.department],
       ['Purpose', report.purpose || report.title], ['From', report.periodFrom], ['To', report.periodTo], ['Destination', report.destination], ['Status', report.status],
       ['Claimed at', report.claimedAt], ['Advances', m.advances], [`Total ${m.base}`, m.total], [`Reimbursement ${m.base}`, m.reimbursement]] },
-    { name: 'Lines', header: ['#', 'Date', 'Merchant', 'Description', 'Purpose', 'On behalf of', 'Category', 'Currency', 'Amount', 'Rate', 'Rate date', 'Rate source', m.base, 'Receipt'],
-      rows: lines.map((l, i) => [i + 1, l.date, l.merchant, l.description, l.purpose, l.onBehalfOf, l.category, l.currency, Number(l.amount), l.fxRate === null || l.fxRate === undefined ? '' : Number(fmtRate(l.fxRate)), l.fxRateDate, l.fxSource, l.baseAmount, l.ref]),
-      money: [9, 13], totalLabel: `Total ${m.base}`, total: m.total },
+    // The base amount stays the last column but one: the export sums it there.
+    { name: 'Lines', header: ['#', 'Date', 'Merchant', 'Description', 'Purpose', 'On behalf of', 'Category', 'Currency', 'Amount', 'Tax as printed', 'Tax', 'Rate', 'Rate date', 'Rate source', `Tax (${m.base})`, m.base, 'Receipt'],
+      rows: lines.map((l, i) => [i + 1, l.date, l.merchant, l.description, l.purpose, l.onBehalfOf, l.category, l.currency, Number(l.amount), taxesNamed(l), _taxCell(l, 'tax', Number),
+        l.fxRate === null || l.fxRate === undefined ? '' : Number(fmtRate(l.fxRate)), l.fxRateDate, l.fxSource, _taxCell(l, 'baseTax', Number), l.baseAmount, l.ref]),
+      money: [9, 11, 15, 16], totalLabel: `Total ${m.base}`, total: m.total },
     { name: 'Rates', header: ['Notes'], rows: (m.rateNotes.length || m.notes.length)
       ? [...m.rateNotes.map(t => [t]), ...m.notes.map(t => [t])]
       : [[`Every line is in ${m.base}; no exchange rate was needed.`]] },
@@ -132,4 +171,4 @@ function exportFilename(payload) {
 }
 
 module.exports = {
-  fmtRate, fmtDate, fmtStamp, POLICY_LABEL, buildModel, expenseReportCsv, workbookModel, exportFilename, _fmtDate: fmtDate };
+  fmtRate, fmtDate, fmtStamp, POLICY_LABEL, taxName, taxSaid, taxesNamed, TAX_NOT_KEPT, buildModel, expenseReportCsv, workbookModel, exportFilename, _fmtDate: fmtDate };

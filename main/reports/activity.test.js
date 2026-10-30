@@ -230,6 +230,23 @@ describe('case activity', () => {
       ]);
     });
 
+    // A receipt kept as printed logs its changes in words already
+    // (store/changes.js). They are said as written: "SST" is not "sST".
+    test('a change to what a receipt printed is said in its own words', () => {
+      clock();
+      step(); const r = open();
+      step(); const e = seed(r, { merchant: 'Restoran Nasi Kandar Pelita', currency: 'MYR' });
+      const db = require('../db');
+      const ins = db.prepare("INSERT INTO expense_changes (expense_id, actor_id, actor_role, via, field, old_value, new_value, at) VALUES (?, ?, 'owner', ?, 'printed', ?, ?, ?)");
+      step(); ins.run(e.id, emp.id, 'app', null, 'SST 6% 1.58 → 1.60; Added Teh tarik 5.60', new Date().toISOString());
+      step(); ins.run(e.id, emp.id, 'reread', null, 'Service charge 10% → 0%', new Date().toISOString());
+      const items = feed(r).items.filter(x => x.field === 'printed');
+      expect(items.map(x => [x.action, x.text, x.detail, x.actor.via || null])).toEqual([
+        ['edited', 'Edited Restoran Nasi Kandar Pelita as printed: Service charge 10% → 0%', 'Service charge 10% → 0%', 'reread'],
+        ['edited', 'Edited Restoran Nasi Kandar Pelita as printed: SST 6% 1.58 → 1.60; Added Teh tarik 5.60', 'SST 6% 1.58 → 1.60; Added Teh tarik 5.60', null],
+      ]);
+    });
+
     test('the currency an amount was in is the one it had at the time', async () => {
       clock();
       step(); const r = open();
