@@ -380,9 +380,40 @@ describe('receipts/read-receipt', () => {
       lineItems: [item('Room Charge', 560, 'Lodging'), item('Room Charge', 560, 'Lodging', 'Ong Mei Lin'), item('Breakfast CHECK# 5120', 32, 'Meals'), item('Breakfast CHECK# 5120', 32, 'Meals'), item('Dinner', 96, 'Meals')] }] });
     await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('x'), mime: 'image/jpeg' });
     const checks = store.getExpense(e.id).aiRead.checks;
-    expect(checks).toEqual({ subtotalMismatch: null, chargedTwice: [{ description: 'Breakfast CHECK# 5120', amount: 32, count: 2 }], people: ['Ong Mei Lin'], adjusted: null, dateOrder: null });
+    expect(checks).toEqual({ chargedTwice: [{ description: 'Breakfast CHECK# 5120', amount: 32, count: 2 }], people: ['Ong Mei Lin'], adjusted: null, dateOrder: null });
     store.replaceLines(e.id, [{ category: 'Lodging', amount: 1280, currency: 'SGD' }], { force: true });
     expect(store.getExpense(e.id).aiRead.checks.people).toEqual(['Ong Mei Lin']);
+  });
+
+  test('a read with its rows is kept as printed: the record, the reader\'s copy, and lines with their taxes', async () => {
+    const { r, e } = seed();
+    const row = (kind, label, amount, x = {}) => ({ kind, label, amount, qty: null, unitPrice: null, rate: null, included: false, worked: false,
+      category: null, onBehalfOf: null, taxRate: null, on: null, ...x });
+    const rows = [row('item', 'Room Charge', 280, { category: 'Lodging' }), row('charge', 'Service Charge', 28, { rate: 10, on: 0 }),
+                  row('tax', 'Service Tax', 24.64, { rate: 8, on: 0 }), row('charge', 'Tourism Tax', 10, { on: 0 }),
+                  row('item', 'Lounge Dinner', 85, { category: 'Meals' }), row('charge', 'Service Charge', 8.5, { rate: 10, on: 4 }),
+                  row('tax', 'SST', 5.61, { rate: 6, on: 4 })];
+    parser.parseReceiptImage.mockResolvedValue({ split: false, receipts: [{ merchant: 'Hotel Seri Bukit', date: '2026-10-21', total: 441.75, tax: 30.25, subTotal: null,
+      currency: 'MYR', category: 'Lodging', docType: 'hotel', country: 'MY', confidence: 'high', rows, lineItems: [] }] });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('x'), mime: 'image/jpeg' });
+    const after = store.getExpense(e.id);
+    expect(after).toMatchObject({ total: 441.75, tax: 30.25, subTotal: null });
+    expect(after.printed).toEqual({ v: 1, rows, subtotal: null, total: 441.75 });
+    expect(after.aiRead.printed).toEqual(after.printed);
+    expect(after.lines.map(l => [l.category, l.amount, l.taxes])).toEqual([
+      ['Lodging', 342.64, [{ label: 'Service Tax', rate: 8, amount: 24.64, included: false, gross: 332.64 }]],
+      ['Meals', 99.11, [{ label: 'SST', rate: 6, amount: 5.61, included: false, gross: 99.11 }]],
+    ]);
+  });
+
+  test('a read in the older shape, or with no amount, keeps no record and the lines are as before', async () => {
+    const { r, e } = seed();
+    parser.parseReceiptImage.mockResolvedValue({ split: false, receipts: [folio] });
+    await read.readReceipt({ companyId: u.companyId, userId: u.id, receiptId: r.id, expenseId: e.id, buffer: Buffer.from('x'), mime: 'image/jpeg' });
+    const after = store.getExpense(e.id);
+    expect(after.printed).toBeNull();
+    expect(after.aiRead.printed).toBeNull();
+    expect(after.lines.map(l => [l.category, l.amount, l.taxes])).toEqual([['Lodging', 43131.36, null], ['Lodging', 36713.34, null], ['Meals', 8344.07, null]]);
   });
 
   test('a refund is read as no amount, with a note that says why', async () => {
@@ -422,20 +453,20 @@ describe('receipts/read-receipt — the difference to the total, and the read-ti
     expect(buildLines(r, 'Other')).toEqual([{ category: 'Meals', description: '[Meals] Dinner @ Jumbo', amount: 99, onBehalfOf: null }]);
   });
 
-  test('subtotal and tax that do not come to the total, in any currency, with the charges between allowed', () => {
-    const r = (sub, tax, total, lineItems = []) => readChecks({ subTotal: sub, tax, total, lineItems }, []).subtotalMismatch;
-    expect(r(99, 8.54, 107.54)).toBeNull();
-    // A San Francisco bill: subtotal, sales tax, then a city surcharge and the tip.
-    expect(r(99, 8.54, 131.5, [item('Steak', 99), item('Sales Tax', 8.54), item('SF Mandate 4%', 3.96), item('Tip', 20)])).toBeNull();
-    // Kuala Lumpur: SST and a service charge, and a rounding of two sen.
-    expect(r(23.9, 1.58, 27.85, [item('Nasi', 23.9), item('Service Charge 10%', 2.39), item('SST 6%', 1.58), item('Rounding Adj', -0.02)])).toBeNull();
-    // The same bill with a total misread by a digit; two cents out is still rounding.
-    expect(r(23.9, 1.58, 28.85, [item('Nasi', 23.9), item('Service Charge 10%', 2.39), item('SST 6%', 1.58), item('Rounding Adj', -0.02)])).toEqual({ subtotal: 23.9, tax: 1.58, total: 28.85 });
-    expect(r(23.9, 1.58, 27.87, [item('Nasi', 23.9), item('Service Charge 10%', 2.39), item('SST 6%', 1.58)])).toBeNull();
-    expect(r(2780, 300, 3058)).toEqual({ subtotal: 2780, tax: 300, total: 3058 });
-    expect(r(100, 0.01, 100.03)).toBeNull();
-    expect(r(null, 1, 10)).toBeNull();
-    expect(r(9, null, 10)).toBeNull();
+  // The subtotal and tax are what the receipt printed, and are not held
+  // against its total any more.
+  test('the printed subtotal and tax are not second-guessed', () => {
+    expect(readChecks({ subTotal: 2780, tax: 300, total: 3058, lineItems: [] }, [])).not.toHaveProperty('subtotalMismatch');
+  });
+
+  test('a read kept as printed is judged by its rows: rows short of the total were adjusted, and a tax is never charged twice', () => {
+    const row = (kind, label, amount, x = {}) => ({ kind, label, amount, onBehalfOf: null, included: false, ...x });
+    const r = { total: 27.85, rows: [row('item', 'Nasi Kandar', 14.5), row('item', 'Teh Tarik', 3.2), row('item', 'Teh Tarik', 3.2), row('charge', 'Service Charge', 2.39),
+                                     row('tax', 'SST', 1.58), row('tax', 'SST', 1.58)] };
+    expect(readChecks(r, [])).toMatchObject({ chargedTwice: [{ description: 'Teh Tarik', amount: 3.2, count: 2 }], adjusted: { amount: 1.4, pct: 5 } });
+    // An included tax is in the prices: rows that add up with it left out were not adjusted.
+    const sg = { total: 13.8, rows: [row('item', 'Chicken Rice', 13.8), row('tax', 'GST', 1.14, { included: true })] };
+    expect(readChecks(sg, []).adjusted).toBeNull();
   });
 
   test('the same charge for the same person twice is named once, with its count; taxes and colleagues\' twins are not', () => {
@@ -470,7 +501,7 @@ describe('receipts/read-receipt — the difference to the total, and the read-ti
   });
 
   test('a read with nothing to remark on has empty checks, and no read has none', () => {
-    expect(readChecks({ total: 10, lineItems: [item('Latte', 10, 'Meals')] }, [{ onBehalfOf: null }])).toEqual({ subtotalMismatch: null, chargedTwice: [], people: [], adjusted: null, dateOrder: null });
+    expect(readChecks({ total: 10, lineItems: [item('Latte', 10, 'Meals')] }, [{ onBehalfOf: null }])).toEqual({ chargedTwice: [], people: [], adjusted: null, dateOrder: null });
     expect(readChecks(null, [])).toBeNull();
   });
 });

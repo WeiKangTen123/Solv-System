@@ -55,11 +55,19 @@ function step(currency) {
   return STEPS[String(currency || '').trim().toUpperCase()] ?? 0.02;
 }
 
-// What the rows come to: everything but a tax already inside the prices.
+// What the rows come to: everything but a tax already inside the prices. A
+// discount takes off however it was typed, as validate keeps it.
 function rowsSum(printed) {
   const rows = (printed && Array.isArray(printed.rows)) ? printed.rows : [];
-  return _dollars(rows.filter(r => !(r.kind === 'tax' && r.included)).reduce((s, r) => s + _cents(r.amount), 0));
+  return _dollars(rows.filter(r => !(r.kind === 'tax' && r.included))
+    .reduce((s, r) => s + (r.kind === 'discount' ? -Math.abs(_cents(r.amount)) : _cents(r.amount)), 0));
 }
+// The row `r` (at `i`) is under, when it may be: only a tax, a charge or a
+// discount sits under another row, and only under an item, a charge or a
+// discount. null otherwise.
+const UNDER = new Set(['tax', 'charge', 'discount']);
+const HOLDS = new Set(['item', 'charge', 'discount']);
+const _under = (rows, r, i) => (UNDER.has(r.kind) && Number.isInteger(r.on) && r.on >= 0 && r.on < rows.length && r.on !== i && HOLDS.has(rows[r.on].kind) ? r.on : null);
 
 // Whether the rows come to the total. Within the currency's step; within a
 // cent when a rounding row is there to take up the step; within half a
@@ -69,18 +77,18 @@ function rowsSum(printed) {
 // read, and the screen says quietly how far out it is.
 //
 // { ok, sum, gap }: gap is the total less the rows, so a positive gap is
-// that much under the total.
+// that much under the total. No rows at all is nothing to say.
 function addsUp(printed, currency) {
   const rows = (printed && Array.isArray(printed.rows)) ? printed.rows : [];
   const total = _cents(printed && printed.total);
   const sum = _cents(rowsSum(printed));
   const gap = total - sum;
-  const perCharge = rows.some(r => r.kind === 'tax' && Number.isInteger(r.on));
+  const perCharge = rows.some((r, i) => r.kind === 'tax' && _under(rows, r, i) !== null);
   const rounding = rows.some(r => r.kind === 'rounding');
   const slack = perCharge ? Math.max(_cents(step(currency)), Math.round(Math.abs(total) * 0.005))
               : rounding ? 1
               : _cents(step(currency));
-  return { ok: Math.abs(gap) <= slack, sum: _dollars(sum), gap: _dollars(gap) };
+  return { ok: !rows.length || Math.abs(gap) <= slack, sum: _dollars(sum), gap: _dollars(gap) };
 }
 
 // ── Checking a record ───────────────────────────────────────────────────────
@@ -191,7 +199,7 @@ function taxOf(record, { summary = null, was = null, tax = null } = {}) {
   const rows = (record && Array.isArray(record.rows)) ? record.rows : [];
   const total = _cents(record && record.total);
   const s = summary === null || summary === undefined ? null : _cents(summary);
-  if (s !== null && s > 0 && (total <= 0 || s < total)) return _dollars(s);
+  if (s !== null && s > 0 && (total <= 0 || s <= total)) return _dollars(s);
   if (was && Array.isArray(was.rows) && tax !== null && tax !== undefined && _taxKey(was.rows) === _taxKey(rows)) return tax;
   const taxes = rows.filter(r => r.kind === 'tax');
   if (!taxes.length) return null;

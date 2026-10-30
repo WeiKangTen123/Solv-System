@@ -42,11 +42,12 @@ Per receipt, extract:
 - total: the FINAL amount paid, as a plain number. No symbols, no thousands separators. A tip or gratuity is part of
   the amount charged: when a GRAND TOTAL, AMOUNT PAID or card line is larger than the line marked "Total" because a tip
   was added, the total is that larger amount. A refund or return prints a negative total: return it negative.
-- tax: the government's tax as a plain number (GST, CGST/SGST/IGST, VAT, SST, PPN, PB1, MwSt, HST/PST, IVA, TVA, a US
-  sales tax, 消費税), only if the receipt states it. Never a service charge, a tip, or a city, tourism or hotel levy.
-  When the tax is already inside the prices ("GST 9% included", "enth. MwSt", "内消費税"), still give its amount.
-  null if not shown. 0 if the receipt says no tax applies.
-- subTotal: the pre-tax amount as a plain number, only if explicitly printed. null otherwise.
+- subTotal: the subtotal exactly as printed ("Sub Total", "Subtotal", "小計"), as a plain number. null when none is
+  printed. Never work one out.
+- taxTotal: the total of the government's tax as printed in the receipt's own tax summary ("Total GST", "Total Service
+  Tax", "MwSt gesamt", "Total Tax"), only when the receipt prints one. null otherwise.
+- gstIncluded: true only when the receipt says its prices include GST ("Price payable includes GST") and prints no GST
+  amount anywhere; false otherwise.
 - invoiceNumber: the invoice, bill, folio or receipt number printed on the document (e.g. "00/000-000001"), null if none.
 - category: one of these exact names, judged from what was bought and when:
 ${CATEGORIES.map(c => `    "${c.name}": ${c.scope}`).join('\n')}
@@ -77,24 +78,50 @@ ${CATEGORIES.map(c => `    "${c.name}": ${c.scope}`).join('\n')}
     "parking": a car park or parking receipt
     "telco": a phone, mobile data or internet bill
     "other": anything else
-- lineItems: array of each individual charge listed on the receipt with its price:
+- rows: every row that makes up the amount charged, in the order the receipt prints them:
     [
       {
-        "description": the item, dish or charge as printed. On a hotel folio copy the WHOLE description of the line, including the
+        "kind": what the row is, exactly one of:
+          "item": something bought: a dish, a drink, a product, a room night, a fare, a fee for a service
+          "charge": a service charge, tip or gratuity, surcharge, delivery or platform fee, or a levy that is not the tax on
+            the sale (a tourism tax, city tax or hotel levy, an "SF Mandate")
+          "discount": a promotion, voucher or discount
+          "tax": the government's tax on the sale: SST, Service Tax, Sales Tax, GST, CGST, SGST, IGST, VAT, MwSt, PPN, PB1,
+            HST, a US sales tax, 消費税. Never a service charge, a tip, or a city, tourism or hotel levy
+          "rounding": a rounding adjustment ("Rounding Adj", "Penggenapan")
+        "label": the row's name as printed, WITHOUT its rate or amount: "Nasi Kandar Ayam", "Service Charge", "SST", "Service
+          Tax", "CGST", "Tourism Tax", "Rounding Adj". On a hotel folio copy the WHOLE description of the line, including the
           text printed under it (room number, check number, and any transfer such as "[NA Room] LIM WEI JIE #126=>Rahman #110"),
           even when that text continues at the top of the next page,
-        "unitAmount": the price of ONE unit as a plain number (e.g. 1.60),
-        "quantity": item quantity if shown (e.g. 1, 6), default 1,
-        "lineTotal": the amount printed on that line (quantity × unit price, e.g. 9.60); same as unitAmount when quantity is 1. A discount, promotion or rounding down is NEGATIVE (e.g. -3.45),
-        "discountRate": discount percent if shown, default 0,
-        "category": one of the category names above, judged from what THIS line is for. A tax, GST/VAT, service-charge or fee line takes the category of the charge it belongs to (a room's GST is Lodging, a cafe's GST is Meals). On a hotel folio a room is Lodging whatever its rate is called ("Standard Retail", "Package", "BAR", "Corporate"),
-        "onBehalfOf": when the line was transferred from, or paid for, ANOTHER guest or person, that person's name exactly as printed (e.g. "LIM WEI JIE #126 => Rahman #110" means the line is for LIM WEI JIE); a tax line under a transferred charge is for the same person; otherwise null
+        "qty": the quantity printed on an item (e.g. 2), else null,
+        "unitPrice": the price of one, when printed (e.g. 1.50), else null,
+        "amount": the amount printed on the row as a plain number (for an item, quantity × unit price, e.g. 3.00). A discount,
+          a promotion or a rounding down is NEGATIVE (e.g. -3.45, -0.02),
+        "rate": the percentage printed with the row, as a number: "SST 6%" is 6, "Service Charge 10%" is 10, "50% OFF" is 50;
+          null when none is printed,
+        "included": true for a tax already inside the prices ("GST 9% incl.", "included", "inkl.", "enth. MwSt", "内消費税"),
+          false otherwise,
+        "category": for an item, a charge or a discount, one of the category names above, judged from what THIS row is for.
+          A row printed under another takes that row's category. On a hotel folio a room is Lodging whatever its rate is
+          called ("Standard Retail", "Package", "BAR", "Corporate"). A charge or discount for the whole receipt takes a
+          category only when it is for one kind of thing (a tourism or city tax on the rooms is Lodging), else null. null
+          for a tax or a rounding,
+        "onBehalfOf": when the row was transferred from, or paid for, ANOTHER guest or person, that person's name exactly as
+          printed (e.g. "LIM WEI JIE #126 => Rahman #110" means the row is for LIM WEI JIE); a tax or charge printed under a
+          transferred row is for the same person; otherwise null,
+        "taxRate": for an item, the total tax rate the receipt shows applies to it, as a number (a tax code or marker beside
+          the item that the receipt explains, or a room against food on a hotel bill taxed at different rates); null when the
+          receipt does not show it,
+        "on": for a tax, charge or discount printed under one particular row (a folio's CGST under its room charge, a
+          discount under the item it takes off): that row's position in rows, counting from 0; null when it is for the
+          whole receipt
       }
     ]
-  Include EVERY charge line: each item, service charge, tip, surcharge, levy, discount and rounding, and each tax that is
-  ADDED to the prices, so the lines add up to the total. Do not list a tax that is already inside the prices (printed as
-  "incl.", "included", "inkl.", "enth.", "内税"); give it as tax only. Never list a payment (cash handed over, change,
-  the card), the subtotal or the total as a line.
+  Include EVERY row: each item, service charge, tip, surcharge, levy, discount, rounding and tax, and a tax already inside
+  the prices too (marked included), even when it is printed below the total ("GST 9% included 4.68" under "TOTAL S$
+  56.73" is a row), so the rows that are not included add up to the total. Never list a payment (cash
+  handed over, change, the card), the subtotal or the total, and never a tax summary that repeats taxes already listed
+  as rows: give its total as taxTotal instead.
 - confidence: "high" if the total and merchant are clearly legible, "low" if the photo is blurred, cropped, or you are guessing any of them.
 
 Rules:
@@ -150,54 +177,73 @@ function _onBehalf(li) {
 }
 
 const lineKinds = require('./line-kinds');
+const printed = require('./printed');
 const _cents = v => Math.round(Number(v || 0) * 100);
-const _sum = items => items.reduce((s, li) => s + _cents(li.unitAmount), 0);
+// What a list of rows comes to: every row but a tax already inside the prices.
+const _sum = rows => rows.reduce((s, r) => s + (r.kind === 'tax' && r.included ? 0 : _cents(r.amount)), 0);
 
 // A folio ends with the payment that settled it ("Manual MasterCard / Euro
 // Card 88,188.77"). That is not a charge: kept, it doubles the sum of the
-// lines. Payment lines go (line-kinds.js says which), and so do the subtotal
-// and total printed as lines. A line equal to the total goes too, but only
+// rows. Payment rows go (line-kinds.js says which), and so do the subtotal
+// and total printed as rows. A row equal to the total goes too, but only
 // when the others already add up to it: a room of 200.00 beside "Service
 // charge 0.00" on a bill of 200.00 was the bill, and used to be dropped as a
 // restated total, leaving the bill with nothing but the 0.00.
-function _dropPayments(lineItems, total) {
-  const kept = lineItems.filter(li => !lineKinds.paymentLine(li.description) && !lineKinds.totalLine(li.description));
+function _dropPayments(rows, total) {
+  const kept = rows.filter(r => !lineKinds.paymentLine(r.label) && !lineKinds.totalLine(r.label));
   if (total === null || kept.length < 2) return kept;
   const totalCents = _cents(total);
-  const at = kept.findIndex(li => _cents(li.unitAmount) === totalCents);
+  const at = kept.findIndex(r => r.kind !== 'tax' && _cents(r.amount) === totalCents);
   if (at < 0) return kept;
-  const others = kept.filter((li, i) => i !== at);
+  const others = kept.filter((r, i) => i !== at);
   return _itemsAccountForTotal(others, total) ? others : kept;
 }
 
-// A tax already inside the prices, listed as a line as well ("GST 9% (incl.)"
-// under a hawker's 13.80, "enth. MwSt 7%" under a Berlin hotel's 402.00),
-// counts the tax twice: the lines came to more than was paid and the reader
-// took the difference off the largest. When the other lines add up to the
-// total without it, it leaves the lines; its amount is still the tax. Tax
-// lines not marked as included go the same way when the lines add up only
-// without them, since a tax that was added cannot do that.
-function _dropIncludedTax(lineItems, total) {
-  if (total === null || lineItems.length < 2) return lineItems;
-  const t = _cents(total);
-  const close = items => Math.abs(_sum(items) - t) <= Math.max(2, Math.round(t * 0.005));
-  if (close(lineItems)) return lineItems;
-  const kinds = lineItems.map(li => lineKinds.taxLine(li.description));
-  const notIncluded = lineItems.filter((li, i) => !(kinds[i] && kinds[i].included));
-  if (notIncluded.length && notIncluded.length < lineItems.length && close(notIncluded)) return notIncluded;
-  const noTax = lineItems.filter((li, i) => !kinds[i]);
-  if (noTax.length && noTax.length < lineItems.length && close(noTax)) return noTax;
-  return lineItems;
+// Do the rows add up to the total, the way the screen asks (printed.addsUp)?
+const _fits = (rows, total, currency) => total !== null && printed.addsUp({ rows, total }, currency).ok;
+
+// A tax summary repeats the taxes listed above it ("Service Tax 8% on 308.00
+// 24.64", "Total Service Tax 30.25" under a folio that charged each night's
+// tax under the night), and a tax already inside the prices is sometimes
+// read as added ("GST 9% (incl.)" under a hawker's 13.80, "enth. MwSt 7%"
+// under a Berlin hotel's 402.00). Either way the rows come to more than was
+// paid. When they do: a tax row that repeats the rows of its rate above it,
+// or that is the total of the taxes above it, goes; and if the rows still
+// come to more, the taxes that were read as added are inside the prices,
+// so long as the rest then adds up. Rows that add up are left as read, and
+// so are rows that none of this makes add up.
+// Returns { rows, summary }: the summary is the restated total, when one went.
+function _restated(rows, total, currency) {
+  if (total === null || _fits(rows, total, currency)) return { rows, summary: null };
+  const taxes = rows.filter(r => r.kind === 'tax');
+  const gone = new Set();
+  let summary = null;
+  const before = r => taxes.slice(0, taxes.indexOf(r)).filter(t => !gone.has(t));
+  for (const t of taxes) {
+    if (t.onRow) continue;
+    const above = before(t);
+    const sameRate = above.filter(a => t.rate !== null && a.rate === t.rate);
+    if (sameRate.length && Math.abs(_cents(t.amount) - sameRate.reduce((s, a) => s + _cents(a.amount), 0)) <= 1) { gone.add(t); continue; }
+    if (above.length >= 2 && Math.abs(_cents(t.amount) - above.reduce((s, a) => s + _cents(a.amount), 0)) <= 1) { gone.add(t); summary = t.amount; }
+  }
+  let out = rows.filter(r => !gone.has(r));
+  if (_fits(out, total, currency)) return { rows: out, summary };
+  const added = out.filter(r => r.kind === 'tax' && !r.included);
+  if (added.length && _fits(out.map(r => (added.includes(r) ? { ...r, included: true } : r)), total, currency)) {
+    for (const r of added) r.included = true;
+    return { rows: out, summary };
+  }
+  return { rows, summary: null };
 }
 
 // A tip written in under the printed "Total" is part of what was charged.
-// When the lines hold a tip and come to the total read plus that tip, the
+// When the rows hold a tip and come to the total read plus that tip, the
 // total read was the one before the tip, and the amount charged is larger.
-function _withTip(lineItems, total) {
+function _withTip(rows, total) {
   if (total === null) return total;
-  const tip = lineItems.filter(li => lineKinds.tipLine(li.description) && li.unitAmount > 0).reduce((s, li) => s + _cents(li.unitAmount), 0);
+  const tip = rows.filter(r => r.kind !== 'tax' && lineKinds.tipLine(r.label) && r.amount > 0).reduce((s, r) => s + _cents(r.amount), 0);
   if (!tip) return total;
-  const sum = _sum(lineItems), t = _cents(total);
+  const sum = _sum(rows), t = _cents(total);
   return Math.abs(sum - t) > 1 && Math.abs(sum - (t + tip)) <= 1 ? (t + tip) / 100 : total;
 }
 
@@ -205,13 +251,39 @@ function _withTip(lineItems, total) {
 // taxes on that charge under that, each with its own copy of the transfer.
 // Except where a page ends between them: the Pune folio's CGST of 940.50 sits
 // at the foot of page 1 and its transfer at the head of page 2, and the 940.50
-// went on the wrong person. A tax line that names nobody belongs to the
+// went on the wrong person. A tax row that names nobody belongs to the
 // person of the charge it follows.
-function _carryTransfers(items) {
+function _carryTransfers(rows) {
   let charge = null;
-  for (const li of items) {
-    if (!lineKinds.taxLine(li.description)) { charge = li; continue; }
-    if (!li.onBehalfOf && charge && charge.onBehalfOf) li.onBehalfOf = charge.onBehalfOf;
+  for (const r of rows) {
+    if (r.kind !== 'tax') { charge = r; continue; }
+    if (!r.onBehalfOf && charge && charge.onBehalfOf) r.onBehalfOf = charge.onBehalfOf;
+  }
+}
+
+// A folio charges each night's tax and service charge under the night, and
+// the reader does not always say so (`on`). A tax or service charge with a
+// rate, printed straight after a run of items that are one person's and one
+// category's, is under them when its rate of those items (with the charges
+// already under them) is its amount: Service Tax 8% of 24.64 under a room of
+// 280.00 and its 28.00 service charge, the Pune folio's CGST 9% of 139.15
+// under a dinner of 1,296.25 and its soda of 250.00. It goes under the
+// largest of them. Anything the rate does not bear out, an included tax and
+// a flat levy stay for the whole receipt, as read.
+function _underTheCharge(rows) {
+  let run = [], prevItem = false;
+  for (const r of rows) {
+    if (r.kind === 'item') { if (!prevItem) run = []; run.push(r); prevItem = true; continue; }
+    prevItem = false;
+    if (r.onRow || !run.length || r.rate === null || (r.kind === 'tax' && r.included) || (r.kind !== 'tax' && r.kind !== 'charge')) continue;
+    const one = run.every(x => (x.category || '') === (run[0].category || '') && (x.onBehalfOf || '') === (run[0].onBehalfOf || ''));
+    if (!one) continue;
+    const under = rows.filter(x => x.onRow && run.includes(x.onRow) && x.kind === 'charge' && x.rate !== null);
+    const base = run.reduce((s, x) => s + _cents(x.amount), 0) + (r.kind === 'tax' ? under.reduce((s, x) => s + _cents(x.amount), 0) : 0);
+    const want = Math.round((base * r.rate) / 100);
+    if (Math.abs(want - _cents(r.amount)) <= Math.max(2, Math.round(_cents(r.amount) * 0.01))) {
+      r.onRow = run.reduce((a, b) => (_cents(b.amount) > _cents(a.amount) ? b : a));
+    }
   }
 }
 
@@ -276,29 +348,120 @@ function _titleCase(name) {
   return name.toLowerCase().replace(/(^|[\s'-])([a-z])/g, (m, p, c) => p + c.toUpperCase());
 }
 
-// Indian and other tax lines are printed per charge. When the document's own
-// tax figure is missing (or a "VAT 0.00" footer was read as the tax), the tax
-// is the sum of the tax lines. Which lines are tax is line-kinds.js's call:
-// a tax's own name at the start of the line, never a levy or "tax-free".
-// A service charge is not one of them: it goes to the restaurant, not the
-// government. Counted as tax, a Singapore bill of 100.00 food, 10.00 service
-// and 9.90 GST went to Xero with 19.90 of tax.
-function _taxFromLines(taxLines, total) {
-  const cents = _sum(taxLines);
-  if (cents <= 0) return null;
-  if (total !== null && cents >= _cents(total)) return null;
-  return cents / 100;
+// Do the rows, taxes included, add up to the total? Within a unit or half a
+// percent, which is the rounding a folio's per-charge taxes carry (the JW
+// folio itemises to one rupee over). When they do, the itemisation is
+// complete and can be held against the model's summary figures; when they do
+// not, something is missing and nothing is inferred from them.
+function _itemsAccountForTotal(rows, total) {
+  if (total === null || rows.length < 2) return false;
+  return Math.abs(_sum(rows) - Math.round(total * 100)) <= Math.max(100, Math.round(total * 0.005));
 }
 
-// Do the items, tax lines included, add up to the total? Within a unit or
-// half a percent, which is the rounding a folio's per-charge taxes carry
-// (the JW folio itemises to one rupee over). When they do, the itemisation
-// is complete and can be held against the model's summary figures; when
-// they do not, something is missing and nothing is inferred from them.
-function _itemsAccountForTotal(lineItems, total) {
-  if (total === null || lineItems.length < 2) return false;
-  const sum = lineItems.reduce((s, li) => s + Math.round(Number(li.unitAmount || 0) * 100), 0);
-  return Math.abs(sum - Math.round(total * 100)) <= Math.max(100, Math.round(total * 0.005));
+// ── The rows of the receipt ─────────────────────────────────────────────────
+//
+// The record of a receipt (receipts/printed.js) is every row it prints, in
+// order, with the name, rate and amount the receipt gives each. The model is
+// asked for `rows`. A reply in the shape it was asked for before, `lineItems`,
+// is still taken: each line becomes a row by what its words say it is.
+
+const KINDS = new Set(printed.KINDS);
+
+// The kind a row is, from what the model said and from its words. A service
+// charge, a tip or a levy is never tax, whatever it was called: a Kuala
+// Lumpur bill's service charge of 2.39 counted as tax went to Xero as 3.97
+// of tax. A row named for a tax is one, a rounding is a rounding, and
+// anything else that takes money off (an item, a charge or a tax printed
+// negative on a bill that is not a refund) is a discount.
+function _kind(said, label, amount) {
+  const kind = KINDS.has(said) ? said : null;
+  const notTax = lineKinds.serviceLine(label) || lineKinds.tipLine(label) || lineKinds.levyLine(label);
+  if (kind === 'rounding' || (kind !== 'tax' && lineKinds.roundingLine(label))) return 'rounding';
+  let k;
+  if (kind === 'tax') k = notTax ? 'charge' : 'tax';
+  else if (kind !== 'discount' && amount >= 0 && !notTax && lineKinds.taxLine(label)) k = 'tax';
+  else if (kind === 'item' && notTax) k = 'charge';
+  else if (kind) k = kind;
+  else k = notTax || lineKinds.adjustmentLine(label) ? 'charge' : 'item';
+  return amount < 0 ? 'discount' : k;
+}
+
+const _percent = v => { const n = _num(v); return n !== null && n >= 0 && n <= 100 ? n : null; };
+// "SST 6%" is SST at 6, and "GST 9% (incl.)" GST at 9, included: the name is
+// kept without the rate, which is a field of its own. Only the rate the row
+// carries is taken out of its name; any other figure in it was printed.
+function _withoutRate(label, rate, included) {
+  let s = label;
+  if (rate !== null) {
+    const figure = String(rate).replace('.', '[.,]');
+    s = s.replace(new RegExp(`\\s*[(@]?\\s*${figure}(?:[.,]0+)?\\s*%\\s*\\)?`), ' ');
+  }
+  if (included) s = s.replace(/\(?\b(?:incl\.?|included|inclusive|inkl\.?)(?=\W|$)\)?/gi, ' ').replace(/^\s*enth(?:alten)?\.?\s+/i, '');
+  s = s.replace(/\s+/g, ' ').replace(/^[\s\-–:]+|[\s\-–:,]+$/g, '').trim();
+  return s || label;
+}
+
+// One row as the model gave it, in either shape, cleaned; or null when it
+// holds neither a name nor an amount.
+function _row(x, { folio, category, legacy }) {
+  if (!x || typeof x !== 'object') return null;
+  const text = _oneLine(x.label ?? x.description ?? x.name ?? '');
+  const qty = _num(x.qty ?? x.quantity);
+  const unit = _intake.money(x.unitPrice ?? x.unitAmount ?? x.price);
+  const line = _intake.money(legacy ? (x.lineTotal ?? x.amount ?? x.total) : (x.amount ?? x.lineTotal ?? x.total));
+  // An amount the receipt prints only as quantity × unit price.
+  const amount = line !== null ? line : (unit !== null && qty > 1 ? Math.round(unit * qty * 100) / 100 : unit);
+  if (!text && amount === null) return null;
+  const kind = _kind(legacy ? null : String(x.kind || '').trim().toLowerCase(), text, amount || 0);
+  const tax = kind === 'tax' ? lineKinds.taxLine(text) : null;
+  const rate = kind === 'tax' || kind === 'charge' || kind === 'discount' ? (_percent(x.rate) ?? _intake.parseTaxPercent(text)) : null;
+  const included = kind === 'tax' && (x.included === true || !!(tax && tax.included));
+  const onBehalfOf = kind === 'rounding' ? null : _onBehalf({ description: text, onBehalfOf: x.onBehalfOf });
+  let label = onBehalfOf ? _withoutTransfer(text) : text;
+  if (kind === 'tax' || kind === 'charge') label = _withoutRate(label, rate, included);
+  // The category the model gave, for a tax or a rounding too: the record
+  // keeps it only on what is bought (an item, a charge, a discount), and the
+  // line items read for the checks keep it on every line, as they always did.
+  let said = canonicalCategory(x.category);
+  if (folio && NOT_ON_A_FOLIO.has(said)) said = category;
+  const rowCategory = kind === 'tax' || kind === 'rounding' ? null : said;
+  // A line in the older shape priced one unit in unitAmount; a unit price
+  // is kept only where a quantity makes it one.
+  const unitPrice = kind !== 'item' ? null : legacy ? (qty > 1 ? unit : null) : _intake.money(x.unitPrice);
+  const on = typeof x.on === 'number' || (typeof x.on === 'string' && /^\d+$/.test(x.on.trim())) ? Number(x.on) : null;
+  return {
+    kind, label: label.slice(0, printed.MAX_LABEL),
+    qty: kind === 'item' && qty !== null && qty > 0 ? qty : null,
+    unitPrice, amount: amount ?? 0, rate, included, worked: false, category: rowCategory, onBehalfOf,
+    taxRate: kind === 'item' ? _percent(x.taxRate) : null,
+    on: Number.isInteger(on) ? on : null,
+    said,
+  };
+}
+
+// The record's rows in its shape, each `on` the position of the row it is
+// under. Anything the record would refuse (printed.validate) is let go of
+// here rather than refusing the read: a row under a row that is not there
+// stands on its own.
+const TARGETS = new Set(['item', 'charge', 'discount']);
+function _finalRows(rows) {
+  const list = rows.slice(0, printed.MAX_ROWS);
+  const out = list.map(({ onRow, said, ...r }) => ({ ...r, on: null }));
+  list.forEach((r, i) => {
+    const k = r.onRow ? list.indexOf(r.onRow) : -1;
+    if (k >= 0 && k !== i && TARGETS.has(list[k].kind) && r.kind !== 'item' && r.kind !== 'rounding') out[i].on = k;
+  });
+  try { return printed.validate({ rows: out, total: 0 }).rows; }
+  catch {
+    try { return printed.validate({ rows: out.map(r => ({ ...r, on: null })), total: 0 }).rows; }
+    catch (err) { logger.warn('The rows read could not be kept as printed', { error: err.message }); return []; }
+  }
+}
+
+// Singapore's GST: 9% since 1 January 2024, 8% in 2023, 7% before that.
+function _sgGst(date) {
+  if (!date || date >= '2024-01-01') return 9;
+  return date >= '2023-01-01' ? 8 : 7;
 }
 
 // Normalises whatever the model returned into the shape the invoice store uses.
@@ -307,102 +470,134 @@ function normalise(parsed) {
   if (!parsed || typeof parsed !== 'object') return null;
 
   const total = _num(parsed.total);
-  const tax   = _num(parsed.tax);
-  let   sub   = _num(parsed.subTotal);
+  const sub   = _num(parsed.subTotal);
 
   // Only a listed category survives; a reworded one is mapped back, an
   // invented one is dropped and never prefixed onto the description.
   const category = canonicalCategory(parsed.category);
   const docType  = _docType(parsed.docType);
   const country  = _country(parsed.country);
+  const currency = _currency(parsed.currency);
+  const date     = _date(parsed, country);
   const folio    = docType === 'hotel' || (!docType && category === 'Lodging');
 
-  // One normaliser for every reader (intake/document.js): the stored amount is
-  // the LINE total and a quantity rides in the text. Receipts carry no tax
-  // percent per line, and the store's shape has none.
-  const rawItems = (Array.isArray(parsed.lineItems) ? parsed.lineItems : [])
-    .map(li => {
-      const n = _intake.normaliseLineItem(li);
-      if (!n) return null;
-      const onBehalfOf = li ? _onBehalf(li) : null;
-      let lineCategory = canonicalCategory(li && li.category);
-      if (folio && NOT_ON_A_FOLIO.has(lineCategory)) lineCategory = category;
-      const text = _oneLine(n.description);
-      return {
-        description:  (onBehalfOf ? _withoutTransfer(text) : text).slice(0, 200),
-        unitAmount:   n.unitAmount,
-        discountRate: n.discountRate,
-        category:     lineCategory,
-        onBehalfOf,
-      };
-    })
-    .filter(Boolean);
-  if (folio) _carryTransfers(rawItems);
+  // The rows, each `on` held as the row it is under while rows come and go.
+  const legacy = !Array.isArray(parsed.rows);
+  const given = (legacy ? (Array.isArray(parsed.lineItems) ? parsed.lineItems : []) : parsed.rows)
+    .map(x => _row(x, { folio, category, legacy }));
+  given.forEach(r => { if (r) r.onRow = r.on !== null && given[r.on] && given[r.on] !== r ? given[r.on] : null; });
+  let rows = given.filter(Boolean);
+  if (folio) _carryTransfers(rows);
 
   // A refund is not claimed here. A negative total is one, and so is a
   // receipt whose every charge is negative, whatever sign the total was
   // read with. A zero total tells the user nothing. Neither is an amount.
-  const charges = rawItems.filter(li => li.unitAmount !== 0);
-  const refund = (total !== null && total < 0) || (charges.length > 0 && charges.every(li => li.unitAmount < 0));
+  const charges = rows.filter(r => r.amount !== 0 && !(r.kind === 'tax' && r.included));
+  const refund = (total !== null && total < 0) || (charges.length > 0 && charges.every(r => r.amount < 0));
   let usableTotal = !refund && total !== null && total > 0 ? total : null;
-  const kept = _dropPayments(rawItems, usableTotal);
-  usableTotal = _withTip(kept, usableTotal);
+  rows = _dropPayments(rows, usableTotal);
+  usableTotal = _withTip(rows, usableTotal);
+
+  // Tax cannot exceed the total, nor be more of it than its own rate could
+  // make; a row that is, was misread ("(10%対象 ¥2,780)", the taxable amount
+  // under a ramen bill, is not a tax of 2,780) and is not presented as fact.
+  if (usableTotal !== null) {
+    const t = _cents(usableTotal);
+    rows = rows.filter(r => r.kind !== 'tax' || (_cents(r.amount) <= t && (r.rate === null || _cents(r.amount) <= Math.round(t * r.rate / 100 * 1.5) + 100)));
+  }
+  const restated = _restated(rows, usableTotal, currency);
+  rows = restated.rows;
+  if (folio) _underTheCharge(rows);
+
+  // The one tax figure: the receipt's own tax summary when it prints one and
+  // the rows bear it out, else the tax rows (printed.taxOf). A reply in the
+  // older shape gave its tax this way.
+  let summary = _num(parsed.taxTotal);
+  if (summary === null && legacy) summary = _num(parsed.tax);
+  if (summary === null) summary = restated.summary;
+  const taxRows = rows.filter(r => r.kind === 'tax');
+  const fromRows = taxRows.reduce((s, r) => s + _cents(r.amount), 0);
+  if (summary !== null) {
+    const s = _cents(summary);
+    const service = rows.filter(r => r.kind === 'charge' && lineKinds.serviceLine(r.label) && r.amount > 0).reduce((n, r) => n + _cents(r.amount), 0);
+    if (s < 0 || (usableTotal !== null && s > _cents(usableTotal))) summary = null;    // one of the two was misread
+    else if (s === 0 && fromRows > 0) summary = null;                                  // a "VAT 0.00" footer beside the real tax
+    // The tax rows plus the service charge printed beside them is the service
+    // charge counted as tax: a Kuala Lumpur bill with SST of 1.58 and a
+    // service charge of 2.39 was read as 3.97 of tax.
+    else if (service > 0 && fromRows > 0 && Math.abs(s - (fromRows + service)) <= 1) summary = null;
+    // The summary against a complete itemisation: the same folio read twice
+    // gave 6760 and then 3717, against tax rows that summed to 6760 both
+    // times. The rows are read one at a time off the page; the summary is
+    // the one to doubt. One tax row is not that evidence: it is usually the
+    // very figure the model read.
+    else if (taxRows.length >= 2 && _itemsAccountForTotal(rows, usableTotal) && Math.abs(s - fromRows) > Math.max(100, fromRows * 0.01)) summary = null;
+  }
+  // A tax the receipt totals and no row shows is a row of its own: inside the
+  // prices unless the rows only add up with it. The reader leaves a GST
+  // printed below a Singapore total ("GST 9% included 105.69" under a folio's
+  // TOTAL SGD 1,280.00) out of the rows and gives it only as the total, and a
+  // reply in the older shape left every included tax out of its lines. On a
+  // Singapore receipt whose amount is GST's share of the total at the day's
+  // rate, it is named GST at that rate; the amount is the one printed.
+  const singapore = country === 'SG' || (!country && currency === 'SGD');
+  if (rows.length && !taxRows.length && summary !== null && summary > 0) {
+    const added = { kind: 'tax', label: 'Tax', qty: null, unitPrice: null, amount: summary, rate: null, included: false, worked: false, category: null, onBehalfOf: null, taxRate: null, onRow: null, said: null };
+    added.included = _fits(rows, usableTotal, currency) || !_fits([...rows, added], usableTotal, currency);
+    const gst = _sgGst(date);
+    if (singapore && added.included && usableTotal !== null && Math.abs(_cents(usableTotal) * gst / (100 + gst) - _cents(summary)) <= Math.max(1, _cents(summary) * 0.01)) {
+      Object.assign(added, { label: 'GST', rate: gst });
+    }
+    rows.push(added);
+  }
+  // "Price payable includes GST", and no GST printed anywhere: a Singapore
+  // receipt's GST is a fixed share of what was paid, so it is worked out and
+  // marked as such. Only for Singapore's GST, only when the receipt names it.
+  if (parsed.gstIncluded === true && singapore && usableTotal !== null && !rows.some(r => r.kind === 'tax') && summary === null) {
+    const rate = _sgGst(date);
+    rows.push({ kind: 'tax', label: 'GST', qty: null, unitPrice: null, amount: Math.round((_cents(usableTotal) * rate) / (100 + rate)) / 100, rate,
+                included: true, worked: true, category: null, onBehalfOf: null, taxRate: null, onRow: null, said: null });
+  }
+  // A refund is no amount, and so no tax and no record either.
+  const kept = rows.slice(0, printed.MAX_ROWS);
+  const finalRows = refund ? [] : _finalRows(kept);
+  const tax = refund ? null
+    : summary === 0 && !finalRows.some(r => r.kind === 'tax') ? 0 : printed.taxOf({ rows: finalRows, total: usableTotal ?? 0 }, { summary });
 
   let desc = typeof parsed.description === 'string' && parsed.description.trim() ? parsed.description.trim().slice(0, 250) : null;
   if (desc && category && !desc.startsWith('[')) {
     desc = `[${category}] ${desc}`.slice(0, 250);
   }
 
-  // Tax cannot exceed the total; if it does, one of the two was misread and
-  // neither should be presented as fact.
-  const taxLines = kept.filter(li => lineKinds.taxLine(li.description));
-  const fromLines = _taxFromLines(taxLines, usableTotal);
-  let taxOut = (tax !== null && tax > 0 && (usableTotal === null || tax <= usableTotal)) ? tax : (fromLines ?? (tax === 0 ? 0 : null));
-  // The model's one tax figure against its own itemised tax lines. When the
-  // items account for the whole total, every tax line is there, and a tax
-  // figure that disagrees with their sum is the model summarising badly: the
-  // same folio read twice gave 6760 and then 3717, against tax lines that
-  // summed to 6760 both times. The itemised figures are read one at a time
-  // off the page; the summary is the one to doubt. One tax line is not that
-  // evidence: it is usually the very figure the model read, and a single
-  // line misread as tax used to replace a right answer.
-  if (fromLines !== null && taxOut !== null && taxLines.length >= 2 && _itemsAccountForTotal(kept, usableTotal) && Math.abs(fromLines - taxOut) > Math.max(1, fromLines * 0.01)) {
-    taxOut = fromLines;
-  }
-  // A tax figure that is the tax lines plus the service charge printed beside
-  // them is the service charge counted as tax: a Kuala Lumpur bill with SST
-  // of 1.58 and a service charge of 2.39 was read as 3.97 of tax.
-  const service = kept.filter(li => lineKinds.serviceLine(li.description) && li.unitAmount > 0).reduce((s, li) => s + _cents(li.unitAmount), 0);
-  if (fromLines !== null && tax !== null && service > 0 && Math.abs(_cents(tax) - (_cents(fromLines) + service)) <= 1) taxOut = fromLines;
-  const lineItems = _dropIncludedTax(kept, usableTotal);
-
-  // Singapore receipts print "Sub Total 16.10 / GST 1.33" where the GST is
-  // already inside the sub total. A subtotal equal to the total with a tax
-  // beside it is that case: the pre-tax figure is total − tax. Worked out
-  // from the tax as it finally stands, not the model's first figure: a tax
-  // taken from the lines left the subtotal at the total.
-  if (sub !== null && total !== null && taxOut !== null && taxOut > 0 && Math.abs(sub - total) < 0.005) {
-    sub = Math.round((total - taxOut) * 100) / 100;
-  }
-
   const pages = _pages(parsed.pages);
   const datePrinted = typeof parsed.datePrinted === 'string' && parsed.datePrinted.trim() ? parsed.datePrinted.trim().slice(0, 40) : null;
   const dateOrder = _dateOrder(parsed.dateOrder);
+  // The subtotal exactly as printed, never worked out. It is above the total
+  // only when something came off after it.
+  const discounted = finalRows.some(r => r.kind === 'discount');
   return {
     merchant:    typeof parsed.merchant === 'string' && parsed.merchant.trim() ? parsed.merchant.trim().slice(0, 120) : null,
     invoiceNumber: typeof parsed.invoiceNumber === 'string' && parsed.invoiceNumber.trim() ? parsed.invoiceNumber.trim().slice(0, 60) : null,
-    date:        _date(parsed, country),
+    date,
     time:        _time(parsed.time),
     category,
-    currency:    _currency(parsed.currency),
+    currency,
     total:       usableTotal,
-    tax:         taxOut,
-    subTotal:    sub !== null && sub >= 0 && (usableTotal === null || sub <= usableTotal) ? sub : null,
+    tax,
+    subTotal:    !refund && sub !== null && sub >= 0 && (usableTotal === null || sub <= usableTotal || discounted) ? sub : null,
     description: desc,
     city:        _city(parsed.city),
     country,
     docType,
-    lineItems,
+    // The receipt as printed, row by row: the record the expense keeps
+    // (read-receipt.js applyRead), and the lines are made from.
+    rows:        finalRows,
+    // The same rows as the charges they add up to, for the read-time checks
+    // and anything that still reads a receipt's lines: every row but a tax
+    // inside the prices, its amount the row's.
+    lineItems:   kept.filter(r => !(r.kind === 'tax' && r.included)).map(r => ({
+      description: r.label, unitAmount: r.kind === 'discount' ? -Math.abs(r.amount) : r.amount, discountRate: r.kind === 'discount' && r.rate ? r.rate : 0,
+      category: r.category ?? r.said ?? (r.onRow ? r.onRow.category : null) ?? null, onBehalfOf: r.onBehalfOf })),
     confidence:  parsed.confidence === 'high' ? 'high' : 'low',
     box:         _box(parsed.box_2d),
     // Only the pages of a scan are asked which pages they are on
@@ -660,7 +855,7 @@ function _batchPrompt(count) {
   return `You are reading ${count} SEPARATE receipts. They are unrelated to each other.
 
 Return ONLY a JSON array with exactly ${count} entries, one per image, in the order given:
-[{"index": 1, "count": 1, "merchant": ..., "datePrinted": ..., "dateOrder": ..., "date": ..., "time": ..., "category": ..., "currency": ..., "total": ..., "tax": ..., "subTotal": ..., "city": ..., "country": ..., "docType": ..., "description": ..., "lineItems": [...], "confidence": ...}]
+[{"index": 1, "count": 1, "merchant": ..., "datePrinted": ..., "dateOrder": ..., "date": ..., "time": ..., "category": ..., "currency": ..., "total": ..., "subTotal": ..., "taxTotal": ..., "gstIncluded": ..., "city": ..., "country": ..., "docType": ..., "description": ..., "rows": [...], "confidence": ...}]
 
 "index" is the image's position, starting at 1. Every image must appear exactly once.
 "count" is how many separate receipts you can see in that image, usually 1. When it is more than 1, still give that image one entry.

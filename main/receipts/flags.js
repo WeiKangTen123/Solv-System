@@ -19,23 +19,19 @@ const logger = require('../utils/logger');
 // page to point at. A receipt still being read has no flags: whatever is on
 // it is about to be replaced.
 //
-// Five yellow ones are about the reading: the lines carry other people's
-// charges, the subtotal and tax do not come to the total, a charge appears
-// twice, the lines were adjusted to meet the total, and a date reads two ways.
+// Four yellow ones are about the reading: the lines carry other people's
+// charges, a charge appears twice, the lines were adjusted to meet the
+// total, and a date reads two ways. Two that second-guessed a printed figure
+// went when receipts began to be kept as printed (receipts/printed.js): GST
+// that is not 9/109 of the total, and a subtotal and tax that do not come to
+// it. The tax is what the receipt prints, and a flag that doubts it asks a
+// person to doubt the one figure on the page that is certain.
 //
 // The company's policy (store/policy.js) adds four yellow ones: over a
 // category's limit, older than the maximum age, dated on a weekend, and a
 // meal on a day the case's per diem already pays for. The policy is read
 // here, from a cache, so no page that shows flags has to pass it in.
 
-// Singapore's GST since 1 January 2024: 9%, so the tax inside a total is 9/109
-// of it. A total with a service charge carries GST on the charge too, which
-// keeps the ratio, so it holds for a restaurant bill as well.
-const GST_FROM = '2024-01-01';
-const GST_SHARE = 9 / 109;
-// Rounding on a long bill drifts a few cents; more than 2%, or more than five
-// cents on a small one, is not rounding.
-const GST_SLACK = { share: 0.02, cents: 5 };
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 // A per diem and a mileage claim have no receipt behind them
@@ -89,7 +85,6 @@ const _days = n => `${n} day${n === 1 ? '' : 's'}`;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const _day = iso => `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
 const _names = list => (list.length < 2 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
-const _same = (a, b) => toCents(a) !== null && toCents(a) === toCents(b);
 // A folio's line is the hotel's system talking ("MoMo Cafe Dinner Food
 // Room# 110 : CHECK# 11603631 [oneha089]"). The flag says what the charge was,
 // and the check number that ties the two copies together, in words a person
@@ -110,17 +105,13 @@ function _charge(description) {
 // onto this folio. Said from the lines as they stand, so it goes once the
 // person moves or removes them. The rest come from the checks made when the
 // receipt was read (aiRead.checks, read-receipt.js), and each says what the
-// reader saw. The two about a figure go quiet once that figure is changed,
+// reader saw. The one about the date goes quiet once the date is changed,
 // since whoever changed it has looked.
 function _readFlags(e, lines, add) {
   const others = [...new Set(lines.map(l => l.onBehalfOf).filter(Boolean))];
   if (others.length) add('yellow', 'split-people', `Split between ${_names(['you', ...others])}: check each person's lines.`, 'lines');
   const c = e.aiRead && e.aiRead.checks;
   if (!c) return;
-  const sm = c.subtotalMismatch;
-  if (sm && _same(e.subTotal, sm.subtotal) && _same(e.tax, sm.tax) && _same(e.total, sm.total)) {
-    add('yellow', 'subtotal-mismatch', `The subtotal of ${formatAmount(sm.subtotal)} and the tax of ${formatAmount(sm.tax)} do not come to the total of ${formatAmount(sm.total)}, even with the charges on the receipt; check the figures.`, 'total');
-  }
   if (Array.isArray(c.chargedTwice) && c.chargedTwice.length) {
     const what = c.chargedTwice.slice(0, 3).map(x => `${_charge(x.description)}, ${formatAmount(x.amount)}, appears ${x.count === 2 ? 'twice' : `${x.count} times`}`);
     add('yellow', 'charged-twice', `${_names(what)} on the receipt, so ${what.length > 1 ? 'they' : 'it'} may have been billed twice; check with the merchant.`, 'lines');
@@ -167,13 +158,6 @@ function flagsFor(expense, report = null, { baseCurrency = 'SGD', today = null }
   if (!allowance && e.errorMsg && _currencyNote().test(e.errorMsg)) {
     add('yellow', 'currency-assumed', `No currency is printed on the receipt, so ${e.currency || baseCurrency} was assumed.`, 'currency');
   }
-  const tax = e.tax === null || e.tax === undefined || e.tax === '' ? null : Number(e.tax);
-  if (!allowance && e.currency === 'SGD' && e.receiptDate && e.receiptDate >= GST_FROM && tax > 0 && total > 0) {
-    const expected = total * GST_SHARE;
-    if (Math.abs(tax - expected) > Math.max(expected * GST_SLACK.share, GST_SLACK.cents / 100)) {
-      add('yellow', 'gst-mismatch', `The GST of ${formatAmount(tax)} is not 9% of the total; about ${formatAmount(expected)} was expected.`, 'tax');
-    }
-  }
   const read = e.aiRead && e.aiRead.total;
   if (!allowance && read !== null && read !== undefined && read !== '' && Number.isFinite(Number(read)) && toCents(read) !== toCents(total)) {
     add('yellow', 'edited-amount', `The total was changed from the ${formatAmount(read)} the reader read.`, 'total');
@@ -211,4 +195,4 @@ function flagsFor(expense, report = null, { baseCurrency = 'SGD', today = null }
   return out;
 }
 
-module.exports = { flagsFor, GST_FROM };
+module.exports = { flagsFor };

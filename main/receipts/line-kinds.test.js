@@ -1,4 +1,4 @@
-const { taxLine, paymentLine, totalLine, serviceLine, tipLine, adjustmentLine } = require('./line-kinds');
+const { taxLine, paymentLine, totalLine, serviceLine, tipLine, adjustmentLine, levyLine, roundingLine } = require('./line-kinds');
 
 describe('receipts/line-kinds', () => {
   test.each([
@@ -28,5 +28,15 @@ describe('receipts/line-kinds', () => {
     expect([serviceLine('Service 5%'), serviceLine('Service Charge 10%'), serviceLine('Service Tax 6%'), serviceLine('VFS Service Fee')]).toEqual([true, true, false, false]);
     expect([tipLine('Tip'), tipLine('Gratuity 18%'), tipLine('Tipping point café')]).toEqual([true, true, false]);
     expect([adjustmentLine('SF Mandate 4%'), adjustmentLine('Rounding Adj'), adjustmentLine('Tourism Tax'), adjustmentLine('SST 6%')]).toEqual([true, true, true, false]);
+  });
+
+  test('a levy is named like a tax and is the city\'s, never the tax on the sale', () => {
+    for (const d of ['Tourism Tax', '20/10 Tourism Tax', 'City Tax 5%', 'Kurtaxe', 'Hotel levy', 'taxe de séjour']) expect(levyLine(d)).toBe(true);
+    for (const d of ['Service Tax 8%', 'SST', 'Tax free shopping', 'Room Charge']) expect(levyLine(d)).toBe(false);
+  });
+
+  test('a rounding, in the words a till prints it, and not a dish with "round" in it', () => {
+    for (const d of ['Rounding Adj', 'Rounding', 'Round off', 'Rounding Adjustment', 'Penggenapan', 'Pembulatan', '端数調整']) expect(roundingLine(d)).toBe(true);
+    for (const d of ['Round Bread', 'Merry-go-round', 'SST 6%']) expect(roundingLine(d)).toBe(false);
   });
 });

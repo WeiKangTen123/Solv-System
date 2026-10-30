@@ -15,7 +15,7 @@
 //   --score-only score runs already saved, and call nothing
 //   --compare    score two saved runs side by side, e.g. before,after
 //
-// It costs one model request a receipt, about fifteen, and is never run by
+// It costs one model request a receipt, about eighteen, and is never run by
 // the test suite.
 const path = require('path');
 const os = require('os');

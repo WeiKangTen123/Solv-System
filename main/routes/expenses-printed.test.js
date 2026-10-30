@@ -155,11 +155,14 @@ describe('routes/expenses — a receipt kept as printed', () => {
     expect(store.getExpense(e.id).tax).toBe(1.58);
   });
 
-  test('a new category moves rows that were all in the old one, and the lines with them', async () => {
+  test('the categories are the items\': PATCH may send the category unchanged, not changed', async () => {
     const e = seed();
-    const r = await api().patch(`/api/expenses/${e.id}`).set(as(emp)).send({ category: 'Entertainment' }).expect(200);
-    expect(r.body.expense.printed.rows.filter(x => x.kind === 'item').every(x => x.category === 'Entertainment')).toBe(true);
-    expect(r.body.expense.lines.map(l => l.category)).toEqual(['Entertainment']);
+    await api().patch(`/api/expenses/${e.id}`).set(as(emp)).send({ category: 'Meals', purpose: 'Team lunch' }).expect(200);
+    const r = await api().patch(`/api/expenses/${e.id}`).set(as(emp)).send({ category: 'Entertainment' }).expect(409);
+    expect(r.body.error).toBe('This receipt\'s categories are its items\'; change those instead.');
+    const after = store.getExpense(e.id);
+    expect(after.category).toBe('Meals');
+    expect(after.lines.map(l => l.category)).toEqual(['Meals']);
   });
 
   test('a rate typed for the receipt stays when the record changes, and goes with the currency', async () => {

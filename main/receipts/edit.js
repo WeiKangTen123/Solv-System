@@ -119,6 +119,7 @@ function cleanPatch(body = {}) {
 
 const LINES_FROM_ITEMS = 'This receipt\'s lines come from its items; change the items instead.';
 const TAX_FROM_ROWS = 'This receipt\'s tax comes from its tax rows; change those instead.';
+const CATEGORY_FROM_ITEMS = 'This receipt\'s categories are its items\'; change those instead.';
 // A per diem and a mileage claim have no receipt behind them
 // (reports/allowances.js), so there is nothing printed to keep.
 const ALLOWANCES = new Set(['per_diem', 'mileage']);
@@ -161,23 +162,24 @@ async function editPrinted(expenseId, input, actor, { via = 'app' } = {}) {
 }
 
 // What a detail edit does to a record: a new total or subtotal is the
-// record's too, so the two never differ; a new category moves the rows with
-// it when they were all in the old one, as a single line's category always
-// followed the receipt's; and the tax, which is the tax rows', is not typed.
+// record's too, so the two never differ. The tax is the tax rows' and the
+// categories are the items', so neither is typed here: a change to either is
+// refused with a sentence that says where to make it, and the same value sent
+// again (a page that sends every field) is let be.
 function _recordPatch(e, patch) {
   if (patch.tax !== undefined) {
     if (!sameValue('tax', patch.tax, e.tax)) fail(409, TAX_FROM_ROWS);
     delete patch.tax;
   }
-  let record = null;
-  const own = () => (record = record || { ...e.printed, rows: e.printed.rows.map(r => ({ ...r })) });
-  if (patch.total !== undefined) own().total = patch.total === null ? 0 : patch.total;
-  if (patch.subTotal !== undefined) own().subtotal = patch.subTotal;
-  const sorted = r => r.kind === 'item' || r.kind === 'charge' || r.kind === 'discount';
-  if (patch.category && patch.category !== e.category && e.printed.rows.filter(sorted).every(r => !r.category || r.category === e.category)) {
-    for (const r of own().rows) if (sorted(r) && r.category) r.category = patch.category;
+  if (patch.category !== undefined) {
+    if (!sameValue('category', patch.category, e.category)) fail(409, CATEGORY_FROM_ITEMS);
+    delete patch.category;
   }
-  if (record) patch.printed = record;
+  if (patch.total !== undefined || patch.subTotal !== undefined) {
+    patch.printed = { ...e.printed };
+    if (patch.total !== undefined) patch.printed.total = patch.total === null ? 0 : patch.total;
+    if (patch.subTotal !== undefined) patch.printed.subtotal = patch.subTotal;
+  }
 }
 
 // Merchant, date, amounts and the rest. Returns the updated expense.
@@ -194,9 +196,9 @@ async function editDetails(expenseId, body, actor, { via = 'app' } = {}) {
   let remade = false;
   if (updated.printed) {
     // The lines are the record's: made again whenever what they are made
-    // from moved (the total, the currency, the category). A rate typed for
-    // the old currency goes with it, as below.
-    remade = !!(patch.printed || patch.currency !== undefined || patch.category !== undefined);
+    // from moved (the total, the currency). A rate typed for the old
+    // currency goes with it, as below.
+    remade = !!(patch.printed || patch.currency !== undefined);
     if (remade) linesFromRecord(e.id, currencyChanged ? { lines: [] } : e);
   } else if (patch.total !== undefined && updated.lines.length === 1) {
     // A single line follows the total; a split is the claimant's to redo.
@@ -389,4 +391,4 @@ function permissions(e, actor) {
 }
 
 module.exports = { editDetails, editLines, editPrinted, linesFromRecord, setRate, refreshRate, cleanPatch, detailsBlocked, permissions, sameValue, categoryOf,
-                   setStatus, fileInCase, actionBlocked, reviewBlocked, EDITABLE, MAX_AMOUNT, LINES_FROM_ITEMS, TAX_FROM_ROWS };
+                   setStatus, fileInCase, actionBlocked, reviewBlocked, EDITABLE, MAX_AMOUNT, LINES_FROM_ITEMS, TAX_FROM_ROWS, CATEGORY_FROM_ITEMS };

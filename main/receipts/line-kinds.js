@@ -19,7 +19,8 @@
 const TAX_NAME = String.raw`(?:(?:c|s|i|ut)gst|gst(?:\s*\/\s*hst)?|hst|pst|qst|vat|value[- ]added tax|sst|ppn|pb\s?1|pajak(?: restoran| daerah)?|mwst|mehrwertsteuer|ust|iva|tva|igv|sales tax|service tax|consumption tax|state tax|county tax|goods (?:and|&) services tax|tax(?:es)?)(?![a-z])|(?:消費税|消费税|增值税|増値税|부가세|부가가치세)`;
 const HEAD_TAX_RE = new RegExp(`^(?:total\\s+)?(?:${TAX_NAME})`, 'i');
 const INDIA_TAX_RE = /\b(?:c|s|i|ut)gst\b/i;
-const NOT_TAX_RE = /tax[- ]?free|duty[- ]?free|tax[- ]?exempt|non[- ]?taxable|zero[- ]?rated|\b(?:city|tourism|tourist|hotel|occupancy|accommodation|lodging|visitor|municipal|resort|destination|environment(?:al)?|heritage|bed|airport|departure|room)\s*-?\s*(?:tax|levy)\b|kurtaxe|ortstaxe|taxe de s[eé]jour/i;
+const LEVY = String.raw`\b(?:city|tourism|tourist|hotel|occupancy|accommodation|lodging|visitor|municipal|resort|destination|environment(?:al)?|heritage|bed|airport|departure|room)\s*-?\s*(?:tax|levy)\b|kurtaxe|ortstaxe|taxe de s[eé]jour`;
+const NOT_TAX_RE = new RegExp(String.raw`tax[- ]?free|duty[- ]?free|tax[- ]?exempt|non[- ]?taxable|zero[- ]?rated|${LEVY}`, 'i');
 // What may stand before the tax's name at the start of a line.
 const LEAD_RE = /^(?:[\s([\-+*•:]+|\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?\.?\s+|\d+(?:[.,]\d+)?\s*%\s*|(?:add|plus|less|incl|inkl|including|included|inclusive(?:\s+of)?|enth|enthalten|inc)\b\.?\s*|[内內外]\s*)/i;
 // A tax already inside the prices: "GST 9% (incl.)", "enth. MwSt 7%", "内消費税".
@@ -72,5 +73,13 @@ const ADJUSTMENT_RE = /\b(?:service|svc|tip|tips|gratuity|gratuities|surcharge|m
 const serviceLine = d => SERVICE_RE.test(String(d || '').trim()) && !taxLine(d);
 const tipLine = d => TIP_RE.test(String(d || '').trim());
 const adjustmentLine = d => ADJUSTMENT_RE.test(String(d || '')) && !taxLine(d);
+// A levy for a city, tourism or a hotel ("Tourism Tax", "City Tax 5%",
+// "Kurtaxe"): named like a tax, paid to the city, and never the tax on the sale.
+const LEVY_RE = new RegExp(LEVY, 'i');
+const levyLine = d => LEVY_RE.test(String(d || '').replace(/\s+/g, ' ').trim());
+// A rounding to the currency's step: "Rounding Adj", "Round off",
+// "Penggenapan" in Malaysia, "Pembulatan" in Indonesia, 端数 in Japan.
+const ROUNDING_RE = /\brounding\b|\bround(?:ed|ing)?[\s-]*(?:adj(?:ustment)?|off)\b|penggenapan|pembulatan|端数/i;
+const roundingLine = d => ROUNDING_RE.test(String(d || ''));
 
-module.exports = { taxLine, paymentLine, totalLine, serviceLine, tipLine, adjustmentLine };
+module.exports = { taxLine, paymentLine, totalLine, serviceLine, tipLine, adjustmentLine, levyLine, roundingLine };
