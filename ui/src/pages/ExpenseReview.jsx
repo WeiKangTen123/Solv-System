@@ -11,14 +11,16 @@ import { getCompany } from '../utils/useCompany';
 import { useLeaveGuard } from '../utils/useLeaveGuard';
 import { usePageCrumbs } from '../utils/crumbs';
 import {
-  ReceiptViewer, AllowanceCard, ReceiptFields, ExchangeRatePanel, LinesEditor, ChangeHistory, useReceiptForm,
-  PAGE_FIELDS, flagsOn, flagsOff, refusedFields,
+  ReceiptViewer, AllowanceCard, ReceiptFields, ExchangeRatePanel, LinesEditor, PrintedPanel, ChangeHistory, useReceiptForm,
+  PAGE_FIELDS, PRINTED_FIELDS, fieldsFor, printedFlags, flagsOn, flagsOff, refusedFields, categoryOf,
 } from '../components/receipt';
 import { allowanceOf } from '../utils/allowances';
 
 // Image on the left, fields on the right, so a figure is checked against the
 // receipt without switching context. Below the fields, the split into report
-// lines, which must add up to the total before the expense can be reviewed.
+// lines, which must add up to the total before the expense can be reviewed;
+// or, for a receipt that keeps what it printed, its rows as printed, from
+// which the server makes the lines (components/receipt/PrintedPanel.jsx).
 //
 // This is a receipt's own page: one outside any case, or one reached by a
 // link. A receipt in a case is checked on the case's review page
@@ -210,7 +212,12 @@ export default function ExpenseReview() {
   const caseKnown = !exp.reportId || caseOptions.some(r => r.id === exp.reportId);
   // The boxes a refusal named are marked, so the reason sits where it is fixed.
   const invalid = msg && msg.tone === 'error' ? refusedFields(msg.text) : [];
-  const looseFlags = flagsOff(exp.flags, [...PAGE_FIELDS, 'lines']);
+  // Kept as printed: the rows stand in for the lines and the Total and Tax
+  // boxes, and need the width of a table beside the picture.
+  const asPrinted = !!rf.printed && !allowance;
+  const fields = fieldsFor(PAGE_FIELDS, asPrinted);
+  const looseFlags = flagsOff(exp.flags, [...fields, ...(asPrinted ? PRINTED_FIELDS : ['lines'])]);
+  const canReread = !!exp.receipt && !actionsLocked && !allowance && exp.status !== 'reading';
 
   return (
     <div>
@@ -246,7 +253,7 @@ export default function ExpenseReview() {
       {exp.errorMsg && <div className="alert alert-warning"><span className="alert-icon">!</span><span>{exp.errorMsg}{exp.duplicateOf && <> · <Link to={`/expenses/${exp.duplicateOf}`}>see the other one</Link></>}</span></div>}
       {group?.split && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>{group.groupType === 'batch' ? 'Batch import' : 'Split from one file'} · {group.index} of {group.total}</div>}
 
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 460px', gap: 20, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : asPrinted ? 'minmax(0, 1.15fr) minmax(540px, 1fr)' : 'minmax(0, 1fr) 460px', gap: 20, alignItems: 'start' }}>
         {/* Receipt */}
         <div className="card" style={{ padding: 14 }}>
           {allowance ? <AllowanceCard expense={exp} base={baseCurrency} /> : <ReceiptViewer key={id} receipt={exp.receipt} page={exp.page} box={exp.box} token={imageToken} height={isMobile ? 520 : 800}
@@ -266,7 +273,7 @@ export default function ExpenseReview() {
               {allowance ? 'Worked out from your company’s rate, so there is nothing to type here.' : 'Read from the receipt. Check each one, then say what it was for.'}
             </div>
             {looseFlags.length > 0 && <div style={{ marginBottom: 14 }}><FlagList flags={looseFlags} /></div>}
-            <ReceiptFields fields={PAGE_FIELDS} form={rf.form} onChange={rf.set} expense={exp} disabled={detailsLocked}
+            <ReceiptFields fields={fields} form={rf.form} onChange={rf.set} expense={exp} disabled={detailsLocked}
                            categories={categories} currencies={currencies} invalid={invalid} idPrefix="f" />
             <div className="form-group">
               <label className="form-label" htmlFor="f-report">Case</label>
@@ -279,11 +286,28 @@ export default function ExpenseReview() {
             {exp.description && !allowance && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Reader's note: {exp.description}</div>}
           </div>
 
+          {asPrinted && (
+            <PrintedPanel key={id} printed={rf.printed} onChange={rf.editPrinted} read={exp.aiRead?.printed || null} lines={exp.lines}
+                          currency={rf.form.currency || exp.currency} categories={categories} fallbackCategory={categoryOf(exp) || exp.category || ''}
+                          disabled={detailsLocked} compact={isMobile} flags={printedFlags(exp.flags)} changed={rf.printedChanged}
+                          invalid={invalid.includes('total') || invalid.includes('lines')} idPrefix="pp" />
+          )}
+
           <ExchangeRatePanel expense={exp} baseCurrency={baseCurrency} tz={user?.timezone} busy={busy} disabled={detailsLocked}
                              onRefresh={refreshFx} onSetRate={submitRate} />
 
-          <LinesEditor lines={rf.lines} currency={rf.form.currency} total={rf.form.total} categories={categories} disabled={detailsLocked}
-                       onLine={rf.setLine} onEdit={rf.editLines} flags={flagsOn(exp.flags, 'lines')} invalid={invalid.includes('lines')} />
+          {!asPrinted && (
+            <div>
+              <LinesEditor lines={rf.lines} currency={rf.form.currency} total={rf.form.total} categories={categories} disabled={detailsLocked}
+                           onLine={rf.setLine} onEdit={rf.editLines} flags={flagsOn(exp.flags, 'lines')} invalid={invalid.includes('lines')} />
+              {/* Read before receipts kept their rows: reading it again keeps them. */}
+              {canReread && (
+                <div className="pp-reread">
+                  <button type="button" className="pp-link" disabled={!!busy} onClick={reread}>Read again to see the receipt as printed</button>
+                </div>
+              )}
+            </div>
+          )}
 
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
             <button className="btn btn-outline" disabled={!!busy || detailsLocked} onClick={() => save()}>{busy === 'save' ? 'Saving…' : 'Save'}</button>

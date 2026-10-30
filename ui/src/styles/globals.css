@@ -3014,3 +3014,201 @@ a.ca-receipt:focus-visible, .ca-receipts a:focus-visible { outline: 2px solid va
 /* The assistant's Ask button floats over the bottom of the page; the details
    form keeps room under its last field (Notes) for it. */
 .mobile-mode .cs-details.is-editing { padding-bottom: 72px; }
+
+/* ══ A receipt as printed (2026-10-30) ═════════════════════════════════════════
+   components/receipt/PrintedPanel.jsx, which stands in for the lines editor
+   and the Total and Tax boxes on a receipt that keeps what it printed; and
+   the tax line under a receipt's amount in a case's receipts. Full: one grid
+   for every row, so the amounts of the items, the charges and the total line
+   up under one another. Narrower than the whole table, "Paid for" goes under
+   its row; the case review's pane and a phone draw the compact variant, a
+   line per row that opens a sheet. The rules of the sections above hold:
+   theme tokens only, a status said in words as well as colour, 44px targets
+   under .mobile-mode, rings on :focus-visible. Classes start with pp-.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp { container-type: inline-size; }
+.rv .pp, .pp:not(.card) { padding: 12px 0; border-top: 1px solid var(--border); }
+.pp.card:hover { transform: none; }
+.pp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.pp-head .card-title, .pp-head .rcpt-section-title { margin-bottom: 0; }
+.pp-cur { font: 600 12px var(--font-mono); letter-spacing: 0.04em; color: var(--text-muted); }
+.pp .card-subtitle { margin-bottom: 12px; }
+
+.pp-link:focus-visible,
+.pp-line:focus-visible,
+.pp-menu-btn:focus-visible,
+.pp .pp-adds .btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* ── The table ── */
+/* Item, Qty, Amount, Category, Paid for, (Tax), the row's menu. */
+.pp-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px 92px 118px 104px 30px;
+  gap: 4px 6px;
+  align-items: center;
+  padding: 2px 0;
+}
+.pp.has-tax .pp-row { grid-template-columns: minmax(0, 1fr) 52px 92px 118px 104px 62px 30px; }
+.pp-colhead {
+  padding-bottom: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.pp-r { text-align: right; }
+.pp .pp-in { padding: 6px 8px; font-size: 13px; border-width: 1px; }
+.pp .pp-in:disabled { opacity: 1; color: var(--text-secondary); background: var(--bg-secondary); }
+.pp-amt, .pp-num, .pp-rate .pp-in { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.pp-rate { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.pp-rate .pp-in { min-width: 0; padding-left: 4px; padding-right: 4px; }
+.pp-pct { font-size: 12px; color: var(--text-muted); }
+.pp-paid { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pp-paid-word { display: none; font-size: 12px; color: var(--text-muted); }
+.pp-menu-btn { padding: 4px 0; width: 30px; justify-content: center; font-size: 15px; line-height: 1; }
+.pp-menu-btn .ui-menu-caret { display: none; }
+.pp-row .ui-menu-wrap { display: flex; justify-content: center; }
+.pp-labelcell { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pp-incl-word { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.pp-fill { grid-column: 4 / -2; min-width: 0; font-size: 11.5px; color: var(--text-muted); overflow-wrap: anywhere; }
+.pp-ai { grid-column: 1 / -1; margin-top: 0; padding-left: 2px; }
+.pp-ai-top { margin-top: 0; }
+
+/* A row printed under another (a folio's tax on a charge, an item's
+   discount): indented, with a hook pointing at the row it is on. */
+.pp-row.is-sub .pp-labelcell { padding-left: 18px; position: relative; }
+.pp-row.is-sub .pp-labelcell::before { content: '↳'; position: absolute; left: 3px; font-size: 12px; color: var(--text-muted); }
+.pp-row.is-sub .pp-in { font-size: 12.5px; }
+
+.pp-adds { display: flex; flex-wrap: wrap; gap: 2px 4px; margin: 4px 0 0 -6px; }
+.pp-adds .btn { padding: 4px 8px; color: var(--accent-ink); }
+.pp-adds.is-items { margin-bottom: 4px; }
+
+/* ── The foot: subtotal, what the receipt adds or takes off, the total ── */
+.pp-foot { padding-top: 6px; border-top: 1px solid var(--border); }
+.pp-sum-label { grid-column: 1 / 3; justify-self: end; font-size: 12.5px; font-weight: 600; color: var(--text-secondary); }
+.pp-row.is-total {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 3px double var(--border);
+}
+.pp-row.is-total .pp-sum-label { font-size: 13.5px; font-weight: 700; color: var(--text-primary); }
+.pp-row.is-total .pp-amt { font-weight: 700; }
+.pp-row.is-total.is-invalid .pp-amt, .pp-top.is-invalid .pp-amt { border-color: var(--danger); }
+.pp-fold-label { font-size: 13px; font-weight: 600; color: var(--text-primary); padding-left: 9px; }
+.pp-fold-rate, .pp-fold-amt { font: 13px var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--text-primary); }
+.pp-fold-amt { padding-right: 9px; }
+.pp-fold-each { padding-bottom: 2px; }
+.pp-incl { margin-top: 2px; }
+.pp-incl .pp-in { color: var(--text-secondary); }
+
+/* A button that reads as a link: "+ add 0.30", "on 8 charges". */
+.pp-link {
+  padding: 0 2px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--accent-ink);
+  font: 600 12px var(--font-sans);
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.pp-link:hover { text-decoration-color: currentColor; }
+
+/* The rows not coming to the total: said once, quietly, under it. */
+.pp-gap { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin-top: 8px; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+.pp-gap:empty { display: none; }
+.pp-flags { margin: 8px 0 0; }
+.pp-claimed { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12.5px; line-height: 1.55; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.pp-claimed-word { font-weight: 600; color: var(--text-primary); }
+.pp-stale { color: var(--text-muted); }
+
+/* Narrower than the whole table (the receipt page's column): "Paid for" goes
+   under its row, and only on a row paid for someone. */
+@container (max-width: 600px) {
+  .pp-row { grid-template-columns: minmax(0, 1fr) 48px 88px 112px 30px; }
+  .pp-paid, .pp-paid-head { display: none; }
+  .pp-row.has-paid .pp-paid { display: flex; grid-row: 2; grid-column: 1 / -2; padding-left: 18px; }
+  .pp-paid-word { display: inline; }
+  .pp-row.has-paid .pp-paid .pp-in { max-width: 240px; }
+}
+@container (max-width: 660px) {
+  .pp.has-tax .pp-row { grid-template-columns: minmax(0, 1fr) 48px 88px 104px 56px 30px; }
+  .pp.has-tax .pp-paid, .pp.has-tax .pp-paid-head { display: none; }
+  .pp.has-tax .pp-row.has-paid .pp-paid { display: flex; grid-row: 2; grid-column: 1 / -2; padding-left: 18px; }
+  .pp.has-tax .pp-paid-word { display: inline; }
+}
+
+/* ── Compact: a line per row ── */
+.pp-lines { list-style: none; margin: 0; padding: 0; }
+.pp.is-compact > .pp-lines { margin-top: 8px; }
+.pp-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 4px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-primary);
+  font: 13px/1.4 var(--font-sans);
+  text-align: left;
+}
+button.pp-line { cursor: pointer; }
+button.pp-line:hover { background: var(--bg-hover); }
+.pp-line-item + .pp-line-item { border-top: 1px solid var(--border); }
+.pp-line-item.is-sub .pp-line { padding-left: 22px; position: relative; font-size: 12.5px; }
+.pp-line-item.is-sub .pp-line::before { content: '↳'; position: absolute; left: 6px; color: var(--text-muted); }
+.pp-line-item .pp-lines .pp-line-item { border-top: none; }
+.pp-line-main { display: flex; flex-direction: column; min-width: 0; }
+.pp-line-label { overflow-wrap: anywhere; }
+.pp-line-sub { font-size: 11.5px; color: var(--text-muted); }
+.pp-line-amt { flex: none; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.pp.is-compact .pp-foot { margin-top: 6px; }
+.pp.is-compact .pp-foot > .pp-lines { margin: 2px 0; }
+.pp-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 10px; padding: 4px 0 4px 4px; }
+.pp-top-label { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); }
+.pp-top .pp-amt { width: 120px; flex: none; }
+.pp-top .rcpt-ai { flex-basis: 100%; justify-content: flex-end; }
+.pp-top.is-total { margin-top: 4px; padding-top: 8px; border-top: 3px double var(--border); }
+.pp-top.is-total .pp-top-label { font-size: 13.5px; font-weight: 700; color: var(--text-primary); }
+.pp-top.is-total .pp-amt { font-weight: 700; }
+.pp-lines.is-incl .pp-line { color: var(--text-secondary); }
+
+/* The sheet with one row's boxes. */
+.pp-sheet-title { margin: 0 0 4px; font-size: 16px; font-weight: 700; color: var(--text-primary); overflow-wrap: anywhere; }
+.pp-sheet-on { margin-bottom: 10px; }
+.pp-sheet .form-group { margin-bottom: 12px; }
+.pp-sheet-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.pp-sheet-incl { margin: 0 0 12px; padding: 0; border: none; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; color: var(--text-primary); }
+.pp-sheet-incl label { display: flex; align-items: center; gap: 8px; }
+.pp-sheet-ai { margin: 0 0 12px; }
+.pp-sheet-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 16px; }
+.pp-sheet-remove { color: var(--danger); }
+
+.mobile-mode .pp-line { min-height: 44px; align-items: center; }
+.mobile-mode .pp-adds .btn, .mobile-mode .pp-link { min-height: 44px; }
+.mobile-mode .pp-top .pp-amt { width: 132px; }
+.mobile-mode .pp-sheet-incl label { min-height: 44px; }
+.mobile-mode .pp-sheet-actions .btn { flex: 1 1 0; }
+
+/* ── A case's receipts: the tax under the amount ── */
+.pp-taxline { display: block; margin-top: 1px; font-size: 11.5px; font-weight: 400; color: var(--text-muted); white-space: nowrap; }
+.cs-ritem-side .pp-taxline { text-align: right; }
+
+/* A link under the lines editor of a receipt read before it kept its rows. */
+.pp-reread { margin-top: 8px; font-size: 12.5px; color: var(--text-muted); }
+.pp-reread .pp-link { font-size: 12.5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pp-line, .pp-link { transition: none; }
+}

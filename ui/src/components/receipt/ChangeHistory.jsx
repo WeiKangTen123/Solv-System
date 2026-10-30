@@ -34,9 +34,16 @@ export default function ChangeHistory({ items, all, onAll, me, tz, bare = false 
           {g.rows.map(c => (
             <div key={c.id} style={{ fontSize: 12.5, lineHeight: 1.5, overflowWrap: 'anywhere' }}>
               <span style={{ fontWeight: 600 }}>{c.label}</span>{': '}
-              <span style={{ color: 'var(--text-muted)', textDecoration: c.oldValue ? 'line-through' : 'none' }}>{c.oldValue || 'empty'}</span>
-              {' → '}
-              <span>{c.newValue || 'empty'}</span>
+              {/* The rows as printed change many at a time, so the log says the
+                  change in one sentence ("SST 6% 1.58 → 1.60 · Added Teh tarik
+                  5.60") with nothing before it. */}
+              {c.field === 'printed' ? <span>{c.newValue || 'changed'}</span> : (
+                <>
+                  <span style={{ color: 'var(--text-muted)', textDecoration: c.oldValue ? 'line-through' : 'none' }}>{c.oldValue || 'empty'}</span>
+                  {' → '}
+                  <span>{c.newValue || 'empty'}</span>
+                </>
+              )}
             </div>
           ))}
         </div>
