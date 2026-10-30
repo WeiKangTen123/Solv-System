@@ -224,6 +224,22 @@ describe('xero/bills — postReport', () => {
     expect(reports.getReport(report.id).status).toBe('claimed');
   });
 
+  // From the store, through the payload, to the bill: a Singapore receipt
+  // kept as printed, its GST worked out because it prints only "includes GST".
+  test('a receipt kept as printed posts its tax as printed, from the record the store keeps', async () => {
+    const row = (kind, label, amount, extra = {}) => ({ kind, label, qty: null, unitPrice: null, amount, rate: null, included: false, worked: false, category: null, onBehalfOf: null, taxRate: null, on: null, ...extra });
+    const e = store.createExpense({ companyId: admin.companyId, userId: emp.id, status: 'reviewed', merchant: 'Toast Box', currency: 'SGD', total: 21.8, tax: 1.8, receiptDate: '2026-09-05', category: 'Meals',
+      printed: { v: 1, subtotal: null, total: 21.8, rows: [row('item', 'Kaya toast set', 21.8, { qty: 2, category: 'Meals' }), row('tax', 'GST', 1.8, { rate: 9, included: true, worked: true })] } });
+    require('../receipts/edit').linesFromRecord(e.id);
+    const l = store.getExpense(e.id).lines[0];
+    store.updateLine(l.id, { fxRate: 1, fxRateDate: '2026-09-05', fxSource: 'base', baseAmount: 21.8 });
+    reports.addExpense(report.id, e.id);
+    wf.markClaimed(report.id, emp);
+    const out = await bills.postReport(report.id, admin, { dryRun: true });
+    expect(out.bill.invoice.lineItems[1]).toMatchObject({ unitAmount: 21.8, taxType: 'INPUT', taxAmount: 1.8, description: expect.stringMatching(/Toast Box · Meals · GST 9%$/) });
+    expect(out.bill.total).toBe(23.14);
+  });
+
   test('posts the bill, attaches the receipt, records the Xero id and an event', async () => {
     wf.markClaimed(report.id, emp);
     mockCreateInvoices.mockResolvedValue({ body: { invoices: [{ invoiceID: 'xero-bill-1' }] } });

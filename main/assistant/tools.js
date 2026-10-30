@@ -9,7 +9,7 @@ const { canView } = require('../middleware/roles');
 const { CATEGORY_NAMES, canonicalCategory } = require('../intake/categories');
 const { localDate } = require('../utils/zone-date');
 const astore  = require('./store');
-const { rateBasis } = require('./actions');
+const { rateBasis, categoryNow } = require('./actions');
 const { caseSuggestion, purposeDraft } = require('../reports/cover-help');
 const { coverPatch, sameCover } = require('../reports/cover-patch');
 const { changeNote } = require('../reports/cover-auto');
@@ -95,7 +95,7 @@ function _receipt(ctx, id) {
   if (!e || !canView(ctx.actor, e.userId, e.companyId)) no('No receipt with that id that this person can see.');
   return e;
 }
-const _category = e => (e.lines.length > 1 ? 'split across lines' : edit.categoryOf(e));
+const _category = e => categoryNow(e) || (e.lines.length > 1 ? 'split across lines' : null);
 // Today in the company's zone, worked out once per turn rather than once for
 // every receipt checked.
 const _today = ctx => ctx.today || (ctx.today = localDate(ctx.company.timezone));
@@ -213,9 +213,15 @@ function _readerRead(e) {
   const { printed: _printed, ...rest } = e.aiRead;
   return rest;
 }
-// A receipt kept as printed has its lines made from its items, and its tax
-// from its tax rows: neither is changed on its own.
-const FROM_ITEMS = "This receipt's lines come from its items; change the items instead.";
+// A receipt kept as printed has its lines made from its items and its tax
+// from its tax rows (receipts/edit.js): neither is proposed on its own. A new
+// category moves its items with it only while they are all in the receipt's
+// one category, as on the page.
+function _printedPatchOk(e, patch) {
+  if (patch.tax !== undefined) no(edit.TAX_FROM_ROWS);
+  const sorted = (e.printed.rows || []).filter(r => ['item', 'charge', 'discount'].includes(r.kind));
+  if (patch.category && !sorted.every(r => !r.category || r.category === e.category)) no("This receipt's categories come from its items; change the items instead.");
+}
 
 // ── Reading tools ────────────────────────────────────────────────────────────
 
@@ -509,9 +515,7 @@ const PROPOSE = {
         if (k === 'category' && _same(k, patch[k], _category(e))) { delete patch[k]; continue; }
         from[k] = k === 'category' ? _category(e) : (e[k] ?? null);
       }
-      // One kept as printed takes its category from its items and its tax
-      // from its tax rows, which a card of fields cannot change.
-      if (e.printed && (patch.tax !== undefined || patch.category)) no("This receipt's category comes from its items and its tax from its tax rows; change those on the receipt instead.");
+      if (e.printed) _printedPatchOk(e, patch);
       if (!Object.keys(patch).length) no('Those are already the values on the receipt.');
       const summary = `${_label(ctx, e)}: ${Object.keys(patch).map(k => `${changes.LABEL[k] || k} ${_show(k, from[k])} → ${_show(k, patch[k])}`).join('; ')}`;
       return _propose(ctx, { expense: e, kind: 'edit_details', payload: { expenseId: e.id, patch, from, reason: String(a.reason || '').slice(0, 300) }, summary });
@@ -531,7 +535,7 @@ const PROPOSE = {
     run(ctx, a) {
       const e = _receipt(ctx, a.id);
       _detailsOk(ctx, e);
-      if (e.printed) no(FROM_ITEMS);
+      if (e.printed) no(edit.LINES_FROM_ITEMS);
       const lines = Array.isArray(a.lines) ? a.lines : [];
       if (!lines.length || lines.length > 50) no('Give between one and fifty lines.');
       const clean = lines.map(l => {

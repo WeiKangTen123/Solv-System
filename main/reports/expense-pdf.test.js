@@ -151,7 +151,8 @@ describe('reports/expense-pdf — the document', () => {
 
   test('tax by rate, as printed: one row per name and rate in each currency, with its receipts, the base currency first', () => {
     const m = pdf.pdfModel(printed());
-    expect(m.tax.local.map(g => [g.name, g.receipts, g.amount, g.base])).toEqual([['GST 9%', 1, 1.8, 1.8]]);
+    // Worked out, because the receipt printed only "includes GST": said so.
+    expect(m.tax.local.map(g => [g.name, g.receipts, g.amount, g.base])).toEqual([['GST 9%, worked out', 1, 1.8, 1.8]]);
     // Two receipts printed SST 6%; the hotel's Service Tax 8% is a row of its own, not summed into it.
     expect(m.tax.foreign.map(g => [g.currency, g.name, g.receipts, g.amount, g.base])).toEqual([
       ['INR', 'CGST 9%', 1, 1710, 26.35], ['INR', 'SGST 9%', 1, 1710, 26.35],

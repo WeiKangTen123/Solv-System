@@ -14,12 +14,15 @@ const cents = n => Math.round(Number(n || 0) * 100);
 // `tax` and `baseTax` are their sums, so what reads only those two still
 // adds up to what was printed. `gross` is the part of the line's amount the
 // tax was charged on, tax included, which is what Xero takes as an inclusive
-// line (xero/bills.js).
-function printedTaxes(list, currency, rate) {
+// line (xero/bills.js). `worked` names the taxes the receipt gave no amount
+// for, worked out instead (a Singapore receipt that prints only "includes
+// GST"); a line's taxes do not carry that, the receipt's record does.
+function printedTaxes(list, currency, rate, worked = new Set()) {
   const taxes = list.map(t => {
     const amount = cents(t.amount) / 100;
     const gross = t.gross === null || t.gross === undefined ? null : cents(t.gross) / 100;
-    return { label: t.label || null, rate: t.rate ?? null, amount, included: !!t.included, gross, ...(t.worked ? { worked: true } : {}),
+    const out = t.worked || worked.has(_taxKey(t));
+    return { label: t.label || null, rate: t.rate ?? null, amount, included: !!t.included, gross, ...(out ? { worked: true } : {}),
       baseAmount: rate ? Math.round(cents(amount) * rate) / 100 : null,
       baseGross: rate && gross !== null ? Math.round(cents(gross) * rate) / 100 : null };
   });
@@ -30,6 +33,8 @@ function printedTaxes(list, currency, rate) {
     taxText: taxes.length ? taxes.map(t => taxSaid(t, currency)).join('; ') : null,
   };
 }
+const _taxKey = t => `${String(t.label || '').trim().toLowerCase()}|${t.rate ?? ''}`;
+const _worked = p => new Set((p && Array.isArray(p.rows) ? p.rows : []).filter(r => r.kind === 'tax' && r.worked).map(_taxKey));
 
 // Receipt pages as JPEG data URIs for a portrait A4 page. sharp is loaded
 // lazily, as in the thumbnailer, so a missing native module degrades to "no
@@ -107,6 +112,7 @@ async function reportPayload(reportId, { withReceipts = true } = {}) {
     // the amounts instead, with the last line taking the rounding residual so
     // the parts still add up to what was printed.
     const kept = e.lines.some(l => Array.isArray(l.taxes));
+    const worked = kept ? _worked(e.printed) : null;
     const taxCents = kept ? 0 : Math.round(Number(e.tax || 0) * 100);
     const lineCents = e.lines.map(l => Math.round(Number(l.amount || 0) * 100));
     const totalCents = lineCents.reduce((a, b) => a + b, 0);
@@ -119,7 +125,7 @@ async function reportPayload(reportId, { withReceipts = true } = {}) {
         fxAskedDate: l.fxAskedDate, fxNotOnTheDay: l.fxNotOnTheDay,
         baseAmount: l.baseAmount, onBehalfOf: l.onBehalfOf };
       if (kept) {
-        Object.assign(line, printedTaxes(Array.isArray(l.taxes) ? l.taxes : [], currency, rate || (currency === company.baseCurrency ? 1 : null)));
+        Object.assign(line, printedTaxes(Array.isArray(l.taxes) ? l.taxes : [], currency, rate || (currency === company.baseCurrency ? 1 : null), worked));
       } else {
         const share = !taxCents || !totalCents ? 0
           : i === e.lines.length - 1 ? taxCents - spread

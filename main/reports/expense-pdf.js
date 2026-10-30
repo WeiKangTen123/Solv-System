@@ -202,8 +202,10 @@ function taxByRate(rows, base) {
     if (r.taxes) {
       for (const t of r.taxes) {
         if (!(cents(t.amount) > 0)) continue;
+        // A tax worked out because the receipt printed no amount is not as
+        // printed, and says so on a row of its own.
         const rate = Number.isFinite(Number(t.rate)) && t.rate !== null && t.rate !== '' ? Number(t.rate) : '';
-        add(r, `${r.currency}|${String(t.label || '').trim().toLowerCase()}|${rate}`, taxName(t), t.amount, t.baseAmount);
+        add(r, `${r.currency}|${String(t.label || '').trim().toLowerCase()}|${rate}|${t.worked ? 'w' : ''}`, `${taxName(t)}${t.worked ? ', worked out' : ''}`, t.amount, t.baseAmount);
       }
     } else if (r.tax > 0) add(r, `${r.currency}|~`, TAX_NOT_KEPT, r.tax, r.baseTax);
   }

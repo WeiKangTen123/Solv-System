@@ -167,11 +167,16 @@ function _rowItem(row, side, receipt, currency) {
     return newV ? set('moved_out', `Moved ${m} to ${newV}`) : set('taken_out', `Took ${m} out of the case`);
   }
   if (row.field === 'printed') {
-    // A receipt kept as printed logs a change to it already in words
-    // (store/changes.js): "SST 6% 1.58 → 1.60", "Added Teh tarik 5.60". They
-    // are said as written. Put through the other fields' wording they read
-    // "as printed set to …", with the first letter lowered: "sST 6%".
-    const said = oldV && newV ? `${oldV} → ${newV}` : newV || oldV || 'Changed what the receipt printed';
+    // A receipt kept as printed logs a change to it already in words, as one
+    // row (receipts/printed.js describeChange): "SST 6% 1.58 → 1.60 · Added
+    // Teh Tarik 5.60", "Kept as printed: 3 items · SST 6% 1.58" the first
+    // time, "No longer kept as printed" after a merge. They are said as
+    // written. Put through the other fields' wording they read "as printed
+    // set to …", with the first letter lowered: "sST 6%".
+    const said = newV || oldV || 'Changed what the receipt printed';
+    if (/^No longer kept as printed/.test(said)) return set('edited', `${_cap(m)} is no longer kept as printed`, said);
+    const first = said.match(/^Kept as printed: (.*)$/);
+    if (first) return set('edited', `Kept ${m} as printed: ${first[1]}`, said);
     return set('edited', `Edited ${m} as printed: ${said}`, said);
   }
   if (row.field === 'status') {

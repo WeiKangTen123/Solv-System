@@ -23,6 +23,13 @@ function rateBasis(e) {
   const l = (e && e.lines[0]) || {};
   return { currency: (e && e.currency) || null, rate: l.fxRate ?? null, source: l.fxSource ?? null, reason: l.fxOverrideReason ?? null };
 }
+// A receipt's category as a card sees it. A receipt kept as printed has the
+// receipt's own while every line is in it: its two lines, the claimant's and
+// a colleague's, both Meals, say Meals. Otherwise a single line's, as ever.
+function categoryNow(e) {
+  if (e && e.printed && e.lines.length && e.lines.every(l => l.category === e.category)) return e.category || null;
+  return edit.categoryOf(e);
+}
 // A rate card refuses once the rate it was made against has moved: a rate
 // typed on the page after the card was made was being overwritten by the
 // card's, or by a refresh, without anybody seeing it.
@@ -48,19 +55,18 @@ async function _do(a, actor) {
       const cur = store.getExpense(p.expenseId);
       if (!cur) fail(404, 'The receipt is gone.');
       for (const [k, was] of Object.entries(p.from || {})) {
-        const now = k === 'category' ? edit.categoryOf(cur) : cur[k];
+        const now = k === 'category' ? categoryNow(cur) : cur[k];
         if (!edit.sameValue(k, now, was)) _stale(`${changes.LABEL[k] || k} is now ${now ?? 'empty'}`);
       }
-      const patch = p.patch || {};
-      if (cur.printed && (patch.tax !== undefined || patch.category)) fail(409, "This receipt's category comes from its items and its tax from its tax rows; change those on the receipt instead.");
       return edit.editDetails(p.expenseId, p.patch, actor, opts);
     }
     case 'edit_lines': {
       const cur = store.getExpense(p.expenseId);
       if (!cur) fail(404, 'The receipt is gone.');
       // Read again as printed since the card was made: its lines come from
-      // its items now (receipts/printed.js), as the page says.
-      if (cur.printed) fail(409, "This receipt's lines come from its items; change the items instead.");
+      // its items now, and the page's own refusal says so better than "its
+      // lines are not the ones the card was made for".
+      if (cur.printed) fail(409, edit.LINES_FROM_ITEMS);
       if (p.basis !== undefined && changes.linesSummary(cur.lines) !== p.basis) _stale('its lines are not the ones the card was made for');
       if (p.total !== undefined && !edit.sameValue('total', cur.total, p.total)) _stale(`the total is now ${cur.total}`);
       return edit.editLines(p.expenseId, p.lines, actor, opts);
@@ -134,4 +140,4 @@ function dismiss(id, actor) {
   return astore.getAction(a.id, actor.id);
 }
 
-module.exports = { apply, dismiss, rateBasis, MAX_AGE_MS };
+module.exports = { apply, dismiss, rateBasis, categoryNow, MAX_AGE_MS };

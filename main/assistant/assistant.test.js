@@ -154,58 +154,67 @@ describe('assistant', () => {
   // A receipt kept as printed (receipts/printed.js): its rows are what the
   // receipt says, its lines are made from them, and its tax from its tax rows.
   describe('a receipt kept as printed', () => {
+    const row = (kind, label, amount, extra = {}) => ({ kind, label, qty: null, unitPrice: null, amount, rate: null, included: false, worked: false, category: null, onBehalfOf: null, taxRate: null, on: null, ...extra });
     const PRINTED = { v: 1, subtotal: 23.9, total: 27.85, rows: [
-      { kind: 'item', label: 'Nasi Kandar Ayam', qty: 1, unitPrice: 12.5, amount: 12.5, rate: null, included: false, worked: false, category: 'Meals', onBehalfOf: null, taxRate: null, on: null },
-      { kind: 'item', label: 'Teh Tarik', qty: 2, unitPrice: 2.8, amount: 5.6, rate: null, included: false, worked: false, category: 'Meals', onBehalfOf: 'Jane Tan', taxRate: null, on: null },
-      { kind: 'charge', label: 'Service Charge', qty: null, unitPrice: null, amount: 2.39, rate: 10, included: false, worked: false, category: null, onBehalfOf: null, taxRate: null, on: null },
-      { kind: 'tax', label: 'SST', qty: null, unitPrice: null, amount: 1.58, rate: 6, included: false, worked: false, category: null, onBehalfOf: null, taxRate: null, on: null },
-      { kind: 'rounding', label: 'Rounding Adj', qty: null, unitPrice: null, amount: -0.02, rate: null, included: false, worked: false, category: null, onBehalfOf: null, taxRate: null, on: null },
+      row('item', 'Nasi Kandar Ayam', 12.5, { qty: 1, unitPrice: 12.5, category: 'Meals' }),
+      row('item', 'Roti Canai', 4, { qty: 2, unitPrice: 2, category: 'Meals' }),
+      row('item', 'Teh Tarik', 5.6, { qty: 2, unitPrice: 2.8, category: 'Meals', onBehalfOf: 'Jane Tan' }),
+      row('item', 'Air Limau', 1.8, { qty: 1, unitPrice: 1.8, category: 'Meals' }),
+      row('charge', 'Service Charge', 2.39, { rate: 10 }),
+      row('tax', 'SST', 1.58, { rate: 6 }),
+      row('rounding', 'Rounding Adj', -0.02),
     ] };
-    // Until the store keeps the record, the receipt is given one as the store will.
-    const kept = e => {
-      const real = store.getExpense;
-      jest.spyOn(store, 'getExpense').mockImplementation(id => {
-        const x = real(id);
-        if (!x || x.id !== e.id) return x;
-        return { ...x, printed: PRINTED, aiRead: { ...(x.aiRead || {}), printed: PRINTED },
-          lines: x.lines.map(l => ({ ...l, taxes: [{ label: 'SST', rate: 6, amount: 1.58, included: false, gross: 27.87 }] })) };
-      });
+    // The record as the reader writes it, and the lines made from it.
+    const kept = (e, printed = PRINTED) => {
+      const x = store.getExpense(e.id);
+      store.updateExpense(e.id, { printed, tax: 1.58, subTotal: printed.subtotal, aiRead: { ...(x.aiRead || {}), printed } });
+      require('../receipts/edit').linesFromRecord(e.id);
+      return store.getExpense(e.id);
     };
-    afterEach(() => jest.restoreAllMocks());
+    const nasi = (extra = {}) => seed(emp, { merchant: 'Restoran Nasi Kandar Pelita', currency: 'MYR', total: 27.85, category: 'Meals', lines: [{ category: 'Meals', amount: 27.85 }], ...extra });
 
     test('get_receipt gives its rows as printed, and the reader\'s first read without a second copy of them', async () => {
-      const e = seed(emp, { merchant: 'Restoran Nasi Kandar Pelita', currency: 'MYR', total: 27.85, lines: [{ category: 'Meals', amount: 27.85 }] });
+      const e = nasi();
       store.updateExpense(e.id, { aiRead: { merchant: 'Restoran Nasi Kandar Pelita', total: 27.85 } });
       kept(e);
       const out = await tools.run(ctxFor(emp), 'get_receipt', { id: e.id });
       expect(out.asPrinted.rows).toEqual([
         { kind: 'item', label: 'Nasi Kandar Ayam', amount: 12.5, qty: 1, category: 'Meals' },
+        { kind: 'item', label: 'Roti Canai', amount: 4, qty: 2, category: 'Meals' },
         { kind: 'item', label: 'Teh Tarik', amount: 5.6, qty: 2, category: 'Meals', onBehalfOf: 'Jane Tan' },
+        { kind: 'item', label: 'Air Limau', amount: 1.8, qty: 1, category: 'Meals' },
         { kind: 'charge', label: 'Service Charge', amount: 2.39, rate: 10 },
         { kind: 'tax', label: 'SST', amount: 1.58, rate: 6 },
         { kind: 'rounding', label: 'Rounding Adj', amount: -0.02 },
       ]);
       expect(out.asPrinted).toMatchObject({ subtotal: 23.9, total: 27.85 });
       expect(out.readerRead).toEqual({ merchant: 'Restoran Nasi Kandar Pelita', total: 27.85 });
-      expect(out.lines[0].taxes).toEqual(['SST 6% 1.58']);
+      // The SST shared between the claimant's line and the colleague's drinks.
+      expect(out.lines.map(l => [l.amount, l.onBehalfOf, l.taxes])).toEqual([[21.32, undefined, ['SST 6% 1.21']], [6.53, 'Jane Tan', ['SST 6% 0.37']]]);
       // A receipt from before has no rows to give.
       expect((await tools.run(ctxFor(emp), 'get_receipt', { id: seed(emp).id })).asPrinted).toBeUndefined();
     });
 
     test('its lines are not proposed apart from its items, nor its tax apart from its tax rows', async () => {
-      const e = seed(emp, { merchant: 'Restoran Nasi Kandar Pelita', currency: 'MYR', total: 27.85, tax: 1.58, lines: [{ category: 'Meals', amount: 27.85 }] });
+      const e = nasi();
       kept(e);
       const ctx = ctxFor(emp);
       expect((await tools.run(ctx, 'propose_lines', { id: e.id, lines: [{ category: 'Meals', amount: 20 }, { category: 'Meals', amount: 7.85, onBehalfOf: 'Jane Tan' }], reason: 'x' })).error)
         .toBe("This receipt's lines come from its items; change the items instead.");
-      expect((await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { tax: 1.6 }, reason: 'x' })).error).toMatch(/tax from its tax rows/);
-      expect((await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { category: 'Entertainment' }, reason: 'x' })).error).toMatch(/category comes from its items/);
+      expect((await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { tax: 1.6 }, reason: 'x' })).error).toBe("This receipt's tax comes from its tax rows; change those instead.");
       // The same tax again is no change, and the rest is a card as before.
       expect(await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { tax: 1.58, purpose: 'Team lunch' }, reason: 'x' })).toMatchObject({ proposed: true });
+      // Its items all in the receipt's category: a new one moves them, as on the page; applied, the lines follow.
+      expect((await tools.run(ctx, 'propose_receipt_changes', { id: e.id, changes: { category: 'Entertainment' }, reason: 'Client lunch' })).summary).toMatch(/Category Meals → Entertainment$/);
+      expect(await actions.apply(ctx.proposals[1].id, as(emp))).toMatchObject({ status: 'applied' });
+      expect(store.getExpense(e.id).lines.map(l => l.category)).toEqual(['Entertainment', 'Entertainment']);
+      // Items in two categories: changed one by one on the receipt, not here.
+      const mixed = kept(nasi(), { ...PRINTED, rows: PRINTED.rows.map(r => (r.label === 'Teh Tarik' ? { ...r, category: 'Entertainment' } : r)) });
+      expect((await tools.run(ctx, 'propose_receipt_changes', { id: mixed.id, changes: { category: 'Other' }, reason: 'x' })).error).toMatch(/categories come from its items/);
     });
 
     test('a split card made before the receipt was read again as printed does not apply', async () => {
-      const e = seed(emp, { currency: 'MYR', total: 27.85, lines: [{ category: 'Meals', amount: 27.85 }] });
+      const e = nasi();
       const ctx = ctxFor(emp);
       await tools.run(ctx, 'propose_lines', { id: e.id, lines: [{ category: 'Meals', amount: 20 }, { category: 'Meals', amount: 7.85, onBehalfOf: 'Jane Tan' }], reason: 'x' });
       kept(e);

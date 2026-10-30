@@ -19,8 +19,10 @@ describe('reports/expense-payload — tax as printed', () => {
         { category: 'Lodging', amount: 342.64, currency: 'MYR', fxRate: 0.3049, baseAmount: 104.47, taxes: [{ label: 'Service Tax', rate: 8, amount: 24.64, included: false, gross: 332.64 }] },
         { category: 'Meals', amount: 99.11, currency: 'MYR', fxRate: 0.3049, baseAmount: 30.22, taxes: [{ label: 'SST', rate: 6, amount: 5.61, included: false, gross: 99.11 }] },
       ], { tax: 30.25 }),
+      // The record says the GST was worked out; the line's taxes do not.
       expense('Toast Box', 'SGD', [{ category: 'Meals', amount: 21.8, currency: 'SGD', fxRate: 1, fxSource: 'base', baseAmount: 21.8,
-        taxes: [{ label: 'GST', rate: 9, amount: 1.8, included: true, gross: 21.8, worked: true }] }], { tax: 1.8 }),
+        taxes: [{ label: 'GST', rate: 9, amount: 1.8, included: true, gross: 21.8 }] }],
+      { tax: 1.8, printed: { v: 1, subtotal: null, total: 21.8, rows: [{ kind: 'item', label: 'Kaya toast set', amount: 21.8 }, { kind: 'tax', label: 'GST', rate: 9, amount: 1.8, included: true, worked: true }] } }),
       expense('Grab KL', 'MYR', [{ category: 'Air & Transport', amount: 25, currency: 'MYR', fxRate: 0.3049, baseAmount: 7.62, taxes: [] }], { tax: null }),
     ]));
     const p = await reportPayload('rep1', { withReceipts: false });
