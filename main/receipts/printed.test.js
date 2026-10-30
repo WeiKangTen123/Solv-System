@@ -138,17 +138,17 @@ describe('receipts/printed — claim lines from the record', () => {
     // its two shares come to what was printed.
     const sst = lines.map(l => l.taxes.find(t => t.label === 'SST'));
     expect(sst.map(t => t.amount).reduce((a, b) => a + b, 0)).toBeCloseTo(1.58, 10);
-    expect(sst[0]).toEqual({ label: 'SST', rate: 6, amount: 1.16, included: false, gross: 20.41 });
-    expect(sst[1]).toEqual({ label: 'SST', rate: 6, amount: 0.42, included: false, gross: 7.46 });
+    expect(sst[0]).toEqual({ label: 'SST', rate: 6, amount: 1.16, included: false, gross: 20.41, basis: '0,1,3' });
+    expect(sst[1]).toEqual({ label: 'SST', rate: 6, amount: 0.42, included: false, gross: 7.46, basis: '2,3' });
   });
 
   test('the two-rate KL hotel: Lodging with Service Tax 8% and Meals with SST 6%, exactly as printed', () => {
     const lines = P.claimLines(twoRateHotel(), 'Lodging');
     expect(lines).toEqual([
       { category: 'Lodging', description: 'Room Charge', amount: 342.64, onBehalfOf: null,
-        taxes: [{ label: 'Service Tax', rate: 8, amount: 24.64, included: false, gross: 332.64 }] },
+        taxes: [{ label: 'Service Tax', rate: 8, amount: 24.64, included: false, gross: 332.64, basis: '0,1' }] },
       { category: 'Meals', description: 'Lounge Dinner', amount: 99.11, onBehalfOf: null,
-        taxes: [{ label: 'SST', rate: 6, amount: 5.61, included: false, gross: 99.11 }] },
+        taxes: [{ label: 'SST', rate: 6, amount: 5.61, included: false, gross: 99.11, basis: '4,5' }] },
     ]);
   });
 
@@ -162,8 +162,8 @@ describe('receipts/printed — claim lines from the record', () => {
       row('tax', 'Service Tax', 5.61, { rate: 6 }),
     ], 441.75), 'Lodging');
     expect(shown(lines)).toEqual([['Lodging', null, 342.64], ['Meals', null, 99.11]]);
-    expect(lines.map(l => l.taxes)).toEqual([[{ label: 'Service Tax', rate: 8, amount: 24.64, included: false, gross: 332.64 }],
-                                              [{ label: 'Service Tax', rate: 6, amount: 5.61, included: false, gross: 99.11 }]]);
+    expect(lines.map(l => l.taxes)).toEqual([[{ label: 'Service Tax', rate: 8, amount: 24.64, included: false, gross: 332.64, basis: '0,2' }],
+                                              [{ label: 'Service Tax', rate: 6, amount: 5.61, included: false, gross: 99.11, basis: '1,2' }]]);
   });
 
   test('a folio with CGST and SGST under each charge and a colleague\'s room transferred onto it', () => {
@@ -179,8 +179,8 @@ describe('receipts/printed — claim lines from the record', () => {
     ], 26221.07), 'Lodging');
     expect(shown(lines)).toEqual([['Lodging', null, 11800], ['Lodging', 'Lim Wei Jie', 11800], ['Meals', null, 1361.07], ['Meals', 'Lim Wei Jie', 1260]]);
     // The pair on one charge shares one gross: what Xero takes at 18% (or 5%).
-    expect(lines[1].taxes).toEqual([{ label: 'CGST', rate: 9, amount: 900, included: false, gross: 11800 }, { label: 'SGST', rate: 9, amount: 900, included: false, gross: 11800 }]);
-    expect(lines[3].taxes).toEqual([{ label: 'CGST', rate: 2.5, amount: 30, included: false, gross: 1260 }, { label: 'SGST', rate: 2.5, amount: 30, included: false, gross: 1260 }]);
+    expect(lines[1].taxes).toEqual([{ label: 'CGST', rate: 9, amount: 900, included: false, gross: 11800, basis: '3' }, { label: 'SGST', rate: 9, amount: 900, included: false, gross: 11800, basis: '3' }]);
+    expect(lines[3].taxes).toEqual([{ label: 'CGST', rate: 2.5, amount: 30, included: false, gross: 1260, basis: '6' }, { label: 'SGST', rate: 2.5, amount: 30, included: false, gross: 1260, basis: '6' }]);
   });
 
   test('a pair printed together for the whole bill finds items at its combined rate', () => {
@@ -202,7 +202,7 @@ describe('receipts/printed — claim lines from the record', () => {
       row('tax', 'GST', 1.14, { rate: 9, included: true }),
     ], 13.8, 13.8), 'Meals');
     expect(lines).toEqual([{ category: 'Meals', description: 'Steamed Chicken Rice +2 more', amount: 13.8, onBehalfOf: null,
-                             taxes: [{ label: 'GST', rate: 9, amount: 1.14, included: true, gross: 13.8 }] }]);
+                             taxes: [{ label: 'GST', rate: 9, amount: 1.14, included: true, gross: 13.8, basis: '0,1,2' }] }]);
   });
 
   test('a discount printed under an item comes off that item, and the included GST is shared by what each line holds', () => {
@@ -227,8 +227,8 @@ describe('receipts/printed — claim lines from the record', () => {
     ], 402), 'Lodging');
     // The city tax is the rooms' (it names Lodging), and not under the VAT.
     expect(lines).toEqual([
-      { category: 'Lodging', description: 'Logis +1 more', amount: 378, onBehalfOf: null, taxes: [{ label: 'MwSt', rate: 7, amount: 23.55, included: true, gross: 360 }] },
-      { category: 'Meals', description: 'Fruehstueck', amount: 24, onBehalfOf: null, taxes: [{ label: 'MwSt', rate: 19, amount: 3.83, included: true, gross: 24 }] },
+      { category: 'Lodging', description: 'Logis +1 more', amount: 378, onBehalfOf: null, taxes: [{ label: 'MwSt', rate: 7, amount: 23.55, included: true, gross: 360, basis: '0,1' }] },
+      { category: 'Meals', description: 'Fruehstueck', amount: 24, onBehalfOf: null, taxes: [{ label: 'MwSt', rate: 19, amount: 3.83, included: true, gross: 24, basis: '2' }] },
     ]);
   });
 
@@ -238,7 +238,7 @@ describe('receipts/printed — claim lines from the record', () => {
       row('tax', 'Sales Tax', 8.54, { rate: 8.625 }), row('charge', 'SF Mandate', 3.96, { rate: 4 }), row('charge', 'Tip', 20),
     ], 131.5, 99), 'Meals');
     expect(lines).toEqual([{ category: 'Meals', description: 'Ribeye Steak +3 more', amount: 131.5, onBehalfOf: null,
-                             taxes: [{ label: 'Sales Tax', rate: 8.625, amount: 8.54, included: false, gross: 107.54 }] }]);
+                             taxes: [{ label: 'Sales Tax', rate: 8.625, amount: 8.54, included: false, gross: 107.54, basis: '0,1,2,3' }] }]);
   });
 
   test('rows a little short of the total: the difference is the claimant\'s, in the receipt\'s category', () => {
@@ -249,12 +249,12 @@ describe('receipts/printed — claim lines from the record', () => {
   test('rows nowhere near the total give one line of the whole total, with the taxes still on it', () => {
     const lines = P.claimLines(rec([row('item', 'Latte', 5.5), row('tax', 'GST', 0.45, { rate: 9, included: true })], 40), 'Meals', { description: '[Meals] Coffee @ Joe' });
     expect(lines).toEqual([{ category: 'Meals', description: '[Meals] Coffee @ Joe', amount: 40, onBehalfOf: null,
-                             taxes: [{ label: 'GST', rate: 9, amount: 0.45, included: true, gross: 5.5 }] }]);
+                             taxes: [{ label: 'GST', rate: 9, amount: 0.45, included: true, gross: 5.5, basis: '0' }] }]);
   });
 
   test('a receipt that itemises nothing still has its tax on its one line', () => {
     const lines = P.claimLines(rec([row('tax', 'GST', 0.83, { rate: 9, included: true })], 10), 'Meals', { description: 'Lunch' });
-    expect(lines).toEqual([{ category: 'Meals', description: 'Lunch', amount: 10, onBehalfOf: null, taxes: [{ label: 'GST', rate: 9, amount: 0.83, included: true, gross: 10 }] }]);
+    expect(lines).toEqual([{ category: 'Meals', description: 'Lunch', amount: 10, onBehalfOf: null, taxes: [{ label: 'GST', rate: 9, amount: 0.83, included: true, gross: 10, basis: 'receipt' }] }]);
   });
 
   test('no tax printed is an empty list, not unknown; no total is no lines', () => {
@@ -268,6 +268,91 @@ describe('receipts/printed — claim lines from the record', () => {
       row('item', 'Coffee', 5, { category: 'Meals', onBehalfOf: 'Ali' }), row('discount', 'Voucher', -8, { on: 0 }), row('item', 'Room', 100, { category: 'Lodging' }),
     ], 97), 'Lodging');
     expect(shown(lines)).toEqual([['Lodging', null, 97]]);
+  });
+});
+
+// What each tax was charged on (line.taxes[].basis), so Xero can put CGST and
+// SGST on the same charges on one line at 18%, and keep apart two taxes that
+// share nothing.
+describe('receipts/printed — what each tax was charged on', () => {
+  test('two nights, each with its own GST inside the price: one GST on the line, charged on both nights', () => {
+    const lines = P.claimLines(rec([
+      row('item', '12/10 Room Charge', 200, { category: 'Lodging' }), row('tax', 'GST', 16.51, { rate: 9, included: true, on: 0 }),
+      row('item', '13/10 Room Charge', 200, { category: 'Lodging' }), row('tax', 'GST', 16.51, { rate: 9, included: true, on: 2 }),
+    ], 400), 'Lodging');
+    expect(lines).toEqual([{ category: 'Lodging', description: '12/10 Room Charge +1 more', amount: 400, onBehalfOf: null,
+                             taxes: [{ label: 'GST', rate: 9, amount: 33.02, included: true, gross: 400, basis: '0,2' }] }]);
+  });
+
+  test('two nights with CGST and SGST under each: the pair shares one basis, both nights', () => {
+    const [line] = P.claimLines(rec([
+      row('item', 'Room 01/09', 10000, { category: 'Lodging' }), row('tax', 'CGST', 900, { rate: 9, on: 0 }), row('tax', 'SGST', 900, { rate: 9, on: 0 }),
+      row('item', 'Room 02/09', 10000, { category: 'Lodging' }), row('tax', 'CGST', 900, { rate: 9, on: 3 }), row('tax', 'SGST', 900, { rate: 9, on: 3 }),
+    ], 23600), 'Lodging');
+    expect(line.taxes).toEqual([{ label: 'CGST', rate: 9, amount: 1800, included: false, gross: 23600, basis: '0,3' },
+                                { label: 'SGST', rate: 9, amount: 1800, included: false, gross: 23600, basis: '0,3' }]);
+  });
+
+  test('a 6% and an 8% on one line that share nothing keep apart', () => {
+    const [line] = P.claimLines(rec([
+      row('item', 'Room', 280, { category: 'Lodging', taxRate: 8 }), row('item', 'Laundry', 50, { category: 'Lodging', taxRate: 6 }),
+      row('tax', 'Service Tax', 22.4, { rate: 8 }), row('tax', 'SST', 3, { rate: 6 }),
+    ], 355.4), 'Lodging');
+    expect(line.taxes.map(t => [t.label, t.rate, t.amount, t.gross, t.basis])).toEqual([['Service Tax', 8, 22.4, 302.4, '0'], ['SST', 6, 3, 53, '1']]);
+  });
+
+  test('a service charge the rate bears out is in the basis; a flat levy is not', () => {
+    const [line] = P.claimLines(rec([
+      row('item', 'Room Charge', 280, { category: 'Lodging' }), row('charge', 'Service Charge', 28, { rate: 10, on: 0 }),
+      row('tax', 'Service Tax', 24.64, { rate: 8, on: 0 }), row('charge', 'Tourism Tax', 10, { on: 0 }),
+    ], 342.64), 'Lodging');
+    expect(line.taxes[0]).toMatchObject({ gross: 332.64, basis: '0,1' });
+  });
+});
+
+describe('receipts/printed — India\'s split tax, and only it, is one tax at the sum of its halves', () => {
+  const t = (label, rate, x = {}) => row('tax', label, 1, { rate, ...x });
+  test('CGST with SGST, UTGST or IGST, either way round, at one rate', () => {
+    expect([P.splitPair(t('CGST', 9), t('SGST', 9)), P.splitPair(t('SGST', 9), t('CGST', 9)), P.splitPair(t('cgst', 6), t('UTGST', 6)),
+            P.splitPair(t('CGST', 9), t('IGST', 9)), P.splitPair(t(' CGST ROOM', 9), t('SGST ROOM', 9))]).toEqual([true, true, true, true, true]);
+  });
+  test('not two other taxes at one rate, not at two rates, not one inside the prices and one added', () => {
+    expect([P.splitPair(t('Service Tax', 8), t('SST', 8)), P.splitPair(t('GST', 5), t('PST', 5)), P.splitPair(t('CGST', 9), t('CGST', 9)),
+            P.splitPair(t('CGST', 9), t('SGST', 6)), P.splitPair(t('CGST', 9), t('SGST', 9, { included: true })), P.splitPair(t('JW Cafe CGST', 9), t('SGST', 9)),
+            P.splitPair(t('CGST', null), t('SGST', null))]).toEqual([false, false, false, false, false, false, false]);
+  });
+  test('two other taxes printed together at 8% are each 8%, not one of 16%', () => {
+    const lines = P.claimLines(rec([
+      row('item', 'Room', 200, { category: 'Lodging', taxRate: 8 }), row('item', 'Mineral water', 10, { category: 'Meals', taxRate: 0 }),
+      row('tax', 'Service Tax', 16, { rate: 8 }), row('tax', 'SST', 0, { rate: 8 }),
+    ], 226), 'Lodging');
+    expect(lines.map(l => [l.category, l.amount, l.taxes.map(x => `${x.label} ${x.amount}`)])).toEqual([['Lodging', 216, ['Service Tax 16', 'SST 0']], ['Meals', 10, []]]);
+  });
+});
+
+describe('receipts/printed — a tax whose rate no item shows', () => {
+  // The 6%/8% Kuala Lumpur bill after QA moved the valet parking from 8% to
+  // 6% and added a colleague's tea marked "–": the SST 8% of 0.96 has no item
+  // at its rate, and used to go wholly on the tea.
+  const bill = () => rec([
+    row('item', 'Nasi Lemak Special', 31.8, { category: 'Meals', taxRate: 6 }),
+    row('item', 'Teh Tarik Ais', 9, { category: 'Meals', taxRate: 6 }),
+    row('item', 'Valet Parking', 12, { category: 'Air & Transport', taxRate: 6 }),
+    row('item', 'Teh Tarik', 3, { category: 'Meals', onBehalfOf: 'Jane Tan', taxRate: null }),
+    row('tax', 'SST', 2.45, { rate: 6 }), row('tax', 'SST', 0.96, { rate: 8 }),
+  ], 59.21);
+  test('is spread over every item by amount, never onto an unmarked item only for being unmarked', () => {
+    const lines = P.claimLines(bill(), 'Meals');
+    const jane = lines.find(l => l.onBehalfOf === 'Jane Tan');
+    expect(jane.taxes).toEqual([{ label: 'SST', rate: 8, amount: 0.05, included: false, gross: 3.05, basis: '3' }]);
+    const eight = lines.flatMap(l => l.taxes.filter(t => t.rate === 8));
+    expect(eight.reduce((s, t) => s + t.amount * 100, 0)).toBe(96);
+    expect(lines.find(l => l.category === 'Air & Transport').taxes.map(t => t.rate)).toEqual([6, 8]);
+  });
+  test('and when every item shows another rate, over all of them', () => {
+    const r = bill(); r.rows[3].taxRate = 6;
+    const eight = P.claimLines(r, 'Meals').flatMap(l => l.taxes.filter(t => t.rate === 8));
+    expect(eight.map(t => t.amount)).toEqual([0.7, 0.21, 0.05]);
   });
 });
 

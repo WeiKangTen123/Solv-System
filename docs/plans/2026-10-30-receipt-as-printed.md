@@ -110,17 +110,26 @@ and every save; nobody edits those lines by hand.
 Each line carries its taxes:
 
 ```js
-line.taxes = [{ label: 'Service Tax', rate: 8, amount: 24.64, included: false, gross: 332.64 }]
+line.taxes = [{ label: 'Service Tax', rate: 8, amount: 24.64, included: false, gross: 332.64, basis: '0,1' }]
 // amount: this line's share of that tax, in the line's currency.
 // gross: the part of this line's amount (tax-inclusive, as claimed) that the tax
 //        was charged on, i.e. what Xero needs as an Inclusive line amount.
+// basis: the rows of this line the tax was charged on, as a key: their indices
+//        in rows, sorted and joined ("0,1": the room and its service charge),
+//        or "receipt" when the receipt itemises nothing. Taxes on the same rows
+//        have the same key (CGST and SGST on one room: one Xero line at 18%);
+//        taxes that share nothing differ (a 6% and an 8%). One tax printed on
+//        several rows (each night's GST) is one entry, its key the union.
 // []   : the receipt prints no tax for this line.
 // null : not known (a line from before this change, or typed in).
 ```
 
 Stored in `expense_lines.taxes` (TEXT, JSON, nullable). Shares are rounded to
 the cent with the last share taking the residual, so a tax's shares add up to
-its printed amount.
+its printed amount. Entries are one per (label, rate, included) on a line. The
+reader names a tax by its own name as printed ("Service Tax", "CGST", never
+"20/10 Service Tax 8%" or "CGST [Add. udf.]"), so one tax is one entry; a name
+a person types is kept as typed.
 
 ## Database
 

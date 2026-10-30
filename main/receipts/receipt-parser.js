@@ -417,7 +417,12 @@ function _row(x, { folio, category, legacy }) {
   const included = kind === 'tax' && (x.included === true || !!(tax && tax.included));
   const onBehalfOf = kind === 'rounding' ? null : _onBehalf({ description: text, onBehalfOf: x.onBehalfOf });
   let label = onBehalfOf ? _withoutTransfer(text) : text;
-  if (kind === 'tax' || kind === 'charge') label = _withoutRate(label, rate, included);
+  // A tax is called by its own name as printed ("Service Tax", not "20/10
+  // Service Tax 8%"; "CGST", not "CGST 9%- Rooms-(New) -[Add. udf.]"), so one
+  // tax reads as one wherever it is printed (line-kinds.js taxName). A name
+  // it does not know is kept, without its rate.
+  if (kind === 'tax') label = lineKinds.taxName(text) || _withoutRate(label, rate, included);
+  else if (kind === 'charge') label = _withoutRate(label, rate, included);
   // The category the model gave, for a tax or a rounding too: the record
   // keeps it only on what is bought (an item, a charge, a discount), and the
   // line items read for the checks keep it on every line, as they always did.

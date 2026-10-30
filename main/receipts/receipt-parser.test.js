@@ -741,8 +741,8 @@ describe('receipt-parser — a folio\'s payment line is not a charge', () => {
       ['Lodging', null, 43131.36], ['Lodging', 'Lim Wei Jie', 36713.34], ['Meals', null, 6426.57], ['Meals', 'Lim Wei Jie', 1917.5],
     ]);
     expect(fromRecord[1].taxes).toEqual([
-      { label: 'CGST ROOM [Add; udf.]', rate: 9, amount: 2800.17, included: false, gross: 36713.34 },
-      { label: 'SGST ROOM [Add; udf.]', rate: 9, amount: 2800.17, included: false, gross: 36713.34 },
+      { label: 'CGST', rate: 9, amount: 2800.17, included: false, gross: 36713.34, basis: '7,16,33' },
+      { label: 'SGST', rate: 9, amount: 2800.17, included: false, gross: 36713.34, basis: '7,16,33' },
     ]);
   });
 
