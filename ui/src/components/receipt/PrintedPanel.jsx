@@ -160,7 +160,7 @@ export default function PrintedPanel({
       {gapText && (
         <>
           <span>{gapText}</span>
-          {!disabled && <button type="button" className="pp-link" onClick={addGap}>+ add {money(sum.gap)}</button>}
+          {!disabled && <button type="button" className="pp-link" onClick={addGap}>{sum.gap > 0 ? '+ add' : '+ take off'} {money(Math.abs(sum.gap))}</button>}
         </>
       )}
     </div>
@@ -328,9 +328,10 @@ export default function PrintedPanel({
         {taxCol && (
           <select className="form-input pp-in pp-taxsel" value={num(r.taxRate) ?? ''} disabled={disabled} title={groups.map(g => `${rateText(g.rate)}: ${g.labels.join(' + ')}`).join('\n')}
                   onChange={e => setRow(i, 'taxRate', e.target.value === '' ? null : e.target.value)} aria-label={`${names[i]} tax`}>
-            <option value="">–</option>
-            {num(r.taxRate) !== null && !groups.some(g => g.rate === num(r.taxRate)) && <option value={num(r.taxRate)}>{rateText(r.taxRate)}</option>}
+            {/* The receipt's rates in the order it prints them, then none. */}
             {groups.map(g => <option key={g.rate} value={g.rate}>{rateText(g.rate)}</option>)}
+            {num(r.taxRate) !== null && !groups.some(g => g.rate === num(r.taxRate)) && <option value={num(r.taxRate)}>{rateText(r.taxRate)}</option>}
+            <option value="">–</option>
           </select>
         )}
         {menu(i, label)}
@@ -537,9 +538,9 @@ function RowSheet({ i, rows, name, read, money, categories, groups, onWhat, idPr
           <div className="form-group">
             <label className="form-label" htmlFor={id('tax')}>Tax</label>
             <select id={id('tax')} className="form-input" value={num(r.taxRate) ?? ''} onChange={e => setRow(i, 'taxRate', e.target.value === '' ? null : e.target.value)}>
-              <option value="">Not shown on the receipt</option>
-              {num(r.taxRate) !== null && !groups.some(g => g.rate === num(r.taxRate)) && <option value={num(r.taxRate)}>{rateText(r.taxRate)}</option>}
               {groups.map(g => <option key={g.rate} value={g.rate}>{rateText(g.rate)} ({g.labels.join(' + ')})</option>)}
+              {num(r.taxRate) !== null && !groups.some(g => g.rate === num(r.taxRate)) && <option value={num(r.taxRate)}>{rateText(r.taxRate)}</option>}
+              <option value="">Not shown on the receipt</option>
             </select>
           </div>
         )}

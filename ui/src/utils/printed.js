@@ -90,7 +90,8 @@ export function rateGroups(printed) {
       k++;
     } else put(num(p.r.rate), label);
   }
-  return [...groups.values()].sort((a, b) => b.rate - a.rate);
+  // In the order the receipt prints them.
+  return [...groups.values()];
 }
 
 // ── Words ───────────────────────────────────────────────────────────────────
@@ -105,8 +106,13 @@ export function rowWords(r, money) {
 }
 
 // The taxes a receipt prints, for the muted line under its amount in a case's
-// receipts: one entry per (name, rate), a pair at the same rate joined
-// ("CGST+SGST" at 18%), largest first. [] when it prints none.
+// receipts: one entry per (name, rate), largest first; [] when it prints
+// none. One tax split in two halves at one rate, India's CGST with SGST,
+// UTGST or IGST, is said as one ("CGST+SGST" at 18%). Two other taxes at one
+// rate stay two: a hotel's "Service Tax" printed for each night is not a
+// split tax, and adding their rates said 16% for an 8% tax.
+const CENTRAL = /^cgst\b/i;
+const STATE = /^(sgst|utgst|igst)\b/i;
 export function taxSummary(printed) {
   const rows = (printed && printed.rows) || [];
   const m = new Map();
@@ -124,9 +130,16 @@ export function taxSummary(printed) {
   for (const e of m.values()) byRate.set(e.rate, [...(byRate.get(e.rate) || []), e]);
   const out = [];
   for (const [rate, list] of byRate) {
-    if (rate !== null && list.length === 2) {
-      out.push({ label: `${list[0].label}+${list[1].label}`, rate: +(rate * 2).toFixed(4), amount: Math.round((list[0].amount + list[1].amount) * 100) / 100 });
-    } else out.push(...list);
+    const left = [...list];
+    while (rate !== null) {
+      const c = left.findIndex(e => CENTRAL.test(e.label));
+      const s = left.findIndex(e => STATE.test(e.label));
+      if (c < 0 || s < 0) break;
+      const [a, b] = [left[c], left[s]];
+      out.push({ label: `${a.label}+${b.label}`, rate: +(rate * 2).toFixed(4), amount: Math.round((a.amount + b.amount) * 100) / 100 });
+      left.splice(Math.max(c, s), 1); left.splice(Math.min(c, s), 1);
+    }
+    out.push(...left);
   }
   return out.sort((a, b) => b.amount - a.amount);
 }
