@@ -179,10 +179,14 @@ describe('xero/bills — tax as printed', () => {
   // Taxes at different rates on one part: each its own line, worked back from
   // its amount and rate. Summed they were 14%, coded as Sales Tax 10%.
   test('a 6% and an 8% read on the same items are a line each, worked back from the tax; the rest is not taxed', () => {
-    const b = buildBill(myCase([line({ merchant: 'Hotel Stripes Kuala Lumpur', category: 'Lodging', currency: 'MYR', amount: 441.75, baseAmount: 441.75, taxes: [
-      tax('SST', 6, 5.61, 431.75, { basis: 'all' }), tax('Service Tax', 8, 24.64, 431.75, { basis: 'all' })] })]), { taxRates: MY });
-    expect(shape(b)).toEqual([[99.11, 'TAX006', 5.61, 'SST 6%'], [332.64, 'TAX008', 24.64, 'Service Tax 8%'], [10, 'NONE', undefined, 'not taxed']]);
-    expect(b.total).toBe(441.75);
+    // 395.25 is what claimLines gives the two together, the service charges
+    // left out: a guess, so the worked-back amounts are held only to the line.
+    for (const gross of [431.75, 395.25]) {
+      const b = buildBill(myCase([line({ merchant: 'Hotel Stripes Kuala Lumpur', category: 'Lodging', currency: 'MYR', amount: 441.75, baseAmount: 441.75, taxes: [
+        tax('SST', 6, 5.61, gross, { basis: 'all' }), tax('Service Tax', 8, 24.64, gross, { basis: 'all' })] })]), { taxRates: MY });
+      expect(shape(b)).toEqual([[99.11, 'TAX006', 5.61, 'SST 6%'], [332.64, 'TAX008', 24.64, 'Service Tax 8%'], [10, 'NONE', undefined, 'not taxed']]);
+      expect(b.total).toBe(441.75);
+    }
   });
 
   test('a Berlin hotel\'s 7% on the room and 19% on breakfast, both included, are a line each and never more than the bill', () => {

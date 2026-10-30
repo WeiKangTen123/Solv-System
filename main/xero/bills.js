@@ -111,9 +111,13 @@ function _parts(taxes, inBase) {
 // different rates on one part (a KL bill's SST 6% and Service Tax 8% read
 // without saying which items each was on, a Berlin hotel's 7% and 19%) are a
 // bill line each, its amount worked back from the tax and its rate, and never
-// more than the part between them: summed, they were 14%, coded as Sales Tax
-// 10%. A part with a tax of no printed rate is one line, as before. Null when
-// the taxes do not say what they were charged on: the line goes as before.
+// more than the line holds: summed, they were 14%, coded as Sales Tax 10%.
+// Not held to the part they share: the amount a 6% and an 8% were read on
+// together is a guess (the KL bill's left out its service charges, 395.25
+// against 431.75 taxed), and held to it the room and breakfast came out
+// short, with 46.50 called untaxed. A part with a tax of no printed rate is
+// one line, as before. Null when the taxes do not say what they were charged
+// on: the line goes as before.
 function printedLines(l, item, { accountCode, accounts, active, zeroType }) {
   const taxes = l.taxes.filter(t => cents(t.amount) > 0);
   const total = cents(l.baseAmount);
@@ -135,16 +139,21 @@ function printedLines(l, item, { accountCode, accounts, active, zeroType }) {
       list.push({ gross: p.gross, tax, rate: Math.round(rates.reduce((a, b) => a + b, 0) * 10000) / 10000, taxes: p.taxes });
       continue;
     }
-    const each = p.taxes.map((t, i) => ({ t, tax: taxOf(t), rate: rates[i], gross: Math.round((taxOf(t) * (100 + rates[i])) / rates[i]) }));
-    const sum = each.reduce((s, x) => s + x.gross, 0);
-    if (sum > p.gross) {
-      let left = p.gross;
-      each.forEach((x, i) => { x.gross = i === each.length - 1 ? left : Math.round((x.gross * p.gross) / sum); left -= x.gross; });
-    }
-    for (const x of each) {
-      list.push({ gross: x.gross, tax: x.tax, rate: x.rate, taxes: [x.t] });
-      slack += Math.ceil((100 + x.rate) / (2 * x.rate));
-    }
+    p.taxes.forEach((t, i) => {
+      list.push({ gross: Math.round((taxOf(t) * (100 + rates[i])) / rates[i]), tax: taxOf(t), rate: rates[i], taxes: [t], worked: true });
+      slack += Math.ceil((100 + rates[i]) / (2 * rates[i]));
+    });
+  }
+  // Worked back, they are held to what the line has left beside the parts
+  // whose amounts were read: the Berlin hotel's 230.05 and 49.98 came to 3
+  // cents over its 280.00.
+  const worked = list.filter(x => x.worked);
+  const room = total - list.filter(x => !x.worked).reduce((s, x) => s + x.gross, 0);
+  const sum = worked.reduce((s, x) => s + x.gross, 0);
+  if (worked.length && sum > room) {
+    if (room <= 0) return null;
+    let left = room;
+    worked.forEach((x, i) => { x.gross = i === worked.length - 1 ? left : Math.round((x.gross * room) / sum); left -= x.gross; });
   }
   let rest = total - list.reduce((s, x) => s + x.gross, 0);
   // The receipt's own rounding (the nasi kandar's −0.02), or a cent from each
