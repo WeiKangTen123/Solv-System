@@ -111,7 +111,8 @@ export function taxSummary(printed) {
   const rows = (printed && printed.rows) || [];
   const m = new Map();
   for (const r of rows) {
-    if (r.kind !== 'tax') continue;
+    // A tax row with nothing on it says nothing about the amount.
+    if (r.kind !== 'tax' || !cents(r.amount)) continue;
     const rate = num(r.rate);
     const label = String(r.label || '').trim() || 'Tax';
     const key = `${label.toLowerCase()}|${rate}`;
@@ -130,6 +131,14 @@ export function taxSummary(printed) {
   return out.sort((a, b) => b.amount - a.amount);
 }
 
+// The places a currency's amounts are written to: 2 for most, 0 for the yen
+// and the rupiah, 3 for the dinars. Anything Intl does not know gets 2.
+export function minorDigits(currency) {
+  const c = String(currency || '').toUpperCase();
+  if (!/^[A-Z]{3}$/.test(c)) return 2;
+  try { return new Intl.NumberFormat('en', { style: 'currency', currency: c }).resolvedOptions().maximumFractionDigits; } catch { return 2; }
+}
+
 // ── The draft ───────────────────────────────────────────────────────────────
 export function blankRow(kind, extra = {}) {
   return {
@@ -141,18 +150,26 @@ export function blankRow(kind, extra = {}) {
 export const isBlank = r => !String(r.label || '').trim() && !cents(r.amount);
 
 // The record as loaded, made a draft: the same rows, with numbers as text a
-// box can hold.
-export function toDraft(printed) {
+// box can hold, and the amounts written to the currency's places ("9.50").
+// Only ever zeros added: a figure with more places than its currency keeps
+// them, since showing a record must not change it.
+export function toDraft(printed, currency) {
   if (!printed) return null;
+  const d = minorDigits(currency);
   const t = v => (v === null || v === undefined ? null : String(v));
+  const m = v => {
+    if (v === null || v === undefined || !Number.isFinite(Number(v))) return t(v);
+    const s = Number(v).toFixed(d);
+    return Number(s) === Number(v) ? s : String(v);
+  };
   return {
     v: printed.v || 1,
     rows: (printed.rows || []).map(r => ({
       ...blankRow(r.kind || 'item'), ...r,
-      qty: t(r.qty), unitPrice: t(r.unitPrice), amount: t(r.amount) ?? '', rate: t(r.rate), taxRate: t(r.taxRate),
+      qty: t(r.qty), unitPrice: t(r.unitPrice), amount: m(r.amount) ?? '', rate: t(r.rate), taxRate: t(r.taxRate),
     })),
-    subtotal: t(printed.subtotal),
-    total: t(printed.total) ?? '',
+    subtotal: m(printed.subtotal),
+    total: m(printed.total) ?? '',
   };
 }
 

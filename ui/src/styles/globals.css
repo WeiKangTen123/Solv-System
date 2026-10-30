@@ -3064,6 +3064,11 @@ a.ca-receipt:focus-visible, .ca-receipts a:focus-visible { outline: 2px solid va
 .pp-r { text-align: right; }
 .pp .pp-in { padding: 6px 8px; font-size: 13px; border-width: 1px; }
 .pp .pp-in:disabled { opacity: 1; color: var(--text-secondary); background: var(--bg-secondary); }
+/* No spin buttons: in a box this narrow they took the room of the figure
+   ("1(" for a rate of 10). */
+.pp input[type='number'] { appearance: textfield; -moz-appearance: textfield; }
+.pp input[type='number']::-webkit-inner-spin-button,
+.pp input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .pp-amt, .pp-num, .pp-rate .pp-in { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .pp-rate { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .pp-rate .pp-in { min-width: 0; padding-left: 4px; padding-right: 4px; }
@@ -3078,6 +3083,7 @@ a.ca-receipt:focus-visible, .ca-receipts a:focus-visible { outline: 2px solid va
 .pp-fill { grid-column: 4 / -2; min-width: 0; font-size: 11.5px; color: var(--text-muted); overflow-wrap: anywhere; }
 .pp-ai { grid-column: 1 / -1; margin-top: 0; padding-left: 2px; }
 .pp-ai-top { margin-top: 0; }
+.pp-ai.is-top { display: flex; justify-content: flex-end; padding-right: 36px; }
 
 /* A row printed under another (a folio's tax on a charge, an item's
    discount): indented, with a hook pointing at the row it is on. */
@@ -3133,14 +3139,14 @@ a.ca-receipt:focus-visible, .ca-receipts a:focus-visible { outline: 2px solid va
 /* Narrower than the whole table (the receipt page's column): "Paid for" goes
    under its row, and only on a row paid for someone. */
 @container (max-width: 600px) {
-  .pp-row { grid-template-columns: minmax(0, 1fr) 48px 88px 112px 30px; }
+  .pp-row { grid-template-columns: minmax(0, 1fr) 52px 88px 112px 30px; }
   .pp-paid, .pp-paid-head { display: none; }
   .pp-row.has-paid .pp-paid { display: flex; grid-row: 2; grid-column: 1 / -2; padding-left: 18px; }
   .pp-paid-word { display: inline; }
   .pp-row.has-paid .pp-paid .pp-in { max-width: 240px; }
 }
 @container (max-width: 660px) {
-  .pp.has-tax .pp-row { grid-template-columns: minmax(0, 1fr) 48px 88px 104px 56px 30px; }
+  .pp.has-tax .pp-row { grid-template-columns: minmax(0, 1fr) 52px 88px 104px 56px 30px; }
   .pp.has-tax .pp-paid, .pp.has-tax .pp-paid-head { display: none; }
   .pp.has-tax .pp-row.has-paid .pp-paid { display: flex; grid-row: 2; grid-column: 1 / -2; padding-left: 18px; }
   .pp.has-tax .pp-paid-word { display: inline; }

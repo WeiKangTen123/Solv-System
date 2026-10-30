@@ -58,7 +58,7 @@ export function useReceiptForm(fields, { oneLineFromTotal = false } = {}) {
     if (keepEdits && dirtyRef.current) return;
     const f = e ? { ...pick(e, fieldsKey.split(',')), ...extra } : {};
     const ls = e ? lineRows(e) : [];
-    const p = e ? toDraft(e.printed) : null;
+    const p = e ? toDraft(e.printed, e.currency) : null;
     setForm(f); setLines(ls); setPrinted(p); setPrintedBase(p);
     baseline.current = { form: f, lines: sameLines(ls), raw: ls, printed: p };
     dirtyRef.current = false; setDirtyShown(false);

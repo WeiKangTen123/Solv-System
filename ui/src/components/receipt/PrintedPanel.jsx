@@ -280,7 +280,7 @@ export default function PrintedPanel({
            onChange={e => setRow(i, 'amount', e.target.value)} aria-label={`${label} amount`} />
   );
   const labelBox = (i, label, placeholder) => (
-    <input id={`${idPrefix}-label-${i}`} className="form-input pp-in" value={rows[i].label ?? ''} disabled={disabled} placeholder={placeholder}
+    <input id={`${idPrefix}-label-${i}`} className="form-input pp-in" value={rows[i].label ?? ''} disabled={disabled} placeholder={placeholder} title={rows[i].label || undefined}
            onChange={e => setRow(i, 'label', e.target.value)} aria-label={`${label} name`} />
   );
   const menu = (i, label) => {
@@ -400,10 +400,11 @@ export default function PrintedPanel({
               <label className="pp-sum-label" htmlFor={`${idPrefix}-subtotal`}>Subtotal</label>
               <input id={`${idPrefix}-subtotal`} className="form-input pp-in pp-amt" type="number" step="any" value={printed.subtotal ?? ''} disabled={disabled}
                      onChange={e => setTop('subtotal', e.target.value)} />
-              <span className="pp-fill">{readSub !== null && <ReadTop value={readSub} money={money} disabled={disabled} what="subtotal" onUse={() => setTop('subtotal', String(readSub))} />}</span>
+              <span className="pp-fill" />
               {disabled ? <span /> : (
                 <button type="button" className="btn btn-ghost btn-sm pp-menu-btn" onClick={() => setTop('subtotal', null)} title="The receipt prints no subtotal" aria-label="Remove the subtotal: the receipt prints none">✕</button>
               )}
+              {readSub !== null && <span className="pp-ai is-top"><ReadTop value={readSub} money={money} disabled={disabled} what="subtotal" onUse={() => setTop('subtotal', String(readSub))} /></span>}
             </div>
           )}
           {lay.foot.flatMap(e => (e.fold ? foldRow(e) : withSubs(e.i, otherRow)))}
@@ -412,8 +413,9 @@ export default function PrintedPanel({
           <label className="pp-sum-label" htmlFor={`${idPrefix}-total`}>Total paid</label>
           <input id={`${idPrefix}-total`} className="form-input pp-in pp-amt" type="number" step="any" value={printed.total ?? ''} disabled={disabled}
                  aria-invalid={invalid || undefined} onChange={e => setTop('total', e.target.value)} />
-          <span className="pp-fill">{readTotal !== null && <ReadTop value={readTotal} money={money} disabled={disabled} what="total" onUse={() => setTop('total', String(readTotal))} />}</span>
+          <span className="pp-fill" />
           <span />
+          {readTotal !== null && <span className="pp-ai is-top"><ReadTop value={readTotal} money={money} disabled={disabled} what="total" onUse={() => setTop('total', String(readTotal))} /></span>}
         </div>
         {lay.incl.length > 0 && (
           <div className="pp-incl">{lay.incl.flatMap(e => (e.fold ? foldRow(e) : withSubs(e.i, k => otherRow(k, { cls: ' is-incl' }))))}</div>
