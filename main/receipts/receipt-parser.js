@@ -151,8 +151,11 @@ const _currency = _intake.currencyCode;
 // A hotel prints a transferred charge as "LIM WEI JIE #126=>Rahman Aisha #110":
 // the person before the arrow is who the line is really for. Read from the
 // description when the model left it out; when the model answered, keep the
-// name and drop the room numbers and the arrow.
-const TRANSFER_RE = /([A-Z][A-Za-z.'\- ]{2,60}?)\s*#\d+\s*=>/;
+// name and drop the room numbers and the arrow. The reader copies the arrow
+// as it likes: "=>" one day, "->" or "→" the next, and a JW room line came
+// back as "Tan Suan Kuan #1155->Khoo Elaine Xin Yu #1159" with the whole
+// transfer, a second guest's name included, left in its description.
+const TRANSFER_RE = /([A-Z][A-Za-z.'\- ]{2,60}?)\s*#\d+\s*(?:=>|->|→|⇒)/;
 // "Accomodation Charges -[NA Room] Lim Wei Jie #1155=>Rahman Aisha #1159"
 // → "Accomodation Charges -[NA Room]". Once the person is on the line the
 // rest — two room numbers and an arrow — is noise on the printed report. A
@@ -171,7 +174,7 @@ function _onBehalf(li) {
   const printed = typeof li.description === 'string' ? TRANSFER_RE.exec(_oneLine(li.description)) : null;
   if (printed) return _titleCase(printed[1].trim().slice(0, 80));
   if (typeof li.onBehalfOf !== 'string' || !li.onBehalfOf.trim()) return null;
-  const cleaned = li.onBehalfOf.split(/=>|#|\(/)[0].trim();
+  const cleaned = li.onBehalfOf.split(/=>|->|→|⇒|#|\(/)[0].trim();
   return cleaned ? _titleCase(cleaned.slice(0, 80)) : null;
 }
 

@@ -686,6 +686,15 @@ describe('receipt-parser — hotel folio details', () => {
     expect(r.lineItems.map(l => l.onBehalfOf)).toEqual(['Lim Wei Jie', 'Lim Wei Jie', null]);
   });
 
+  test('a transfer copied with "->" or "→" names the person too, and leaves the other guest out of the description', () => {
+    const r = parser.normalise({ merchant: 'JW', total: 100, currency: 'INR', lineItems: [
+      { description: 'Accomodation Charges -[NA Room] Tan Suan Kuan #1155->Khoo Elaine Xin Yu #1159', unitAmount: 60, onBehalfOf: 'Tan Suan Kuan #1155->Khoo #1159' },
+      { description: 'Standard Retail [NA Room] TAN SUAN KUAN #126 → Khoo Elaine #110', unitAmount: 40, onBehalfOf: null },
+    ] });
+    expect(r.lineItems.map(l => l.onBehalfOf)).toEqual(['Tan Suan Kuan', 'Tan Suan Kuan']);
+    expect(r.lineItems.map(l => l.description)).toEqual(['Accomodation Charges -[NA Room]', 'Standard Retail [NA Room]']);
+  });
+
   test('tax is the sum of the GST lines when the document total tax is missing or a zero VAT footer', () => {
     const items = [
       { description: 'Accomodation Charges', unitAmount: 17575 }, { description: 'CGST 9%- Rooms-(New)', unitAmount: 1581.75 }, { description: 'SGST 9%- Rooms-(New)', unitAmount: 1581.75 },
