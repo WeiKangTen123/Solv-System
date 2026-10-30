@@ -167,7 +167,8 @@ CREATE TABLE IF NOT EXISTS expenses (
   updated_at     TEXT,
   city           TEXT,      -- where the money was spent, as printed on the receipt
   country        TEXT,      -- ISO 3166-1 alpha-2, only when the receipt shows it
-  doc_type       TEXT       -- hotel | flight | ride | meal | fuel | parking | telco | other
+  doc_type       TEXT,      -- hotel | flight | ride | meal | fuel | parking | telco | other
+  printed        TEXT       -- JSON: the receipt as printed, row by row (receipts/printed.js); null when not kept
 );
 CREATE INDEX IF NOT EXISTS idx_expenses_user    ON expenses(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_expenses_report  ON expenses(report_id);
@@ -194,7 +195,8 @@ CREATE TABLE IF NOT EXISTS expense_lines (
   fx_tried_at        TEXT,   -- when the sweeper last asked for a rate it did not get (fx/sweeper.js)
   base_cents         INTEGER,
   on_behalf_of       TEXT,
-  account_code       TEXT
+  account_code       TEXT,
+  taxes              TEXT    -- JSON [{ label, rate, amount, included, gross }]: the taxes inside this line as printed; null when not known
 );
 CREATE INDEX IF NOT EXISTS idx_lines_expense ON expense_lines(expense_id);
 
