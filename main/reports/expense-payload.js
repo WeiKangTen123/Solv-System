@@ -22,7 +22,9 @@ function printedTaxes(list, currency, rate, worked = new Set()) {
     const amount = cents(t.amount) / 100;
     const gross = t.gross === null || t.gross === undefined ? null : cents(t.gross) / 100;
     const out = t.worked || worked.has(_taxKey(t));
+    // `basis` names the rows the tax was charged on; Xero keeps a split pair together by it.
     return { label: t.label || null, rate: t.rate ?? null, amount, included: !!t.included, gross, ...(out ? { worked: true } : {}),
+      ...(t.basis !== null && t.basis !== undefined ? { basis: t.basis } : {}),
       baseAmount: rate ? Math.round(cents(amount) * rate) / 100 : null,
       baseGross: rate && gross !== null ? Math.round(cents(gross) * rate) / 100 : null };
   });

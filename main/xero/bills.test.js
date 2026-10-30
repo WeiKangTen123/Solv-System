@@ -146,6 +146,65 @@ describe('xero/bills — tax as printed', () => {
       line({ merchant: 'JW Marriott Mumbai Sahar', category: 'Lodging', currency: 'INR', amount: 22420, baseAmount: 22420, taxes: [tax('CGST', 9, 1710, 22420), tax('SGST', 9, 1710, 22420)] }),
     ] }, { taxRates: IN });
     expect(shape(b)).toEqual([[22420, 'GST18', 3420, 'CGST 9% + SGST 9%']]);
+    // Named by the rows they were charged on, the pair is still one line at 18%.
+    const named = buildBill({ ...payload, company: { ...payload.company, baseCurrency: 'INR' }, lines: [
+      line({ merchant: 'JW Marriott Mumbai Sahar', category: 'Lodging', currency: 'INR', amount: 22420, baseAmount: 22420, taxes: [tax('CGST', 9, 1710, 22420, { basis: '0' }), tax('SGST', 9, 1710, 22420, { basis: '0' })] }),
+    ] }, { taxRates: IN });
+    expect(shape(named)).toEqual([[22420, 'GST18', 3420, 'CGST 9% + SGST 9%']]);
+  });
+
+  // Two nights, each with its own Service Tax 8% on its own 332.64. Grouped by
+  // their equal amounts they were one 332.64 at 16%, coded as Sales Tax 10%,
+  // and the second night went "not taxed".
+  test('two nights each with their own tax are a bill line each, by the rows they were on or, without them, by their amounts', () => {
+    const nights = basis => line({ merchant: 'Hotel Seri Bukit', category: 'Lodging', currency: 'MYR', amount: 685.28, baseAmount: 685.28, taxes: [
+      tax('20/10 Service Tax', 8, 24.64, 332.64, basis ? { basis: '0,1' } : {}), tax('21/10 Service Tax', 8, 24.64, 332.64, basis ? { basis: '3,4' } : {})] });
+    for (const basis of [true, false]) {
+      const b = buildBill(myCase([nights(basis)]), { taxRates: MY });
+      expect(shape(b)).toEqual([
+        [332.64, 'TAX008', 24.64, '20/10 Service Tax 8%'],
+        [332.64, 'TAX008', 24.64, '21/10 Service Tax 8%'],
+        [20, 'NONE', undefined, 'not taxed'],
+      ]);
+      expect(b.total).toBe(685.28);
+    }
+    // Singapore: two nights at 200.00, GST included in each.
+    const sg = basis => line({ merchant: 'Hotel Orchard', category: 'Lodging', currency: 'SGD', amount: 400, baseAmount: 400, taxes: [
+      tax('12/10 GST', 9, 16.51, 200, { included: true, ...(basis ? { basis: '0' } : {}) }), tax('13/10 GST', 9, 16.51, 200, { included: true, ...(basis ? { basis: '1' } : {}) })] });
+    for (const basis of [true, false]) {
+      expect(shape(buildBill(sgCase([sg(basis)]), { taxRates: SG }))).toEqual([[200, 'TXINPUT9', 16.51, '12/10 GST 9%'], [200, 'TXINPUT9', 16.51, '13/10 GST 9%']]);
+    }
+  });
+
+  // Taxes at different rates on one part: each its own line, worked back from
+  // its amount and rate. Summed they were 14%, coded as Sales Tax 10%.
+  test('a 6% and an 8% read on the same items are a line each, worked back from the tax; the rest is not taxed', () => {
+    // 395.25 is what claimLines gives the two together, the service charges
+    // left out: a guess, so the worked-back amounts are held only to the line.
+    for (const gross of [431.75, 395.25]) {
+      const b = buildBill(myCase([line({ merchant: 'Hotel Stripes Kuala Lumpur', category: 'Lodging', currency: 'MYR', amount: 441.75, baseAmount: 441.75, taxes: [
+        tax('SST', 6, 5.61, gross, { basis: 'all' }), tax('Service Tax', 8, 24.64, gross, { basis: 'all' })] })]), { taxRates: MY });
+      expect(shape(b)).toEqual([[99.11, 'TAX006', 5.61, 'SST 6%'], [332.64, 'TAX008', 24.64, 'Service Tax 8%'], [10, 'NONE', undefined, 'not taxed']]);
+      expect(b.total).toBe(441.75);
+    }
+  });
+
+  test('a Berlin hotel\'s 7% on the room and 19% on breakfast, both included, are a line each and never more than the bill', () => {
+    const DE = [{ name: 'Vorsteuer 7%', taxType: 'V7', status: 'ACTIVE', displayTaxRate: 7 }, { name: 'Vorsteuer 19%', taxType: 'V19', status: 'ACTIVE', displayTaxRate: 19 }, { name: 'Keine Steuer', taxType: 'NONE', status: 'ACTIVE', displayTaxRate: 0 }];
+    const b = buildBill({ ...payload, company: { ...payload.company, baseCurrency: 'EUR' }, lines: [
+      line({ merchant: 'Hotel Kastanie Berlin', category: 'Lodging', currency: 'EUR', amount: 280, baseAmount: 280, taxes: [
+        tax('MwSt', 7, 15.05, 280, { included: true }), tax('MwSt', 19, 7.98, 280, { included: true })] }),
+    ] }, { taxRates: DE });
+    const lines = shape(b);
+    expect(lines.map(l => [l[1], l[2], l[3]])).toEqual([['V7', 15.05, 'MwSt 7%'], ['V19', 7.98, 'MwSt 19%']]);
+    // 230.05 and 49.98 worked back, 3 cents over the bill: held to it.
+    expect(lines.map(l => l[0])).toEqual([230.03, 49.97]);
+    expect(b.total).toBe(280);
+  });
+
+  test('a part with a tax of no printed rate stays one line, as before', () => {
+    const b = buildBill(myCase([line({ category: 'Meals', currency: 'MYR', amount: 50, baseAmount: 50, taxes: [tax('SST', 6, 2.5, 50, { basis: 'x' }), tax('Levy', null, 1, 50, { basis: 'x' })] })]), { taxRates: MY });
+    expect(shape(b)).toEqual([[50, 'TAX010', 3.5, 'SST 6% + Levy']]);
   });
 
   test('Singapore: GST 9% as printed, included or worked out, to standard-rated purchases; a rate the organisation no longer has, as before', () => {
