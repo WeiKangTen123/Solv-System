@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import { pick, lineRows, sameLines, cents } from './fields';
+import { toDraft, toRecord, sameRecord } from '../../utils/printed';
 
 // What is typed into one receipt's boxes and its lines, against what they said
 // when they were loaded, and how a save sends only the difference. Both
@@ -17,14 +18,25 @@ import { pick, lineRows, sameLines, cents } from './fields';
 // this because it shows a one-line receipt as fields only; the receipt page
 // shows its lines and lets the person add them.
 //
-// Returns { form, lines, dirty, isDirty(), markClean(), loadFrom, set, setLine,
-// editLines, save, totalCents, linesCents, reconciled }. `dirty` is for
+// A receipt kept as printed (expense.printed, utils/printed.js) is held here
+// too, as `printed`: its rows as typed, changed through editPrinted(fn). Its
+// lines are then the server's, made from the rows on every save, so they are
+// never sent; nor are the total and the tax, which come from the rows. Save
+// sends the record with PUT /expenses/:id/printed after the fields' PATCH.
+// `printed` is null for a receipt without one, which keeps its lines here.
+//
+// Returns { form, lines, printed, printedChanged, dirty, isDirty(), markClean(),
+// loadFrom, set, setLine, editLines, editPrinted, save, totalCents,
+// linesCents, reconciled }. `dirty` is for
 // drawing; isDirty() answers at the moment it is asked, for a leave guard.
 // markClean() forgets the edits without touching the boxes: the receipt was
 // deleted, and nothing typed on it is left to lose.
 export function useReceiptForm(fields, { oneLineFromTotal = false } = {}) {
   const [form, setForm] = useState({});
   const [lines, setLines] = useState([]);
+  const [printed, setPrinted] = useState(null);
+  // The record as loaded, to tell whether the rows were changed.
+  const [printedBase, setPrintedBase] = useState(null);
   const [dirty, setDirtyShown] = useState(false);
   // Set as soon as a box is touched, cleared by a save or a reload that was
   // asked for. The poll runs every 2.5s while the reader works, and without
@@ -33,7 +45,7 @@ export function useReceiptForm(fields, { oneLineFromTotal = false } = {}) {
   // What the boxes said when they were loaded. Save sends only what differs:
   // sending every field wrote back blanks for anything that had changed on
   // the server since, such as what the reader filled in a moment later.
-  const baseline = useRef({ form: {}, lines: '[]', raw: [] });
+  const baseline = useRef({ form: {}, lines: '[]', raw: [], printed: null });
   const fieldsKey = fields.join(',');
 
   const touch = () => { if (!dirtyRef.current) { dirtyRef.current = true; setDirtyShown(true); } };
@@ -46,8 +58,9 @@ export function useReceiptForm(fields, { oneLineFromTotal = false } = {}) {
     if (keepEdits && dirtyRef.current) return;
     const f = e ? { ...pick(e, fieldsKey.split(',')), ...extra } : {};
     const ls = e ? lineRows(e) : [];
-    setForm(f); setLines(ls);
-    baseline.current = { form: f, lines: sameLines(ls), raw: ls };
+    const p = e ? toDraft(e.printed, e.currency) : null;
+    setForm(f); setLines(ls); setPrinted(p); setPrintedBase(p);
+    baseline.current = { form: f, lines: sameLines(ls), raw: ls, printed: p };
     dirtyRef.current = false; setDirtyShown(false);
   }, [fieldsKey]);
 
@@ -71,6 +84,9 @@ export function useReceiptForm(fields, { oneLineFromTotal = false } = {}) {
     if (lines.length > 1 && next.length === 1 && next[0].category) setForm(f => ({ ...f, category: next[0].category }));
   };
 
+  // The rows as printed: fn(draft) => draft, from a click or a box.
+  const editPrinted = fn => { touch(); setPrinted(p => (p ? fn(p) : p)); };
+
   // Sends what changed: the fields in one PATCH, then the lines if they moved.
   // Throws the server's refusal. `withCase` also files the receipt in the
   // case picked in form.reportId (the owner's, while the case is open).
@@ -87,8 +103,18 @@ export function useReceiptForm(fields, { oneLineFromTotal = false } = {}) {
     // currency": sending it cleared the currency and the rate with it.
     if (body.currency === '') delete body.currency;
     if (withCase && 'reportId' in form && (form.reportId || '') !== (was.reportId || '')) body.reportId = form.reportId || null;
+    // A record's total and tax are its rows'; the boxes for them are not shown.
+    if (printed) { delete body.total; delete body.tax; }
     let changed = false;
     if (Object.keys(body).length) { await api.patch(`/expenses/${expenseId}`, body); changed = true; }
+    if (printed) {
+      if (!sameRecord(printed, baseline.current.printed)) {
+        await api.put(`/expenses/${expenseId}/printed`, { printed: toRecord(printed) });
+        changed = true;
+      }
+      settle();
+      return changed;
+    }
     // The server has already moved a single line with a new total, so a line
     // that only followed the total needs no second request.
     const was1 = baseline.current.raw;
@@ -110,6 +136,9 @@ export function useReceiptForm(fields, { oneLineFromTotal = false } = {}) {
 
   const totalCents = cents(form.total);
   const linesCents = lines.reduce((s, l) => s + cents(l.amount), 0);
-  const reconciled = lines.length > 0 && totalCents === linesCents;
-  return { form, lines, dirty, isDirty, markClean, loadFrom, set, setLine, editLines, save, totalCents, linesCents, reconciled };
+  // A record's lines are made by the server to come to its total, so they
+  // always do.
+  const reconciled = printed ? true : lines.length > 0 && totalCents === linesCents;
+  const printedChanged = !!printed && !sameRecord(printed, printedBase);
+  return { form, lines, printed, printedChanged, dirty, isDirty, markClean, loadFrom, set, setLine, editLines, editPrinted, save, totalCents, linesCents, reconciled };
 }

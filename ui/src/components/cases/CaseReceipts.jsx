@@ -7,9 +7,12 @@ import { Checkbox, EmptyState, FlagList, Menu, useSelection } from '../ui';
 import { fmtDateRange, fmtDay, fmtMoney } from '../../utils/format';
 import { onBehalfNames, receiptState, summarise } from './case-logic';
 import { ALLOWANCE_LABEL, allowanceOf, allowanceWords } from '../../utils/allowances';
+import { rateText, taxSummary } from '../../utils/printed';
 
-// The receipts of a case, one row each: its date, merchant, amount, what it
-// comes to in the company's currency, and whether it has been checked. A row
+// The receipts of a case, one row each: its date, merchant, amount (with the
+// tax it prints under it, by name and rate, for a receipt kept as printed),
+// what it comes to in the company's currency, and whether it has been
+// checked. A row
 // opens the receipt in the review page. The owner of a case still taking
 // receipts can tick rows and check them, move them to another case, or take
 // them out of this one; nobody else gets the boxes.
@@ -182,6 +185,7 @@ export default function CaseReceipts({ report, caseId, canEdit, base, isMobile, 
               <div className="cs-ritem-main">
                 <Link to={reviewHref(e)} className="cs-rname" onClick={ev => ev.stopPropagation()}>{nameOf(e)}</Link>
                 <div className="cs-sub">{fmtDay(e.receiptDate)}{Number(e.total) > 0 ? ` · ${fmtMoney(e.total, e.currency)}` : ''}</div>
+                <TaxLine e={e} />
                 {allowanceOf(e) && <div className="cs-sub al-row-words">{subOf(e)}</div>}
               </div>
               <div className="cs-ritem-side">
@@ -215,7 +219,10 @@ export default function CaseReceipts({ report, caseId, canEdit, base, isMobile, 
                     {allowanceOf(e) && <span className="al-tag">no receipt</span>}
                     <div className="cs-sub">{subOf(e)}</div>
                   </td>
-                  <td className="cs-right cs-num cs-nowrap">{Number(e.total) > 0 ? fmtMoney(e.total, e.currency) : <span className="cs-none">—</span>}</td>
+                  <td className="cs-right cs-num cs-nowrap">
+                    {Number(e.total) > 0 ? fmtMoney(e.total, e.currency) : <span className="cs-none">—</span>}
+                    <TaxLine e={e} />
+                  </td>
                   <td className="cs-right cs-nowrap"><Base e={e} /></td>
                   <td className="cs-nowrap"><CheckCell e={e} /></td>
                 </tr>
@@ -241,6 +248,26 @@ export default function CaseReceipts({ report, caseId, canEdit, base, isMobile, 
 
       {canEdit && <Unfiled caseId={caseId} count={list.length} onFiled={onChanged} />}
     </section>
+  );
+}
+
+// The tax a receipt kept as printed shows, under its amount: "incl. SST 6%
+// 1.58"; a pair at one rate as one ("CGST+SGST 18% 3,969.00"); several as
+// "incl. 2 taxes 57.20", each named in the tooltip. "incl." for a tax added
+// on top too: the amount above includes it. Nothing for a receipt that
+// prints no tax, or one read before receipts kept their rows.
+function TaxLine({ e }) {
+  const list = taxSummary(e.printed);
+  if (!list.length) return null;
+  const money = n => fmtMoney(n, e.currency).replace(/^[A-Z]{3} /, '');
+  const word = t => `${t.label}${t.rate !== null ? ` ${rateText(t.rate)}` : ''} ${money(t.amount)}`;
+  if (list.length === 1) return <span className="pp-taxline">incl. {word(list[0])}</span>;
+  const all = list.map(word);
+  return (
+    <span className="pp-taxline" title={all.join('\n')}>
+      incl. {list.length} taxes {money(list.reduce((s, t) => s + t.amount, 0))}
+      <span className="sr-only">: {all.join(', ')}</span>
+    </span>
   );
 }
 

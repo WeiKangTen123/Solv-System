@@ -26,6 +26,16 @@ export const PAGE_FIELDS = ['merchant', 'receiptDate', 'receiptTime', 'invoiceNo
 // box, and the category of a one-line receipt is a field like any other.
 export const REVIEW_FIELDS = ['merchant', 'receiptDate', 'invoiceNo', 'currency', 'total', 'tax', 'category', 'purpose', 'description'];
 
+// The boxes a receipt shows. One kept as printed (expense.printed) has its
+// total and tax in its rows, and a category on each item, so those boxes go;
+// the flags about them, and about its lines, are shown with its rows
+// (PRINTED_FIELDS).
+export const PRINTED_FIELDS = ['total', 'tax', 'lines'];
+export function fieldsFor(fields, printed) {
+  return printed ? fields.filter(k => k !== 'total' && k !== 'tax' && k !== 'category') : fields;
+}
+export const printedFlags = flags => (flags || []).filter(f => PRINTED_FIELDS.includes(f.field));
+
 export const cents = v => Math.round(Number(v || 0) * 100);
 // The lines as the server would store them, to tell whether they were edited.
 export const sameLines = ls => JSON.stringify(ls.map(l => [l.category || '', l.description || '', cents(l.amount), String(l.onBehalfOf || '').trim()]));

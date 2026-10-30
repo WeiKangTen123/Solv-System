@@ -16,8 +16,9 @@ import Modal from '../components/Modal';
 import ClaimMessage from '../components/cases/ClaimMessage';
 import { PageHeader, FlagList, EmptyState, Skeleton, Menu } from '../components/ui';
 import {
-  ReceiptViewer, AllowanceCard, ReceiptFields, ExchangeRatePanel, LinesEditor, HistoryDisclosure, ReviewQueue,
-  arrange, receiptName, readWords, useReceiptForm, REVIEW_FIELDS, flagsOn, flagsOff, hasRed, refusedFields,
+  ReceiptViewer, AllowanceCard, ReceiptFields, ExchangeRatePanel, LinesEditor, PrintedPanel, HistoryDisclosure, ReviewQueue,
+  arrange, receiptName, readWords, useReceiptForm, REVIEW_FIELDS, PRINTED_FIELDS, fieldsFor, printedFlags, flagsOn, flagsOff, hasRed,
+  refusedFields, categoryOf,
 } from '../components/receipt';
 import { allowanceOf, nameCaseFlags } from '../utils/allowances';
 
@@ -277,8 +278,11 @@ export default function CaseReview() {
   const linesOff = rf.lines.length > 0 && !rf.reconciled;
   const checkable = !!sel && canAct && !['reviewed', 'reading', 'duplicate'].includes(sel.status);
   const invalid = note && note.tone === 'error' ? refusedFields(note.text) : [];
+  // A receipt kept as printed has its rows in place of the lines and the
+  // Total and Tax boxes, a category on each item (components/receipt/PrintedPanel).
+  const asPrinted = !!sel && !!rf.printed && !allowance;
   // A split has a category per line, so the receipt's own box goes.
-  const shown = rf.lines.length > 1 ? REVIEW_FIELDS.filter(k => k !== 'category') : REVIEW_FIELDS;
+  const shown = asPrinted ? fieldsFor(REVIEW_FIELDS, true) : rf.lines.length > 1 ? REVIEW_FIELDS.filter(k => k !== 'category') : REVIEW_FIELDS;
 
   // Moving off a receipt with something typed on it asks first.
   const okToMove = async () => !isDirty() || confirm({
@@ -551,17 +555,31 @@ export default function CaseReview() {
             {canAct ? ` To change it, add it again on the case page${allowance === 'per_diem' ? ', which replaces this one' : ' and delete this one from More'}.` : ''}
           </div>
         )}
-        <FlagList flags={flagsOff(sel.flags, [...shown, 'lines'])} />
+        <FlagList flags={flagsOff(sel.flags, [...shown, ...(asPrinted ? PRINTED_FIELDS : ['lines'])])} />
         <ReceiptFields fields={shown} form={rf.form} onChange={rf.set} expense={sel} disabled={locked}
                        categories={categories} currencies={currencies} invalid={invalid} idPrefix="rv"
                        caseDates={{ from: r.periodFrom, to: r.periodTo }} />
         {sel.status !== 'reading' && (
           <>
+            {asPrinted && (
+              <PrintedPanel key={sel.id} card={false} compact printed={rf.printed} onChange={rf.editPrinted} read={sel.aiRead?.printed || null}
+                            lines={sel.lines} currency={rf.form.currency || sel.currency} categories={categories}
+                            fallbackCategory={categoryOf(sel) || sel.category || ''} disabled={locked} flags={printedFlags(sel.flags)}
+                            changed={rf.printedChanged} invalid={invalid.includes('total') || invalid.includes('lines')} idPrefix="rv-pp" />
+            )}
             <ExchangeRatePanel compact expense={sel} baseCurrency={base} tz={user?.timezone} busy={busy} disabled={locked}
                                onRefresh={refreshFx} onSetRate={setRate} />
-            <LinesEditor card={false} collapseSingle lines={rf.lines} currency={rf.form.currency} total={rf.form.total} category={rf.form.category}
-                         categories={categories} disabled={locked} onLine={rf.setLine} onEdit={rf.editLines}
-                         flags={flagsOn(sel.flags, 'lines')} invalid={invalid.includes('lines')} />
+            {!asPrinted && (
+              <LinesEditor card={false} collapseSingle lines={rf.lines} currency={rf.form.currency} total={rf.form.total} category={rf.form.category}
+                           categories={categories} disabled={locked} onLine={rf.setLine} onEdit={rf.editLines}
+                           flags={flagsOn(sel.flags, 'lines')} invalid={invalid.includes('lines')} />
+            )}
+            {/* Read before receipts kept their rows: reading it again keeps them. */}
+            {!asPrinted && !allowance && canAct && sel.receipt && (
+              <div className="pp-reread">
+                <button type="button" className="pp-link" disabled={!!busy} onClick={reread}>Read again to see the receipt as printed</button>
+              </div>
+            )}
           </>
         )}
         <HistoryDisclosure key={sel.id} expenseId={sel.id} version={historyVersion} me={user?.id} tz={user?.timezone} />
