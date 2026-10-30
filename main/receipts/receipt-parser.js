@@ -118,8 +118,7 @@ ${CATEGORIES.map(c => `    "${c.name}": ${c.scope}`).join('\n')}
       }
     ]
   Include EVERY row: each item, service charge, tip, surcharge, levy, discount, rounding and tax, and a tax already inside
-  the prices too (marked included), even when it is printed below the total ("GST 9% included 4.68" under "TOTAL S$
-  56.73" is a row), so the rows that are not included add up to the total. Never list a payment (cash
+  the prices too (marked included), so the rows that are not included add up to the total. Never list a payment (cash
   handed over, change, the card), the subtotal or the total, and never a tax summary that repeats taxes already listed
   as rows: give its total as taxTotal instead.
 - confidence: "high" if the total and merchant are clearly legible, "low" if the photo is blurred, cropped, or you are guessing any of them.
