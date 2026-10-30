@@ -135,9 +135,22 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
   } catch (err) { _answer(res, err); }
 }));
 
+// The lines of a receipt with no record (one read before receipts were kept
+// as printed, or typed in). A receipt with one answers 409: its lines are
+// made from its rows.
 router.put('/:id/lines', requireAuth, asyncHandler(async (req, res) => {
   const e = _load(req, res); if (!e) return;
   try { res.json(_out(await edit.editLines(e.id, (req.body || {}).lines, req.user), req)); }
+  catch (err) { _answer(res, err); }
+}));
+
+// The receipt as printed, { printed: { v, rows, subtotal, total } }, typed
+// over. The same people may as for the details; the total, tax and subtotal
+// and the lines follow it (receipts/edit.js editPrinted), and the answer is
+// the expense as GET gives it.
+router.put('/:id/printed', requireAuth, asyncHandler(async (req, res) => {
+  const e = _load(req, res); if (!e) return;
+  try { res.json(_out(await edit.editPrinted(e.id, (req.body || {}).printed, req.user), req)); }
   catch (err) { _answer(res, err); }
 }));
 
@@ -232,11 +245,14 @@ router.post('/:id/merge', requireAuth, (req, res) => {
   // case used to vanish from it, changing a total that had been put through.
   if (siblings.some(x => x.userId !== e.userId || isLocked(x))) return res.status(409).json({ error: 'Part of this receipt is in a claimed case. Reopen that case first.' });
   if (siblings.some(x => (x.reportId || null) !== (e.reportId || null))) return res.status(409).json({ error: 'The parts of this receipt are in different cases. Move them into one case first.' });
-  // The parts go and the whole stays, together.
+  // The parts go and the whole stays, together. What this part printed is no
+  // longer the whole receipt's record, so it is not kept; the lines stay as
+  // they were, and are the claimant's to change from here.
   const merged = require('../db').transaction(() => {
     for (const s of siblings) store.deleteExpense(s.id);
-    return store.updateExpense(e.id, { box: null, page: null });
+    return store.updateExpense(e.id, { box: null, page: null, printed: null });
   })();
+  changes.record(e, merged, req.user);
   res.json(_out(merged, req));
 });
 

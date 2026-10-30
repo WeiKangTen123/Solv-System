@@ -8,7 +8,7 @@ const FIELDS = {
   merchant: 'Merchant', receiptDate: 'Date', receiptTime: 'Time', invoiceNo: 'Invoice no.', currency: 'Currency',
   total: 'Total', tax: 'Tax', subTotal: 'Subtotal', purpose: 'Purpose', description: 'Description', category: 'Category',
 };
-const LABEL = { ...FIELDS, lines: 'Lines', rate: 'Exchange rate', status: 'Status', case: 'Case' };
+const LABEL = { ...FIELDS, printed: 'As printed', lines: 'Lines', rate: 'Exchange rate', status: 'Status', case: 'Case' };
 const STATUS_WORDS = { reviewed: 'checked', 'review-needed': 'to check', reading: 'being read', duplicate: 'duplicate', rejected: 'rejected' };
 // A draft has no number until it is created, so it is named as a draft.
 const _caseNo = id => {
@@ -18,6 +18,7 @@ const _caseNo = id => {
 };
 
 const { formatAmount } = require('../utils/money');
+const { describeChange } = require('../receipts/printed');
 const money = n => formatAmount(n, { empty: '' });
 const _str = v => (v === null || v === undefined ? '' : String(v));
 
@@ -41,6 +42,12 @@ function diff(before, after) {
     const b = ['total', 'tax', 'subTotal'].includes(f) ? money(after[f]) : _str(after[f]);
     if (a !== b) out.push({ field: f, oldValue: a || null, newValue: b || null });
   }
+  // The receipt as printed, row by row in words ("SST 6% 1.58 → 1.60 · Added
+  // Teh tarik 5.60", at most five rows and then how many more). One row of
+  // the log: a list of rows has no single old and new value, so the sentence
+  // is the new value and the old one is empty.
+  const pr = describeChange(before.printed, after.printed);
+  if (pr) out.push({ field: 'printed', oldValue: null, newValue: pr });
   const la = linesSummary(before.lines), lb = linesSummary(after.lines);
   if (la !== lb) out.push({ field: 'lines', oldValue: la || null, newValue: lb || null });
   const ra = rateSummary(before.lines), rb = rateSummary(after.lines);

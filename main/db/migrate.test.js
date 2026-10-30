@@ -177,7 +177,7 @@ describe('db/migrate', () => {
 
     require('./migrate').run();
 
-    expect(db.pragma('user_version', { simple: true })).toBe(8);
+    expect(db.pragma('user_version', { simple: true })).toBe(require('./schema-version').LATEST);
     expect(db.prepare('SELECT id, number, kind, title, status, advances_cents, claimed_at, xero_invoice_id FROM expense_reports ORDER BY id').all()).toEqual([
       { id: 'r1', number: 'EXP-2026-0001', kind: 'trip', title: 'India trip', status: 'open', advances_cents: 5000, claimed_at: null, xero_invoice_id: null },
       { id: 'r2', number: 'EXP-2026-0002', kind: 'period', title: 'September', status: 'claimed', advances_cents: 0, claimed_at: '2026-10-01T00:00:00Z', xero_invoice_id: 'INV-1' },
@@ -190,5 +190,28 @@ describe('db/migrate', () => {
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='expense_reports'").all().map(x => x.name)).toContain('idx_reports_user');
     expect(() => require('./migrate').run()).not.toThrow();
     expect(db.prepare('SELECT COUNT(*) AS n FROM expense_reports').get().n).toBe(3);
+  });
+
+  // Step 9: a receipt keeps what it printed, and a line the taxes inside it.
+  // A database at step 8 has neither column; its receipts and lines come
+  // through untouched, with nothing kept (null), which is what an old receipt is.
+  test('a database at step 8 gains the printed record and the line taxes, both empty on what was there', () => {
+    db.prepare("INSERT INTO companies (id, name, created_at) VALUES ('c1', 'Solv', '2026-01-01')").run();
+    db.prepare("INSERT INTO users (id, company_id, email, password, role, created_at) VALUES ('u1','c1','a@b.c','x','user','2026-01-01')").run();
+    db.prepare("INSERT INTO expenses (id, company_id, user_id, status, total_cents, tax_cents, created_at) VALUES ('e1','c1','u1','reviewed', 2785, 158, '2026-10-08')").run();
+    db.prepare("INSERT INTO expense_lines (expense_id, category, amount_cents) VALUES ('e1', 'Meals', 2785)").run();
+    db.exec('ALTER TABLE expenses DROP COLUMN printed');
+    db.exec('ALTER TABLE expense_lines DROP COLUMN taxes');
+    db.pragma('user_version = 8');
+
+    require('./migrate').run();
+
+    expect(db.pragma('user_version', { simple: true })).toBe(9);
+    expect(db.prepare("SELECT total_cents, tax_cents, printed FROM expenses WHERE id = 'e1'").get()).toEqual({ total_cents: 2785, tax_cents: 158, printed: null });
+    expect(db.prepare("SELECT category, amount_cents, taxes FROM expense_lines WHERE expense_id = 'e1'").get()).toEqual({ category: 'Meals', amount_cents: 2785, taxes: null });
+    const e = require('../store/expenses').getExpense('e1');
+    expect(e.printed).toBeNull();
+    expect(e.lines[0].taxes).toBeNull();
+    expect(() => require('./migrate').run()).not.toThrow();
   });
 });

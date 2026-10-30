@@ -82,7 +82,18 @@ function _line(row) {
     // days at most, which is what the window allows for.
     fxNotOnTheDay: _farApart(row.fx_rate_date, row.fx_asked_date),
     onBehalfOf: row.on_behalf_of, accountCode: row.account_code,
+    // The taxes inside this line's amount, as the receipt printed them
+    // (receipts/printed.js claimLines). [] is a line the receipt printed no
+    // tax for; null is not known: a line from before receipts were kept as
+    // printed, or one somebody typed.
+    taxes: _json(row.taxes),
   };
+}
+// A JSON column, or null. A value that no longer parses is nothing rather
+// than a receipt that will not open.
+function _json(text) {
+  if (text === null || text === undefined || text === '') return null;
+  try { return JSON.parse(text); } catch { return null; }
 }
 function getLines(expenseId) {
   return db.prepare('SELECT * FROM expense_lines WHERE expense_id = ? ORDER BY sort_order, id').all(expenseId).map(_line);
@@ -105,11 +116,12 @@ function replaceLines(expenseId, lines, { force = false } = {}) {
   const tx = db.transaction(() => {
     db.prepare('DELETE FROM expense_lines WHERE expense_id = ?').run(expenseId);
     const ins = db.prepare(`INSERT INTO expense_lines (expense_id, sort_order, category, description, amount_cents, currency,
-      fx_rate, fx_rate_date, fx_source, fx_fetched_at, fx_policy, fx_override_by, fx_override_reason, base_cents, on_behalf_of, account_code)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      fx_rate, fx_rate_date, fx_source, fx_fetched_at, fx_policy, fx_override_by, fx_override_reason, base_cents, on_behalf_of, account_code, taxes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     list.forEach((l, i) => ins.run(expenseId, i, l.category || null, l.description ? String(l.description).slice(0, 250) : null, l.cents,
       l.currency || exp.currency || null, l.fxRate ?? null, l.fxRateDate ?? null, l.fxSource ?? null, l.fxFetchedAt ?? null, l.fxPolicy ?? null,
-      l.fxOverrideBy ?? null, l.fxOverrideReason ?? null, toCents(l.baseAmount), l.onBehalfOf ? String(l.onBehalfOf).slice(0, 80) : null, l.accountCode ?? null));
+      l.fxOverrideBy ?? null, l.fxOverrideReason ?? null, toCents(l.baseAmount), l.onBehalfOf ? String(l.onBehalfOf).slice(0, 80) : null, l.accountCode ?? null,
+      Array.isArray(l.taxes) ? JSON.stringify(l.taxes) : null));
   });
   tx();
   return getLines(expenseId);
@@ -142,8 +154,7 @@ function _expense(row, lines, receipt) {
   if (!row) return null;
   let box = null;
   try { box = row.box ? JSON.parse(row.box) : null; } catch { box = null; }
-  let aiRead = null;
-  try { aiRead = row.ai_read ? JSON.parse(row.ai_read) : null; } catch { aiRead = null; }
+  const aiRead = _json(row.ai_read);
   // The base-currency figure is the sum of the lines once every line has one.
   const priced = !!(lines && lines.length) && lines.every(l => l.baseAmount !== null && l.baseAmount !== undefined);
   const baseCents = priced ? lines.reduce((sum, l) => sum + Math.round(l.baseAmount * 100), 0) : null;
@@ -157,6 +168,10 @@ function _expense(row, lines, receipt) {
     errorMsg: row.error_msg, aiReadAt: row.ai_read_at, aiConfidence: row.ai_confidence, aiRead, box, page: row.page, source: row.source,
     claimedAt: row.claimed_at, claimed: !!row.claimed_at, importId: row.import_id || null,
     city: row.city || null, country: row.country || null, docType: row.doc_type || null,
+    // The receipt as printed, row by row (receipts/printed.js), which the
+    // lines are made from. null: not kept (a receipt read before it was, one
+    // typed in, an allowance), and the lines are the claimant's own.
+    printed: _json(row.printed),
     createdAt: row.created_at, updatedAt: row.updated_at, lines: lines || [], receipt: receipt || null,
   };
 }
@@ -185,9 +200,9 @@ function _hydrateMany(rows) {
 function createExpense(args) {
   return db.transaction(_createExpense)(args);
 }
-function _createExpense({ id = newId(), companyId, userId, lines = [], box = null, ...fields }) {
-  const cols = ['id', 'company_id', 'user_id', 'created_at', 'box'];
-  const vals = [id, companyId, userId, now(), box ? JSON.stringify(box) : null];
+function _createExpense({ id = newId(), companyId, userId, lines = [], box = null, printed = null, ...fields }) {
+  const cols = ['id', 'company_id', 'user_id', 'created_at', 'box', 'printed'];
+  const vals = [id, companyId, userId, now(), box ? JSON.stringify(box) : null, printed ? JSON.stringify(printed) : null];
   for (const [k, col] of Object.entries(EXPENSE_COLS)) { if (fields[k] === undefined) continue; cols.push(col); vals.push(fields[k]); }
   for (const [k, col] of Object.entries(MONEY)) { if (fields[k] === undefined) continue; cols.push(col); vals.push(toCents(fields[k])); }
   if (!cols.includes('status')) { cols.push('status'); vals.push('reading'); }
@@ -203,6 +218,7 @@ function updateExpense(id, patch) {
   for (const [k, col] of Object.entries(MONEY)) { if (patch[k] === undefined) continue; sets.push(`${col} = ?`); args.push(toCents(patch[k]) ?? (k === 'total' ? 0 : null)); }
   if (patch.box !== undefined) { sets.push('box = ?'); args.push(patch.box ? JSON.stringify(patch.box) : null); }
   if (patch.aiRead !== undefined) { sets.push('ai_read = ?'); args.push(patch.aiRead ? JSON.stringify(patch.aiRead) : null); }
+  if (patch.printed !== undefined) { sets.push('printed = ?'); args.push(patch.printed ? JSON.stringify(patch.printed) : null); }
   sets.push('updated_at = ?'); args.push(now());
   db.prepare(`UPDATE expenses SET ${sets.join(', ')} WHERE id = ?`).run(...args, id);
   return getExpense(id);
