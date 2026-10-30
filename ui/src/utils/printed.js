@@ -67,11 +67,22 @@ export function addsUp(printed, currency) {
 }
 
 // ── Tax rate groups ─────────────────────────────────────────────────────────
+// India's one tax split in two halves at one rate: CGST with SGST, UTGST or
+// IGST. Only these add their rates; the server's splitPair (receipts/
+// printed.js) says the same.
+const CENTRAL = /^cgst\b/i;
+const STATE = /^(sgst|utgst|igst)\b/i;
+const splitHalves = (a, b) => {
+  const [x, y] = [String(a || '').trim(), String(b || '').trim()];
+  return (CENTRAL.test(x) && STATE.test(y)) || (CENTRAL.test(y) && STATE.test(x));
+};
+
 // The rates the receipt's own taxes (those printed for the whole receipt,
-// not under one row) come in, for the items' Tax column. A pair printed
-// together, next to each other at one rate under two names (CGST 9% and
-// SGST 9%), is one group at their sum, 18%, which is the rate an item of
-// that receipt shows; the server's claim lines pair them by the same rule.
+// not under one row) come in, for the items' Tax column. A split pair printed
+// together, next to each other at one rate (CGST 9% and SGST 9%), is one
+// group at their sum, 18%, which is the rate an item of that receipt shows;
+// two other taxes at one rate are not, and a hotel's Service Tax printed for
+// each night stays 8%. The server's claim lines pair them by the same rule.
 export function rateGroups(printed) {
   const rows = (printed && printed.rows) || [];
   const loose = rows.map((r, i) => ({ r, i })).filter(({ r, i }) => r.kind === 'tax' && onOf(rows, r, i) === null && num(r.rate) !== null);
@@ -85,7 +96,7 @@ export function rateGroups(printed) {
   for (let k = 0; k < loose.length; k++) {
     const p = loose[k], q = loose[k + 1];
     const label = String(p.r.label || '').trim();
-    if (q && q.i === p.i + 1 && num(p.r.rate) === num(q.r.rate) && !!p.r.included === !!q.r.included && !same(p.r.label, q.r.label)) {
+    if (q && q.i === p.i + 1 && num(p.r.rate) === num(q.r.rate) && !!p.r.included === !!q.r.included && splitHalves(p.r.label, q.r.label)) {
       put(num(p.r.rate) * 2, `${label}+${String(q.r.label || '').trim()}`);
       k++;
     } else put(num(p.r.rate), label);
@@ -111,8 +122,6 @@ export function rowWords(r, money) {
 // UTGST or IGST, is said as one ("CGST+SGST" at 18%). Two other taxes at one
 // rate stay two: a hotel's "Service Tax" printed for each night is not a
 // split tax, and adding their rates said 16% for an 8% tax.
-const CENTRAL = /^cgst\b/i;
-const STATE = /^(sgst|utgst|igst)\b/i;
 export function taxSummary(printed) {
   const rows = (printed && printed.rows) || [];
   const m = new Map();
